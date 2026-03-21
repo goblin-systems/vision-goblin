@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vision Goblin</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <div class="window-frame-row" data-tauri-drag-region>
+        <div class="window-title-wrap">
+          <div class="window-title">Vision Goblin</div>
+          <p class="window-subtitle">Phase 1 foundation - editor, tools, settings</p>
+        </div>
+        <div class="window-actions" aria-label="Window controls">
+          <button id="window-minimize-btn" class="icon-btn window-action-btn" type="button" aria-label="Minimize window" title="Minimize">
+            <i data-lucide="minus"></i>
+          </button>
+          <button id="window-maximize-btn" class="icon-btn window-action-btn" type="button" aria-label="Maximize window" title="Toggle maximize">
+            <i data-lucide="maximize-2"></i>
+          </button>
+          <button id="window-close-btn" class="icon-btn window-action-btn" type="button" aria-label="Close window" title="Close">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="top-bar-row">
+        <nav id="app-nav" class="nav-bar" aria-label="App menu">
+          <div class="nav-item">
+            <button class="nav-trigger" type="button">File <i data-lucide="chevron-down"></i></button>
+            <div class="nav-dropdown">
+              <button class="nav-option" type="button" data-nav-id="new-document">
+                <span class="nav-option-icon"><i data-lucide="file-plus-2"></i></span>
+                <span class="nav-option-label">New canvas</span>
+                <span class="nav-option-shortcut">Ctrl+N</span>
+              </button>
+              <button id="duplicate-document-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="duplicate-document">
+                <span class="nav-option-icon"><i data-lucide="copy-plus"></i></span>
+                <span class="nav-option-label">Duplicate tab</span>
+              </button>
+              <div class="nav-option nav-option--has-sub">
+                <span class="nav-option-icon"><i data-lucide="history"></i></span>
+                <span class="nav-option-label">Recent</span>
+                <span class="nav-option-arrow"><i data-lucide="chevron-right"></i></span>
+                <div class="nav-submenu recent-menu-stack">
+                  <div class="recent-menu-section">
+                    <div class="recent-menu-heading">Projects</div>
+                    <div id="recent-projects-nav"></div>
+                  </div>
+                  <div class="nav-divider"></div>
+                  <div class="recent-menu-section">
+                    <div class="recent-menu-heading">Images</div>
+                    <div id="recent-images-nav"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="open-image">
+                <span class="nav-option-icon"><i data-lucide="image-plus"></i></span>
+                <span class="nav-option-label">Open image</span>
+                <span class="nav-option-shortcut">Ctrl+O</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="open-project">
+                <span class="nav-option-icon"><i data-lucide="folder-open"></i></span>
+                <span class="nav-option-label">Open project</span>
+                <span class="nav-option-shortcut">Ctrl+Shift+O</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="paste-image">
+                <span class="nav-option-icon"><i data-lucide="clipboard-paste"></i></span>
+                <span class="nav-option-label">Paste image</span>
+                <span class="nav-option-shortcut">Ctrl+V</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button id="save-project-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="save-project">
+                <span class="nav-option-icon"><i data-lucide="save"></i></span>
+                <span id="save-project-nav-label" class="nav-option-label">Save project</span>
+                <span class="nav-option-shortcut">Ctrl+S</span>
+              </button>
+              <button id="save-project-as-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="save-project-as">
+                <span class="nav-option-icon"><i data-lucide="save-all"></i></span>
+                <span class="nav-option-label">Save project as</span>
+                <span class="nav-option-shortcut">Ctrl+Shift+S</span>
+              </button>
+              <button id="export-image-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="export-image">
+                <span class="nav-option-icon"><i data-lucide="download"></i></span>
+                <span class="nav-option-label">Export image</span>
+                <span class="nav-option-shortcut">Ctrl+E</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-item">
+            <button class="nav-trigger" type="button">Canvas <i data-lucide="chevron-down"></i></button>
+            <div class="nav-dropdown">
+              <button id="rename-canvas-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="rename-canvas">
+                <span class="nav-option-icon"><i data-lucide="pencil"></i></span>
+                <span class="nav-option-label">Rename canvas</span>
+              </button>
+              <button id="resize-canvas-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="resize-canvas">
+                <span class="nav-option-icon"><i data-lucide="frame"></i></span>
+                <span class="nav-option-label">Resize canvas</span>
+              </button>
+              <button id="reset-view-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="reset-view">
+                <span class="nav-option-icon"><i data-lucide="locate-fixed"></i></span>
+                <span class="nav-option-label">Reset view</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button id="checkerboard-nav" class="nav-option" type="button" data-nav-id="toggle-checkerboard">
+                <span class="nav-option-icon"><i data-lucide="grid-2x2-check"></i></span>
+                <span id="checkerboard-nav-label" class="nav-option-label">Hide checkerboard</span>
+              </button>
+              <button id="grid-nav" class="nav-option" type="button" data-nav-id="toggle-grid">
+                <span class="nav-option-icon"><i data-lucide="grid-3x3"></i></span>
+                <span id="grid-nav-label" class="nav-option-label">Hide pixel grid</span>
+              </button>
+              <button id="snap-nav" class="nav-option" type="button" data-nav-id="toggle-snap">
+                <span class="nav-option-icon"><i data-lucide="magnet"></i></span>
+                <span id="snap-nav-label" class="nav-option-label">Enable snap</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-item">
+            <button class="nav-trigger" type="button">Select <i data-lucide="chevron-down"></i></button>
+            <div class="nav-dropdown">
+              <button id="select-all-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="select-all">
+                <span class="nav-option-icon"><i data-lucide="scan"></i></span>
+                <span class="nav-option-label">Select all</span>
+                <span class="nav-option-shortcut">Ctrl+A</span>
+              </button>
+              <button id="deselect-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="deselect">
+                <span class="nav-option-icon"><i data-lucide="square"></i></span>
+                <span class="nav-option-label">Deselect</span>
+                <span class="nav-option-shortcut">Esc</span>
+              </button>
+              <button id="invert-selection-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="invert-selection">
+                <span class="nav-option-icon"><i data-lucide="flip-horizontal-2"></i></span>
+                <span class="nav-option-label">Invert selection</span>
+                <span class="nav-option-shortcut">Ctrl+Shift+I</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-item">
+            <button class="nav-trigger" type="button">Window <i data-lucide="chevron-down"></i></button>
+            <div class="nav-dropdown">
+              <button id="toggle-tools-nav" class="nav-option" type="button" data-nav-id="toggle-tools-panel">
+                <span class="nav-option-icon"><i data-lucide="panel-left-close"></i></span>
+                <span id="toggle-tools-nav-label" class="nav-option-label">Hide tools</span>
+              </button>
+              <button id="toggle-inspector-nav" class="nav-option" type="button" data-nav-id="toggle-inspector-panel">
+                <span class="nav-option-icon"><i data-lucide="panel-right-close"></i></span>
+                <span id="toggle-inspector-nav-label" class="nav-option-label">Hide inspector</span>
+              </button>
+            </div>
+          </div>
+        </nav>
+
+        <section class="top-tabs" aria-label="Primary sections">
+          <button class="top-tab is-active" type="button" data-tab-trigger="editor">Editor</button>
+          <button class="top-tab" type="button" data-tab-trigger="tools">Tools</button>
+          <button class="top-tab" type="button" data-tab-trigger="settings">Settings</button>
+        </section>
+      </div>
+
+      <section class="tab-panel is-active" data-tab-panel="editor">
+        <div class="editor-shell settings-section workspace-card">
+            <div class="editor-toolbar-row">
+              <div>
+                <h2>Workspace</h2>
+                <p class="hint">Open an image, paste from clipboard, paint on layers, move content, and export the result.</p>
+              </div>
+              <div class="toolbar-actions">
+                <button id="undo-btn" class="secondary-btn" type="button"><i data-lucide="undo-2"></i><span>Undo</span></button>
+                <button id="redo-btn" class="secondary-btn" type="button"><i data-lucide="redo-2"></i><span>Redo</span></button>
+              </div>
+            </div>
+          <input id="file-open-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
+
+          <div id="document-tabs" class="document-tabs" aria-label="Open documents"></div>
+
+          <div class="editor-workspace">
+            <aside class="editor-tools-pane">
+              <div class="pane-heading-row">
+                <h3>Tools</h3>
+                <span class="badge default">phase 1</span>
+              </div>
+              <div id="tool-grid" class="tool-grid">
+                <button class="icon-btn icon-btn-lg tool-btn is-active" type="button" data-tool="move" aria-label="Move tool" title="Move tool">
+                  <i data-lucide="move"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="marquee" aria-label="Marquee tool" title="Marquee tool">
+                  <i data-lucide="square-dashed-mouse-pointer"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="transform" aria-label="Transform tool" title="Transform tool">
+                  <i data-lucide="scale"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="crop" aria-label="Crop tool" title="Crop tool">
+                  <i data-lucide="crop"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="brush" aria-label="Brush tool" title="Brush tool">
+                  <i data-lucide="paintbrush-2"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="eraser" aria-label="Eraser tool" title="Eraser tool">
+                  <i data-lucide="eraser"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="eyedropper" aria-label="Eyedropper tool" title="Eyedropper tool">
+                  <i data-lucide="pipette"></i>
+                </button>
+              </div>
+              <div class="mini-panel">
+                <h4>Tool intent</h4>
+                <p id="active-tool-copy" class="hint">Move tool active. Use this shell to define viewport, selection, and transform flows.</p>
+              </div>
+              <div class="mini-panel">
+                <div class="pane-heading-row">
+                  <h4>Tool settings</h4>
+                  <span class="badge default">live</span>
+                </div>
+                <p id="tool-settings-empty" class="hint" hidden>Select a tool to see relevant settings.</p>
+                <p id="marquee-tool-hint" class="hint" hidden>Drag to create a rectangular selection. Hold Ctrl to add, Shift to subtract, Alt to intersect. Press Escape to clear it.</p>
+                <div id="marquee-mode-field" class="selection-mode-group" hidden>
+                  <button class="secondary-btn slim-btn selection-mode-btn is-active" type="button" data-selection-mode="replace">Set</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="add">Add (Ctrl)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="subtract">Subtract (Shift)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="intersect">Intersect (Alt)</button>
+                </div>
+                <p id="transform-tool-hint" class="hint" hidden>Drag corner handles to scale, edge handles to skew, and hold Alt for rotate. Hold Ctrl while scaling to preserve aspect ratio.</p>
+                <div id="transform-mode-field" class="selection-mode-group" hidden>
+                  <button class="secondary-btn slim-btn transform-mode-btn is-active" type="button" data-transform-mode="scale">Scale</button>
+                  <button class="secondary-btn slim-btn transform-mode-btn" type="button" data-transform-mode="rotate">Rotate (Alt)</button>
+                </div>
+                <div id="transform-controls-field" class="transform-controls-grid" hidden>
+                  <label class="field-block">
+                    <span>Scale X %</span>
+                    <input id="transform-scale-x-input" type="number" value="100" step="1" />
+                  </label>
+                  <label class="field-block">
+                    <span>Scale Y %</span>
+                    <input id="transform-scale-y-input" type="number" value="100" step="1" />
+                  </label>
+                  <label class="field-block">
+                    <span>Rotate deg</span>
+                    <input id="transform-rotate-input" type="number" value="0" step="1" />
+                  </label>
+                  <label class="field-block">
+                    <span>Skew X deg</span>
+                    <input id="transform-skew-x-input" type="number" value="0" step="1" />
+                  </label>
+                  <label class="field-block">
+                    <span>Skew Y deg</span>
+                    <input id="transform-skew-y-input" type="number" value="0" step="1" />
+                  </label>
+                  <div class="stack-actions transform-actions">
+                    <button id="transform-apply-btn" class="secondary-btn" type="button"><i data-lucide="check"></i><span>Apply</span></button>
+                    <button id="transform-cancel-btn" class="secondary-btn" type="button"><i data-lucide="x"></i><span>Cancel</span></button>
+                  </div>
+                </div>
+                <p id="crop-tool-hint" class="hint" hidden>Drag on the canvas to define a crop area. The crop applies when you release.</p>
+                <label id="brush-size-field" class="field-block">
+                  <span>Brush size</span>
+                  <input id="brush-size-range" type="range" min="1" max="96" step="1" value="24" />
+                </label>
+                <label id="brush-opacity-field" class="field-block">
+                  <span>Brush opacity</span>
+                  <input id="brush-opacity-range" type="range" min="5" max="100" step="5" value="100" />
+                </label>
+                <div id="brush-colour-field" class="colour-preview-row compact-colour-row">
+                  <div id="brush-colour-preview" class="colour-preview mini-preview"></div>
+                  <div>
+                    <div id="brush-colour-value" class="colour-value compact-colour-value">#6C63FF</div>
+                    <p class="hint">Eyedropper updates the active paint colour.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="mini-panel">
+                <h4>MVP status</h4>
+                <ul class="compact-list">
+                  <li>Open local images into tabs</li>
+                  <li>Paste clipboard images</li>
+                  <li>Move, brush, erase, sample</li>
+                  <li>Export PNG, JPG, WebP</li>
+                </ul>
+              </div>
+            </aside>
+
+            <div class="pane-resizer" id="left-pane-resizer" aria-hidden="true"></div>
+
+            <section class="editor-canvas-pane">
+              <div id="empty-state" class="empty-state" hidden>
+                <div class="empty-state-card">
+                  <span class="badge default">workspace boot</span>
+                  <h3>No documents open</h3>
+                  <p class="hint">Create a new canvas or duplicate a starter tab to keep building the phase 1 editor workflow.</p>
+                  <div class="stack-actions">
+                    <button id="empty-new-doc-btn" class="secondary-btn" type="button"><i data-lucide="file-plus-2"></i><span>New canvas</span></button>
+                    <button id="empty-restore-docs-btn" class="secondary-btn" type="button"><i data-lucide="files"></i><span>Load starter tabs</span></button>
+                  </div>
+                </div>
+              </div>
+              <div id="canvas-stage" class="canvas-stage checkerboard-on">
+                <div class="canvas-backdrop"></div>
+                <div class="canvas-editor-wrap">
+                  <canvas id="editor-canvas"></canvas>
+                  <div id="canvas-floating-chip" class="canvas-floating-chip">Wheel to zoom. Right drag or Space+drag to pan.</div>
+                </div>
+              </div>
+            </section>
+
+            <div class="pane-resizer" id="right-pane-resizer" aria-hidden="true"></div>
+
+            <aside class="editor-sidebar-pane">
+              <div class="mini-panel">
+                <div class="pane-heading-row">
+                  <h3>Layers</h3>
+                  <button id="add-layer-btn" class="icon-btn icon-btn-sm" type="button" aria-label="Add layer" title="Add layer">
+                    <i data-lucide="plus"></i>
+                  </button>
+                </div>
+                <div id="layer-list" class="layer-list"></div>
+              </div>
+              <div class="mini-panel">
+                <div class="pane-heading-row">
+                  <h3>History</h3>
+                  <span class="badge beta">draft</span>
+                </div>
+                <div id="history-list" class="history-list"></div>
+              </div>
+              <div class="mini-panel">
+                <h3>Inspector</h3>
+                <div class="stat-grid">
+                  <div class="stat-card"><span>Mode</span><strong id="inspector-mode">Raster</strong></div>
+                  <div class="stat-card"><span>Selection</span><strong id="inspector-selection">None</strong></div>
+                  <div class="stat-card"><span>Blend</span><strong id="inspector-blend">Normal</strong></div>
+                  <div class="stat-card"><span>Opacity</span><strong id="inspector-opacity">100%</strong></div>
+                  <div class="stat-card"><span>Position</span><strong id="inspector-position">0, 0</strong></div>
+                  <div class="stat-card"><span>Layer</span><strong id="inspector-layer">Base</strong></div>
+                </div>
+                <label class="field-block">
+                  <span>Background colour</span>
+                  <input id="background-colour-input" type="color" value="#ffffff" />
+                </label>
+              </div>
+            </aside>
+          </div>
+
+          <div class="editor-status-bar">
+            <div class="editor-status-main">
+              <span id="active-doc-meta">2400 x 1600 px - 3 layers</span>
+            </div>
+            <div class="editor-status-actions">
+              <span id="status-right">RGB - Snap off - Grid on</span>
+              <button id="reset-view-btn" class="secondary-btn slim-btn" type="button"><i data-lucide="locate-fixed"></i><span>Reset view</span></button>
+              <button class="icon-btn icon-btn-sm" type="button" data-zoom-step="out" aria-label="Zoom out" title="Zoom out"><i data-lucide="minus"></i></button>
+              <span id="zoom-readout" class="zoom-pill">100%</span>
+              <button class="icon-btn icon-btn-sm" type="button" data-zoom-step="in" aria-label="Zoom in" title="Zoom in"><i data-lucide="plus"></i></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="tools">
+        <div class="tools-grid">
+          <section class="settings-section">
+            <div class="section-heading-row">
+              <h2>Screen Snip</h2>
+              <span class="badge beta">next</span>
+            </div>
+            <p class="hint">Phase 1 utility shell for region, window, and full-screen capture into a new editor tab.</p>
+            <div class="stack-actions">
+              <button id="capture-region-btn" class="secondary-btn" type="button"><i data-lucide="scan-search"></i><span>Capture region</span></button>
+              <button id="capture-window-btn" class="secondary-btn" type="button"><i data-lucide="app-window"></i><span>Capture window</span></button>
+              <button id="capture-fullscreen-btn" class="secondary-btn" type="button"><i data-lucide="monitor-up"></i><span>Capture full screen</span></button>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <div class="section-heading-row">
+              <h2>Colour Picker</h2>
+              <span class="badge default">foundation</span>
+            </div>
+            <div class="colour-preview-row">
+              <div id="colour-preview" class="colour-preview"></div>
+              <div>
+                <div id="colour-value" class="colour-value">#6C63FF</div>
+                <p class="hint">Pick from the canvas, preset swatches, or global screen overlay.</p>
+              </div>
+            </div>
+            <div class="stack-actions compact-actions">
+              <button id="global-picker-btn" class="secondary-btn" type="button"><i data-lucide="pipette"></i><span>Pick from screen</span></button>
+              <button class="secondary-btn" type="button" data-colour-swatch="#6C63FF"><i data-lucide="swatch-book"></i><span>Primary</span></button>
+              <button class="secondary-btn" type="button" data-colour-swatch="#4ADE80"><i data-lucide="leaf"></i><span>Accent</span></button>
+              <button class="secondary-btn" type="button" data-colour-swatch="#F59E0B"><i data-lucide="sun-medium"></i><span>Warm</span></button>
+              <button class="secondary-btn" type="button" data-colour-swatch="#E5E7EB"><i data-lucide="circle"></i><span>Neutral</span></button>
+            </div>
+          </section>
+
+          <section class="settings-section tools-wide-card">
+            <h2>Phase 1 Execution Track</h2>
+            <ul class="compact-list spaced-list">
+              <li>Shell and tabbed navigation are in place.</li>
+              <li>Editor state now has document tabs, tools, layers, history, and zoom controls.</li>
+              <li>Next build steps: file IO, canvas interactions, actual raster operations, and native utilities.</li>
+            </ul>
+          </section>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-tab-panel="settings">
+        <div class="settings-grid">
+          <section class="settings-section">
+            <h2>Workspace Defaults</h2>
+            <label class="checkbox-label">
+              <input id="checkerboard-toggle" type="checkbox" />
+              <span>Show checkerboard background</span>
+            </label>
+            <label class="checkbox-label">
+              <input id="grid-toggle" type="checkbox" />
+              <span>Show composition grid</span>
+            </label>
+            <label class="field-block">
+              <span class="field-label">Grid size (px)</span>
+              <input id="grid-size-input" type="number" class="input" min="4" max="500" step="1" value="60" />
+            </label>
+            <label class="checkbox-label">
+              <input id="snap-toggle" type="checkbox" />
+              <span>Enable snap-ready layout guides</span>
+            </label>
+            <div class="inline-control-grid">
+              <label class="field-block">
+                <span>Left panel width</span>
+                <input id="left-panel-width-range" type="range" min="180" max="360" step="10" value="220" />
+              </label>
+              <label class="field-block">
+                <span>Right panel width</span>
+                <input id="right-panel-width-range" type="range" min="220" max="420" step="10" value="260" />
+              </label>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h2>Editor Defaults</h2>
+            <div class="inline-control-grid">
+              <label class="field-block">
+                <span>Default zoom</span>
+                <select id="default-zoom-select">
+                  <option value="50">50%</option>
+                  <option value="75">75%</option>
+                  <option value="100">100%</option>
+                  <option value="150">150%</option>
+                </select>
+              </label>
+              <label class="field-block">
+                <span>Colour format</span>
+                <select id="colour-format-select">
+                  <option value="hex">HEX</option>
+                  <option value="rgb">RGB</option>
+                  <option value="hsl">HSL</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h2>Export Defaults</h2>
+            <div class="inline-control-grid">
+              <label class="field-block">
+                <span>Format</span>
+                <select id="export-format-select">
+                  <option value="png">PNG</option>
+                  <option value="jpg">JPG</option>
+                  <option value="webp">WebP</option>
+                </select>
+              </label>
+              <label class="field-block">
+                <span>Quality</span>
+                <input id="export-quality-range" type="range" min="50" max="100" step="5" value="90" />
+              </label>
+            </div>
+            <p id="export-quality-label" class="hint">Export quality: 90%</p>
+          </section>
+
+          <section class="settings-section">
+            <h2>Debug</h2>
+            <label class="checkbox-label">
+              <input id="debug-logging-checkbox" type="checkbox" />
+              <span>Enable debug logging to local file</span>
+            </label>
+            <button id="open-debug-folder-btn" class="secondary-btn" type="button"><i data-lucide="folder-open"></i><span>Open debug logs folder</span></button>
+            <p id="debug-log-path" class="hint">Debug logs are disabled.</p>
+          </section>
+
+          <section class="settings-section settings-wide-card">
+            <div class="section-heading-row">
+              <h2>Phase 1 Notes</h2>
+              <button id="reset-defaults-btn" class="secondary-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset defaults</span></button>
+            </div>
+            <p class="hint">This settings panel intentionally mirrors the existing Prompt Goblin card language while shifting the content toward editor workflow defaults.</p>
+          </section>
+        </div>
+      </section>
+
+      <div id="new-document-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="new-document-title">
+          <div class="modal-header">
+            <h3 id="new-document-title">New canvas</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Set the name and starting dimensions for the new raster canvas.</p>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Preset</span>
+              <select id="new-document-preset-select">
+                <option value="custom">Custom</option>
+                <option value="1920x1080">HD 1920x1080</option>
+                <option value="1080x1080">Square 1080x1080</option>
+                <option value="1080x1350">Portrait 1080x1350</option>
+                <option value="1600x900">Wide 1600x900</option>
+                <option value="2480x3508">A4 Print 2480x3508</option>
+              </select>
+            </label>
+            <label class="field-block">
+              <span>Name</span>
+              <input id="new-document-name-input" type="text" value="Untitled" />
+            </label>
+            <div class="inline-control-grid modal-inline-grid">
+              <label class="field-block">
+                <span>Width</span>
+                <input id="new-document-width-input" type="number" min="1" step="1" value="1600" />
+              </label>
+              <label class="field-block">
+                <span>Height</span>
+                <input id="new-document-height-input" type="number" min="1" step="1" value="1200" />
+              </label>
+            </div>
+            <label class="field-block">
+              <span>Background</span>
+              <select id="new-document-background-select">
+                <option value="white">White</option>
+                <option value="transparent">Transparent</option>
+              </select>
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="new-document-submit-btn" class="modal-btn-accept modal-submit-btn" type="button">Create canvas</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="rename-layer-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rename-layer-title">
+          <div class="modal-header">
+            <h3 id="rename-layer-title">Rename layer</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Give the active layer a clearer name for the stack.</p>
+          <label class="field-block">
+            <span>Layer name</span>
+            <input id="rename-layer-input" type="text" value="" />
+          </label>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="rename-layer-submit-btn" class="modal-btn-accept modal-submit-btn" type="button">Save name</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="rename-canvas-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rename-canvas-title">
+          <div class="modal-header">
+            <h3 id="rename-canvas-title">Rename canvas</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Update the current canvas name for the tab and workspace.</p>
+          <label class="field-block">
+            <span>Canvas name</span>
+            <input id="rename-canvas-input" type="text" value="" />
+          </label>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="rename-canvas-submit-btn" class="modal-btn-accept modal-submit-btn" type="button">Save name</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="resize-canvas-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="resize-canvas-title">
+          <div class="modal-header">
+            <h3 id="resize-canvas-title">Resize canvas</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Change the canvas dimensions and choose which anchor point stays fixed.</p>
+          <div class="modal-form-grid">
+            <div class="inline-control-grid modal-inline-grid">
+              <label class="field-block">
+                <span>Canvas width</span>
+                <input id="canvas-width-input" type="number" min="1" step="1" value="1600" />
+              </label>
+              <label class="field-block">
+                <span>Canvas height</span>
+                <input id="canvas-height-input" type="number" min="1" step="1" value="1200" />
+              </label>
+            </div>
+            <label class="field-block">
+              <span>Resize anchor</span>
+              <select id="canvas-resize-anchor">
+                <option value="top-left">Top left</option>
+                <option value="top-center">Top center</option>
+                <option value="top-right">Top right</option>
+                <option value="center-left">Center left</option>
+                <option value="center" selected>Center</option>
+                <option value="center-right">Center right</option>
+                <option value="bottom-left">Bottom left</option>
+                <option value="bottom-center">Bottom center</option>
+                <option value="bottom-right">Bottom right</option>
+              </select>
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="resize-canvas-submit-btn" class="modal-btn-accept modal-submit-btn" type="button">Resize canvas</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="capture-window-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="capture-window-title">
+          <div class="modal-header">
+            <h3 id="capture-window-title">Capture window</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Choose an open window to capture into a new document.</p>
+          <label class="field-block">
+            <span>Window</span>
+            <select id="capture-window-select"></select>
+          </label>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="capture-window-submit-btn" class="modal-btn-accept modal-submit-btn" type="button">Capture window</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="capture-overlay" class="capture-overlay" hidden>
+        <div class="capture-overlay-toolbar">
+          <div>
+            <strong id="capture-overlay-title">Screen Snip</strong>
+            <p id="capture-overlay-hint" class="hint">Drag to select a region.</p>
+          </div>
+          <div class="stack-actions">
+            <div id="capture-colour-chip" class="colour-preview mini-preview" hidden></div>
+            <canvas id="capture-magnifier" class="capture-magnifier" width="120" height="120" hidden></canvas>
+            <div id="capture-colour-readout" class="colour-value" hidden>#000000</div>
+            <div id="capture-coords" class="colour-value">0, 0</div>
+            <button id="capture-overlay-confirm-btn" class="secondary-btn" type="button" hidden><i data-lucide="check"></i><span>Capture</span></button>
+            <button id="capture-overlay-cancel-btn" class="secondary-btn" type="button"><i data-lucide="x"></i><span>Cancel</span></button>
+          </div>
+        </div>
+        <div id="capture-overlay-stage" class="capture-overlay-stage">
+          <canvas id="capture-overlay-canvas"></canvas>
+        </div>
+      </div>
+
+      <div id="app-toast" class="app-toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    </main>
+  </body>
+  </html>

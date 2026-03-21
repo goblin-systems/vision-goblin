@@ -1,0 +1,25 @@
+[package]
+name = "vision-goblin"
+version = "0.1.0"
+description = "Desktop image editor shell powered by Tauri"
+authors = ["Sergej Popov"]
+edition = "2021"
+
+[lib]
+name = "vision_goblin_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-store = "2"
+serde_json = "1"
+time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
+xcap = "0.9"
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
