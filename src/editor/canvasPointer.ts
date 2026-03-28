@@ -1,10 +1,25 @@
 import { beginDocumentOperation, cancelDocumentOperation, commitDocumentOperation, markDocumentOperationChanged } from "./history";
 import { buildCropRect, getDocCoordinates } from "./geometry";
-import type { DocumentState, PointerState, RasterLayer, Rect, TransformHandle } from "./types";
-import { applyCropToDocument, snapshotDocument, createLayerCanvas, compositeDocumentOnto, getLayerContext, syncLayerSource } from "./documents";
+import type { DocumentState, Layer, PointerState, RasterLayer, Rect, SelectionPath, TransformDraft, TransformHandle } from "./types";
+import { applyCropToDocument, buildTransformPreview, snapshotDocument, createLayerCanvas, compositeDocumentOnto, getLayerContext, refreshLayerCanvas, syncLayerSource } from "./documents";
 import { clamp } from "./utils";
+import { applySelectionClip, combineMasks, createMaskCanvas, defaultPolygonRotation, drawThroughMask, maskBoundingRect, rasterizeRectToMask, type SelectionMode } from "./selection";
+import { drawMaskStroke } from "./layerMask";
 
 type TransformMode = "scale" | "rotate";
+type TransformDraftState = {
+  layerId: string;
+  scaleX: number;
+  scaleY: number;
+  rotateDeg: number;
+  skewXDeg: number;
+  skewYDeg: number;
+  centerX: number;
+  centerY: number;
+  pivotX: number;
+  pivotY: number;
+  sourceCanvas: HTMLCanvasElement;
+};
 
 function unionRects(a: Rect, b: Rect): Rect {
   const x = Math.min(a.x, b.x);
@@ -57,19 +72,23 @@ function applySelectionMode(current: Rect | null, next: Rect | null, mode: "repl
   return subtractRect(current, next);
 }
 
-function getTransformHandle(layer: RasterLayer, x: number, y: number, mode: TransformMode): TransformHandle | null {
-  const right = layer.x + layer.canvas.width;
-  const bottom = layer.y + layer.canvas.height;
-  const centerX = layer.x + layer.canvas.width / 2;
-  const centerY = layer.y + layer.canvas.height / 2;
+function getTransformHandle(layer: Layer, x: number, y: number, mode: TransformMode, boundsOverride?: { x: number; y: number; width: number; height: number }): TransformHandle | null {
+  const bx = boundsOverride?.x ?? layer.x;
+  const by = boundsOverride?.y ?? layer.y;
+  const bw = boundsOverride?.width ?? layer.canvas.width;
+  const bh = boundsOverride?.height ?? layer.canvas.height;
+  const right = bx + bw;
+  const bottom = by + bh;
+  const centerX = bx + bw / 2;
+  const centerY = by + bh / 2;
   const handles: Array<[TransformHandle, number, number]> = mode === "rotate"
-    ? [["nw", layer.x, layer.y], ["ne", right, layer.y], ["sw", layer.x, bottom], ["se", right, bottom]]
-    : [["nw", layer.x, layer.y], ["ne", right, layer.y], ["sw", layer.x, bottom], ["se", right, bottom], ["n", centerX, layer.y], ["e", right, centerY], ["s", centerX, bottom], ["w", layer.x, centerY]];
+    ? [["nw", bx, by], ["ne", right, by], ["sw", bx, bottom], ["se", right, bottom]]
+    : [["nw", bx, by], ["ne", right, by], ["sw", bx, bottom], ["se", right, bottom], ["n", centerX, by], ["e", right, centerY], ["s", centerX, bottom], ["w", bx, centerY]];
   return handles.find(([, cx, cy]) => Math.abs(x - cx) <= 12 && Math.abs(y - cy) <= 12)?.[0] ?? null;
 }
 
 function applyTransformedCanvas(
-  layer: RasterLayer,
+  layer: Layer,
   source: HTMLCanvasElement,
   matrix: { a: number; b: number; c: number; d: number },
   anchorSourceX: number,
@@ -105,7 +124,7 @@ function applyTransformedCanvas(
 }
 
 function resizeLayerFromHandle(
-  layer: RasterLayer,
+  layer: Layer,
   handle: TransformHandle,
   x: number,
   y: number,
@@ -197,33 +216,312 @@ export function drawStroke(
   brushOpacity: number,
   activeColour: string,
   selectionRect?: Rect | null,
-  selectionInverted = false
+  selectionInverted = false,
+  selectionShape: "rect" | "ellipse" = "rect",
+  selectionPath?: SelectionPath | null,
+  selectionMask?: HTMLCanvasElement | null
 ) {
   const ctx = getLayerContext(layer);
-  ctx.save();
-  if (selectionRect) {
-    if (selectionInverted) {
-      ctx.beginPath();
-      ctx.rect(0, 0, layer.canvas.width, layer.canvas.height);
-      ctx.rect(selectionRect.x - layer.x, selectionRect.y - layer.y, selectionRect.width, selectionRect.height);
-      ctx.clip("evenodd");
-    } else {
-      ctx.beginPath();
-      ctx.rect(selectionRect.x - layer.x, selectionRect.y - layer.y, selectionRect.width, selectionRect.height);
-      ctx.clip();
+  const strokeFn = (c: CanvasRenderingContext2D) => {
+    c.lineCap = "round";
+    c.lineJoin = "round";
+    c.lineWidth = brushSize;
+    c.globalAlpha = brushOpacity;
+    c.globalCompositeOperation = mode === "eraser" ? "destination-out" : "source-over";
+    c.strokeStyle = activeColour;
+    c.beginPath();
+    c.moveTo(fromX - layer.x, fromY - layer.y);
+    c.lineTo(toX - layer.x, toY - layer.y);
+    c.stroke();
+  };
+
+  if (selectionMask) {
+    drawThroughMask(ctx, layer.canvas.width, layer.canvas.height, selectionMask, selectionInverted, layer.x, layer.y, strokeFn);
+  } else if (selectionRect) {
+    ctx.save();
+    applySelectionClip(ctx, selectionRect, selectionShape, selectionInverted, selectionPath ?? null, layer.x, layer.y, layer.canvas.width, layer.canvas.height);
+    strokeFn(ctx);
+    ctx.restore();
+  } else {
+    ctx.save();
+    strokeFn(ctx);
+    ctx.restore();
+  }
+}
+
+/**
+ * Smudge stroke: samples pixels at (fromX,fromY) and blends them into (toX,toY)
+ * within a circular brush area, with given strength (0-1).
+ */
+export function smudgeStroke(
+  layer: RasterLayer,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  brushSize: number,
+  strength: number,
+  selectionRect?: Rect | null,
+  selectionInverted = false,
+  selectionShape: "rect" | "ellipse" = "rect"
+) {
+  const ctx = getLayerContext(layer);
+  const radius = brushSize / 2;
+  const lx = Math.floor(fromX - layer.x - radius);
+  const ly = Math.floor(fromY - layer.y - radius);
+  const size = Math.ceil(brushSize);
+  if (size < 1) return;
+
+  // Clamp source region to layer bounds
+  const sx = Math.max(0, lx);
+  const sy = Math.max(0, ly);
+  const ex = Math.min(layer.canvas.width, lx + size);
+  const ey = Math.min(layer.canvas.height, ly + size);
+  const sw = ex - sx;
+  const sh = ey - sy;
+  if (sw < 1 || sh < 1) return;
+
+  // Sample source pixels
+  const sourceData = ctx.getImageData(sx, sy, sw, sh);
+  const srcPixels = new Uint8ClampedArray(sourceData.data);
+
+  // Target position on layer
+  const tx = Math.floor(toX - layer.x - radius);
+  const ty = Math.floor(toY - layer.y - radius);
+  const tsx = Math.max(0, tx);
+  const tsy = Math.max(0, ty);
+  const tex = Math.min(layer.canvas.width, tx + size);
+  const tey = Math.min(layer.canvas.height, ty + size);
+  const tw = tex - tsx;
+  const th = tey - tsy;
+  if (tw < 1 || th < 1) return;
+
+  const destData = ctx.getImageData(tsx, tsy, tw, th);
+  const dstPixels = destData.data;
+
+  const centerR = radius;
+  for (let py = 0; py < th; py++) {
+    for (let px = 0; px < tw; px++) {
+      const docPx = tsx + px + layer.x;
+      const docPy = tsy + py + layer.y;
+
+      // Check selection clipping
+      if (selectionRect) {
+        const inSel = isInSelection(docPx, docPy, selectionRect, selectionShape);
+        if (selectionInverted ? inSel : !inSel) continue;
+      }
+
+      // Check circular brush
+      const bx = (tsx + px) - tx;
+      const by = (tsy + py) - ty;
+      const dist = Math.sqrt((bx - centerR) ** 2 + (by - centerR) ** 2);
+      if (dist > radius) continue;
+
+      // Map target pixel back to source region
+      const srcPx = (tsx + px) - tx + (sx - lx);
+      const srcPy = (tsy + py) - ty + (sy - ly);
+      if (srcPx < 0 || srcPx >= sw || srcPy < 0 || srcPy >= sh) continue;
+
+      const si = (srcPy * sw + srcPx) * 4;
+      const di = (py * tw + px) * 4;
+
+      // Feather at edges
+      const feather = Math.max(0, 1 - dist / radius);
+      const s = strength * feather;
+
+      dstPixels[di]     = Math.round(dstPixels[di]     + (srcPixels[si]     - dstPixels[di])     * s);
+      dstPixels[di + 1] = Math.round(dstPixels[di + 1] + (srcPixels[si + 1] - dstPixels[di + 1]) * s);
+      dstPixels[di + 2] = Math.round(dstPixels[di + 2] + (srcPixels[si + 2] - dstPixels[di + 2]) * s);
+      dstPixels[di + 3] = Math.round(dstPixels[di + 3] + (srcPixels[si + 3] - dstPixels[di + 3]) * s);
     }
   }
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.lineWidth = brushSize;
-  ctx.globalAlpha = brushOpacity;
-  ctx.globalCompositeOperation = mode === "eraser" ? "destination-out" : "source-over";
-  ctx.strokeStyle = activeColour;
-  ctx.beginPath();
-  ctx.moveTo(fromX - layer.x, fromY - layer.y);
-  ctx.lineTo(toX - layer.x, toY - layer.y);
-  ctx.stroke();
-  ctx.restore();
+
+  ctx.putImageData(destData, tsx, tsy);
+}
+
+/**
+ * Clone stamp: paints pixels sampled from a source offset onto the target position.
+ */
+export function cloneStampStroke(
+  layer: RasterLayer,
+  toX: number,
+  toY: number,
+  offsetX: number,
+  offsetY: number,
+  brushSize: number,
+  brushOpacity: number,
+  selectionRect?: Rect | null,
+  selectionInverted = false,
+  selectionShape: "rect" | "ellipse" = "rect"
+) {
+  const ctx = getLayerContext(layer);
+  const radius = brushSize / 2;
+  const size = Math.ceil(brushSize);
+  if (size < 1) return;
+
+  // Source position (where we're sampling from)
+  const srcDocX = toX + offsetX;
+  const srcDocY = toY + offsetY;
+  const slx = Math.floor(srcDocX - layer.x - radius);
+  const sly = Math.floor(srcDocY - layer.y - radius);
+  const ssx = Math.max(0, slx);
+  const ssy = Math.max(0, sly);
+  const sex = Math.min(layer.canvas.width, slx + size);
+  const sey = Math.min(layer.canvas.height, sly + size);
+  const ssw = sex - ssx;
+  const ssh = sey - ssy;
+  if (ssw < 1 || ssh < 1) return;
+
+  const sourceData = ctx.getImageData(ssx, ssy, ssw, ssh);
+  const srcPixels = sourceData.data;
+
+  // Target position
+  const tlx = Math.floor(toX - layer.x - radius);
+  const tly = Math.floor(toY - layer.y - radius);
+  const tsx = Math.max(0, tlx);
+  const tsy = Math.max(0, tly);
+  const tex = Math.min(layer.canvas.width, tlx + size);
+  const tey = Math.min(layer.canvas.height, tly + size);
+  const tw = tex - tsx;
+  const th = tey - tsy;
+  if (tw < 1 || th < 1) return;
+
+  const destData = ctx.getImageData(tsx, tsy, tw, th);
+  const dstPixels = destData.data;
+
+  const centerR = radius;
+  for (let py = 0; py < th; py++) {
+    for (let px = 0; px < tw; px++) {
+      const docPx = tsx + px + layer.x;
+      const docPy = tsy + py + layer.y;
+
+      if (selectionRect) {
+        const inSel = isInSelection(docPx, docPy, selectionRect, selectionShape);
+        if (selectionInverted ? inSel : !inSel) continue;
+      }
+
+      const bx = (tsx + px) - tlx;
+      const by = (tsy + py) - tly;
+      const dist = Math.sqrt((bx - centerR) ** 2 + (by - centerR) ** 2);
+      if (dist > radius) continue;
+
+      // Map to source pixel
+      const srcPx = (tsx + px) - tlx + (ssx - slx);
+      const srcPy = (tsy + py) - tly + (ssy - sly);
+      if (srcPx < 0 || srcPx >= ssw || srcPy < 0 || srcPy >= ssh) continue;
+
+      const si = (srcPy * ssw + srcPx) * 4;
+      const di = (py * tw + px) * 4;
+
+      const feather = Math.max(0, 1 - dist / radius);
+      const alpha = brushOpacity * feather;
+
+      dstPixels[di]     = Math.round(dstPixels[di]     + (srcPixels[si]     - dstPixels[di])     * alpha);
+      dstPixels[di + 1] = Math.round(dstPixels[di + 1] + (srcPixels[si + 1] - dstPixels[di + 1]) * alpha);
+      dstPixels[di + 2] = Math.round(dstPixels[di + 2] + (srcPixels[si + 2] - dstPixels[di + 2]) * alpha);
+      dstPixels[di + 3] = Math.round(dstPixels[di + 3] + (srcPixels[si + 3] - dstPixels[di + 3]) * alpha);
+    }
+  }
+
+  ctx.putImageData(destData, tsx, tsy);
+}
+
+export function healingStroke(
+  layer: RasterLayer,
+  x: number,
+  y: number,
+  brushSize: number,
+  strength: number,
+  selectionRect?: Rect | null,
+  selectionInverted = false,
+  selectionShape: "rect" | "ellipse" = "rect"
+) {
+  const radius = Math.max(1, brushSize / 2);
+  const sampleRadius = radius * 2.4;
+  const sx = Math.max(0, Math.floor(x - layer.x - sampleRadius));
+  const sy = Math.max(0, Math.floor(y - layer.y - sampleRadius));
+  const ex = Math.min(layer.canvas.width, Math.ceil(x - layer.x + sampleRadius));
+  const ey = Math.min(layer.canvas.height, Math.ceil(y - layer.y + sampleRadius));
+  const sw = ex - sx;
+  const sh = ey - sy;
+  if (sw < 1 || sh < 1) return;
+
+  const ctx = getLayerContext(layer);
+  const source = ctx.getImageData(sx, sy, sw, sh);
+  const dest = ctx.getImageData(sx, sy, sw, sh);
+  const src = source.data;
+  const dst = dest.data;
+  const centerX = x - layer.x - sx;
+  const centerY = y - layer.y - sy;
+
+  function getPixel(px: number, py: number) {
+    const i = (py * sw + px) * 4;
+    return [src[i], src[i + 1], src[i + 2], src[i + 3]] as const;
+  }
+
+  const baseCenterX = Math.max(0, Math.min(sw - 1, Math.round(centerX)));
+  const baseCenterY = Math.max(0, Math.min(sh - 1, Math.round(centerY)));
+  const centerPixel = getPixel(baseCenterX, baseCenterY);
+
+  for (let py = 0; py < sh; py++) {
+    for (let px = 0; px < sw; px++) {
+      const docPx = sx + px + layer.x;
+      const docPy = sy + py + layer.y;
+      if (selectionRect) {
+        const inSel = isInSelection(docPx, docPy, selectionRect, selectionShape);
+        if (selectionInverted ? inSel : !inSel) continue;
+      }
+      const dx = px - centerX;
+      const dy = py - centerY;
+      const dist = Math.hypot(dx, dy);
+      if (dist > radius) continue;
+      const feather = Math.pow(1 - dist / radius, 1.6) * strength;
+      let r = 0, g = 0, b = 0, a = 0, totalWeight = 0;
+      for (let oy = -3; oy <= 3; oy++) {
+        for (let ox = -3; ox <= 3; ox++) {
+          const nx = px + ox;
+          const ny = py + oy;
+          if (nx < 0 || ny < 0 || nx >= sw || ny >= sh) continue;
+          const ringDist = Math.hypot(ox, oy);
+          if (ringDist < 1.75 || ringDist > 3.75) continue;
+          const [sr, sg, sb, sa] = getPixel(nx, ny);
+          const colorDistance = Math.abs(sr - centerPixel[0]) + Math.abs(sg - centerPixel[1]) + Math.abs(sb - centerPixel[2]);
+          const alphaWeight = sa / 255;
+          const colorWeight = Math.max(0.08, 1 - colorDistance / 180);
+          const radialWeight = 1 - Math.abs(ringDist - 2.8) / 1.2;
+          const weight = colorWeight * radialWeight * alphaWeight;
+          r += sr * weight;
+          g += sg * weight;
+          b += sb * weight;
+          a += sa * weight;
+          totalWeight += weight;
+        }
+      }
+      if (totalWeight <= 0) continue;
+      const i = (py * sw + px) * 4;
+      const meanR = r / totalWeight;
+      const meanG = g / totalWeight;
+      const meanB = b / totalWeight;
+      const meanA = a / totalWeight;
+      const preserveWeight = Math.max(0.18, 1 - feather * 0.82);
+      dst[i] = Math.round(dst[i] * preserveWeight + meanR * (1 - preserveWeight));
+      dst[i + 1] = Math.round(dst[i + 1] * preserveWeight + meanG * (1 - preserveWeight));
+      dst[i + 2] = Math.round(dst[i + 2] * preserveWeight + meanB * (1 - preserveWeight));
+      dst[i + 3] = Math.round(dst[i + 3] * preserveWeight + meanA * (1 - preserveWeight));
+    }
+  }
+  ctx.putImageData(dest, sx, sy);
+}
+
+function isInSelection(x: number, y: number, rect: Rect, shape: "rect" | "ellipse"): boolean {
+  if (shape === "ellipse") {
+    const cx = rect.x + rect.width / 2;
+    const cy = rect.y + rect.height / 2;
+    const rx = rect.width / 2;
+    const ry = rect.height / 2;
+    return ((x - cx) ** 2) / (rx ** 2) + ((y - cy) ** 2) / (ry ** 2) <= 1;
+  }
+  return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }
 
 export function pickColourAt(doc: DocumentState, docX: number, docY: number): string | null {
@@ -239,24 +537,38 @@ interface CanvasPointerDeps {
   editorCanvas: HTMLCanvasElement;
   canvasWrap: HTMLElement;
   getActiveDocument: () => DocumentState | null;
-  getActiveLayer: (doc: DocumentState) => RasterLayer | null;
+  getActiveLayer: (doc: DocumentState) => Layer | null;
   getActiveTool: () => string;
   getSelectionMode: () => "replace" | "add" | "subtract" | "intersect";
+  getMarqueeShape: () => number;
   getTransformMode: () => TransformMode;
-  ensureTransformDraft: (doc: DocumentState, layer: RasterLayer) => { scaleX: number; scaleY: number; rotateDeg: number; skewXDeg: number; skewYDeg: number; centerX: number; centerY: number; pivotX: number; pivotY: number; sourceCanvas: HTMLCanvasElement } | null;
-  getTransformDraft: () => { scaleX: number; scaleY: number; rotateDeg: number; skewXDeg: number; skewYDeg: number; centerX: number; centerY: number; pivotX: number; pivotY: number; sourceCanvas: HTMLCanvasElement } | null;
+  ensureTransformDraft: (doc: DocumentState, layer: Layer) => TransformDraftState | null;
+  getTransformDraft: () => TransformDraftState | null;
   syncTransformInputs: () => void;
   getBrushState: () => { brushSize: number; brushOpacity: number; activeColour: string };
   getSpacePressed: () => boolean;
-  snapLayerPosition: (layer: RasterLayer, x: number, y: number) => { x: number; y: number };
+  getMarqueeModifiers: () => { rotate: boolean; perfect: boolean };
+  snapLayerPosition: (layer: Layer, x: number, y: number) => { x: number; y: number };
   pointerState: PointerState;
   renderCanvas: () => void;
   renderEditorState: () => void;
   onColourPicked: (colour: string) => void;
+  getCloneSource: () => { x: number; y: number } | null;
+  setCloneSource: (source: { x: number; y: number } | null) => void;
+  onLassoPoint: (x: number, y: number) => void;
+  onLassoComplete: () => void;
+  onCreateTextLayer: (x: number, y: number) => Layer | null;
+  onCreateShapeLayer: (x: number, y: number) => Layer | null;
+  /** Returns the layer ID whose mask is being edited, or null if not in mask-edit mode. */
+  getMaskEditTarget: () => string | null;
+  /** Returns the quick mask canvas when quick mask mode is active, or null. */
+  getQuickMaskCanvas: () => HTMLCanvasElement | null;
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
 }
 
 export function createCanvasPointerController(deps: CanvasPointerDeps) {
+  let polygonLastClickTime = 0;
+
   function handlePointerDown(event: PointerEvent) {
     const doc = deps.getActiveDocument();
     if (!doc) return;
@@ -275,7 +587,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     deps.pointerState.startSelectionRect = doc.selectionRect ? { ...doc.selectionRect } : null;
     deps.pointerState.startSelectionInverted = doc.selectionInverted;
 
-    if (event.button === 2 || event.button === 1 || deps.getSpacePressed()) {
+    if (deps.getSpacePressed() || event.button === 1) {
       deps.pointerState.mode = "pan";
       deps.canvasWrap.classList.add("is-panning");
       deps.log("Canvas pan started", "INFO");
@@ -285,8 +597,72 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     if (deps.getActiveTool() === "marquee") {
       deps.pointerState.mode = "marquee";
       doc.selectionRect = buildCropRect(x, y, x, y, doc);
-      deps.log(`Selection started at ${Math.round(x)},${Math.round(y)}`, "INFO");
+      deps.log(`Selection started at ${Math.round(x)},${Math.round(y)} (sides=${deps.getMarqueeShape()})`, "INFO");
       deps.renderEditorState();
+      return;
+    }
+
+    if (deps.getActiveTool() === "lasso") {
+      deps.pointerState.mode = "lasso";
+      doc.selectionPath = { points: [{ x, y }], closed: false };
+      deps.log(`Lasso started at ${Math.round(x)},${Math.round(y)}`, "INFO");
+      deps.renderEditorState();
+      return;
+    }
+
+    if (deps.getActiveTool() === "polygon-lasso") {
+      if (!doc.selectionPath || doc.selectionPath.closed) {
+        doc.selectionPath = { points: [{ x, y }], closed: false };
+        polygonLastClickTime = performance.now();
+      } else {
+        const now = performance.now();
+        const isDoubleClick = (now - polygonLastClickTime) < 400;
+        polygonLastClickTime = now;
+        if (isDoubleClick && doc.selectionPath.points.length >= 3) {
+          // Double-click closes the polygon lasso
+          deps.onLassoComplete();
+          return;
+        }
+        deps.onLassoPoint(x, y);
+      }
+      deps.renderEditorState();
+      return;
+    }
+
+    if (deps.getActiveTool() === "magic-wand") {
+      deps.onLassoComplete();
+      return;
+    }
+
+    if (deps.getActiveTool() === "text") {
+      beginDocumentOperation(snapshotDocument(doc));
+      const created = deps.onCreateTextLayer(x, y);
+      if (created) {
+        deps.pointerState.mode = "create-layer";
+        deps.pointerState.creationLayerId = created.id;
+        deps.pointerState.startLayerX = created.x;
+        deps.pointerState.startLayerY = created.y;
+        deps.pointerState.startLayerWidth = created.canvas.width;
+        deps.pointerState.startLayerHeight = created.canvas.height;
+        markDocumentOperationChanged();
+        deps.renderEditorState();
+      }
+      return;
+    }
+
+    if (deps.getActiveTool() === "shape") {
+      beginDocumentOperation(snapshotDocument(doc));
+      const created = deps.onCreateShapeLayer(x, y);
+      if (created) {
+        deps.pointerState.mode = "create-layer";
+        deps.pointerState.creationLayerId = created.id;
+        deps.pointerState.startLayerX = created.x;
+        deps.pointerState.startLayerY = created.y;
+        deps.pointerState.startLayerWidth = created.canvas.width;
+        deps.pointerState.startLayerHeight = created.canvas.height;
+        markDocumentOperationChanged();
+        deps.renderEditorState();
+      }
       return;
     }
 
@@ -321,15 +697,15 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       if (!draft) {
         return;
       }
-      const handle = getTransformHandle(layer, x, y, deps.getTransformMode());
-      if (!handle) {
-        if (Math.abs(x - draft.pivotX) <= 12 && Math.abs(y - draft.pivotY) <= 12) {
-          deps.pointerState.mode = "pivot-drag";
-          deps.canvasWrap.classList.add("is-dragging");
-          deps.log("Pivot drag started", "INFO");
-        }
+      if (event.button === 2) {
+        deps.pointerState.mode = "pivot-drag";
+        deps.canvasWrap.classList.add("is-dragging");
+        deps.log("Pivot drag started", "INFO");
         return;
       }
+      const draftHasTransform = Math.abs(draft.scaleX - 1) > 0.001 || Math.abs(draft.scaleY - 1) > 0.001 || Math.abs(draft.rotateDeg) > 0.001 || Math.abs(draft.skewXDeg) > 0.001 || Math.abs(draft.skewYDeg) > 0.001;
+      const previewBounds = draftHasTransform ? buildTransformPreview(draft as TransformDraft) : undefined;
+      const handle = getTransformHandle(layer, x, y, deps.getTransformMode(), previewBounds);
       deps.pointerState.mode = "move-layer";
       deps.pointerState.transformHandle = handle;
       deps.pointerState.startLayerX = layer.x;
@@ -338,23 +714,122 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       deps.pointerState.startLayerHeight = layer.canvas.height;
       deps.pointerState.startScaleX = draft.scaleX;
       deps.pointerState.startScaleY = draft.scaleY;
+      deps.pointerState.startCenterX = draft.centerX;
+      deps.pointerState.startCenterY = draft.centerY;
+      deps.pointerState.startPivotX = draft.pivotX;
+      deps.pointerState.startPivotY = draft.pivotY;
       deps.pointerState.startRotateDeg = draft.rotateDeg;
       deps.pointerState.startSkewXDeg = draft.skewXDeg;
       deps.pointerState.startSkewYDeg = draft.skewYDeg;
       deps.canvasWrap.classList.add("is-dragging");
-      deps.log(`Transform started on layer '${layer.name}'`, "INFO");
+      deps.log(handle ? `Transform started on layer '${layer.name}'` : `Transform move started on layer '${layer.name}'`, "INFO");
       return;
     }
 
     if (deps.getActiveTool() === "brush" || deps.getActiveTool() === "eraser") {
-      beginDocumentOperation(snapshotDocument(doc));
-      deps.pointerState.mode = "paint";
-      const brush = deps.getBrushState();
-       drawStroke(layer, x, y, x, y, deps.getActiveTool() === "brush" ? "brush" : "eraser", brush.brushSize, brush.brushOpacity, brush.activeColour, doc.selectionRect, doc.selectionInverted);
-      markDocumentOperationChanged();
-      deps.log(`${deps.getActiveTool()} stroke started on layer '${layer.name}'`, "INFO");
-      deps.renderEditorState();
-      return;
+      // Quick mask painting: redirect brush/eraser to the quick mask canvas
+      const qmCanvas = deps.getQuickMaskCanvas();
+      if (qmCanvas) {
+        beginDocumentOperation(snapshotDocument(doc));
+        deps.pointerState.mode = "paint";
+        const brush = deps.getBrushState();
+        const maskMode = deps.getActiveTool() === "brush" ? "reveal" : "hide";
+        drawMaskStroke(qmCanvas, x, y, x, y, brush.brushSize, brush.brushOpacity, maskMode);
+        markDocumentOperationChanged();
+        deps.log(`Quick mask ${maskMode} stroke started`, "INFO");
+        deps.renderEditorState();
+        return;
+      }
+      // Mask painting: when mask editing is active on the current layer
+      const maskTarget = deps.getMaskEditTarget();
+      if (maskTarget && layer.id === maskTarget && layer.mask) {
+        beginDocumentOperation(snapshotDocument(doc));
+        deps.pointerState.mode = "paint";
+        const brush = deps.getBrushState();
+        const maskMode = deps.getActiveTool() === "brush" ? "reveal" : "hide";
+        drawMaskStroke(layer.mask, x, y, x, y, brush.brushSize, brush.brushOpacity, maskMode);
+        markDocumentOperationChanged();
+        deps.log(`Mask ${maskMode} stroke started on layer '${layer.name}'`, "INFO");
+        deps.renderEditorState();
+        return;
+      }
+      // Normal raster painting
+      if (layer.type === "smart-object" || layer.type === "text" || layer.type === "shape") {
+        deps.log(`Cannot paint on ${layer.type} layer \u2014 rasterize first`, "WARN");
+        return;
+      }
+      if (layer.type === "raster") {
+        beginDocumentOperation(snapshotDocument(doc));
+        deps.pointerState.mode = "paint";
+        const brush = deps.getBrushState();
+         drawStroke(layer, x, y, x, y, deps.getActiveTool() === "brush" ? "brush" : "eraser", brush.brushSize, brush.brushOpacity, brush.activeColour, doc.selectionRect, doc.selectionInverted, doc.selectionShape, doc.selectionPath, doc.selectionMask);
+        markDocumentOperationChanged();
+        deps.log(`${deps.getActiveTool()} stroke started on layer '${layer.name}'`, "INFO");
+        deps.renderEditorState();
+        return;
+      }
+    }
+
+    if (deps.getActiveTool() === "smudge") {
+      if (layer.type === "smart-object" || layer.type === "text" || layer.type === "shape") {
+        deps.log(`Cannot smudge on ${layer.type} layer \u2014 rasterize first`, "WARN");
+        return;
+      }
+      if (layer.type === "raster") {
+        beginDocumentOperation(snapshotDocument(doc));
+        deps.pointerState.mode = "paint";
+        deps.log(`Smudge stroke started on layer '${layer.name}'`, "INFO");
+        deps.renderEditorState();
+        return;
+      }
+    }
+
+    if (deps.getActiveTool() === "clone-stamp") {
+      if (layer.type === "smart-object" || layer.type === "text" || layer.type === "shape") {
+        deps.log(`Cannot clone-stamp on ${layer.type} layer \u2014 rasterize first`, "WARN");
+        return;
+      }
+      if (layer.type === "raster") {
+        if (event.altKey) {
+          // Set clone source
+          deps.setCloneSource({ x, y });
+          deps.log(`Clone source set at ${Math.round(x)},${Math.round(y)}`, "INFO");
+          return;
+        }
+        const cloneSrc = deps.getCloneSource();
+        if (!cloneSrc) {
+          deps.log("Alt-click to set clone source first", "WARN");
+          return;
+        }
+        // Calculate offset from current pos to clone source
+        deps.pointerState.cloneOffsetX = cloneSrc.x - x;
+        deps.pointerState.cloneOffsetY = cloneSrc.y - y;
+        beginDocumentOperation(snapshotDocument(doc));
+        deps.pointerState.mode = "paint";
+        const brush = deps.getBrushState();
+        cloneStampStroke(layer, x, y, deps.pointerState.cloneOffsetX, deps.pointerState.cloneOffsetY, brush.brushSize, brush.brushOpacity, doc.selectionRect, doc.selectionInverted, doc.selectionShape);
+        markDocumentOperationChanged();
+        deps.log(`Clone stamp stroke started on layer '${layer.name}'`, "INFO");
+        deps.renderEditorState();
+        return;
+      }
+    }
+
+    if (deps.getActiveTool() === "healing-brush") {
+      if (layer.type === "smart-object" || layer.type === "text" || layer.type === "shape") {
+        deps.log(`Cannot heal on ${layer.type} layer \u2014 rasterize first`, "WARN");
+        return;
+      }
+      if (layer.type === "raster") {
+        beginDocumentOperation(snapshotDocument(doc));
+        deps.pointerState.mode = "paint";
+        const brush = deps.getBrushState();
+        healingStroke(layer, x, y, brush.brushSize, brush.brushOpacity, doc.selectionRect, doc.selectionInverted, doc.selectionShape);
+        markDocumentOperationChanged();
+        deps.log(`Healing stroke started on layer '${layer.name}'`, "INFO");
+        deps.renderEditorState();
+        return;
+      }
     }
 
     if (deps.getActiveTool() === "eyedropper") {
@@ -390,48 +865,64 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     }
 
     if (deps.pointerState.mode === "move-layer" && layer) {
-      if (deps.getActiveTool() === "transform" && deps.pointerState.transformHandle) {
+      if (deps.getActiveTool() === "transform") {
         const draft = deps.getTransformDraft();
         if (!draft) {
           return;
         }
-        if (deps.getTransformMode() === "rotate") {
-          rotateDraft(
-            draft,
-            coords.x,
-            coords.y,
-            deps.pointerState.startLayerX,
-            deps.pointerState.startLayerY,
-            deps.pointerState.startRotateDeg,
-            event.shiftKey
-          );
-        } else if (["n", "e", "s", "w"].includes(deps.pointerState.transformHandle)) {
-          skewDraft(
-            draft,
-            deps.pointerState.transformHandle,
-            coords.x,
-            coords.y,
-            deps.pointerState.startLayerX,
-            deps.pointerState.startLayerY,
-            deps.pointerState.startLayerWidth,
-            deps.pointerState.startLayerHeight,
-            deps.pointerState.startSkewXDeg,
-            deps.pointerState.startSkewYDeg
-          );
-        } else {
-          const centerX = draft.centerX;
-          const centerY = draft.centerY;
-          let scaleX = Math.max(0.01, Math.abs(coords.x - centerX) / Math.max(1, deps.pointerState.startLayerWidth / 2));
-          let scaleY = Math.max(0.01, Math.abs(coords.y - centerY) / Math.max(1, deps.pointerState.startLayerHeight / 2));
-          if (event.ctrlKey || event.metaKey) {
-            const uniform = Math.max(scaleX, scaleY);
-            scaleX = uniform;
-            scaleY = uniform;
+        const transformLayer = doc.layers.find((item) => item.id === draft.layerId) ?? layer;
+        if (deps.pointerState.transformHandle) {
+          if (deps.getTransformMode() === "rotate") {
+            rotateDraft(
+              draft,
+              coords.x,
+              coords.y,
+              deps.pointerState.startDocX,
+              deps.pointerState.startDocY,
+              deps.pointerState.startRotateDeg,
+              event.shiftKey
+            );
+          } else if (["n", "e", "s", "w"].includes(deps.pointerState.transformHandle)) {
+            skewDraft(
+              draft,
+              deps.pointerState.transformHandle,
+              coords.x,
+              coords.y,
+              deps.pointerState.startLayerX,
+              deps.pointerState.startLayerY,
+              deps.pointerState.startLayerWidth,
+              deps.pointerState.startLayerHeight,
+              deps.pointerState.startSkewXDeg,
+              deps.pointerState.startSkewYDeg
+            );
+          } else {
+            const centerX = draft.centerX;
+            const centerY = draft.centerY;
+            let scaleX = Math.max(0.01, Math.abs(coords.x - centerX) / Math.max(1, deps.pointerState.startLayerWidth / 2));
+            let scaleY = Math.max(0.01, Math.abs(coords.y - centerY) / Math.max(1, deps.pointerState.startLayerHeight / 2));
+            if (event.ctrlKey || event.metaKey) {
+              const uniform = Math.max(scaleX, scaleY);
+              scaleX = uniform;
+              scaleY = uniform;
+            }
+            draft.scaleX = scaleX;
+            draft.scaleY = scaleY;
           }
-          draft.scaleX = scaleX;
-          draft.scaleY = scaleY;
+          deps.syncTransformInputs();
+          deps.renderEditorState();
+          return;
         }
-        deps.syncTransformInputs();
+        const rawX = Math.round(deps.pointerState.startLayerX + (event.clientX - deps.pointerState.startClientX) / coords.bounds.scale);
+        const rawY = Math.round(deps.pointerState.startLayerY + (event.clientY - deps.pointerState.startClientY) / coords.bounds.scale);
+        const snapped = deps.snapLayerPosition(transformLayer, rawX, rawY);
+        const dx = snapped.x - deps.pointerState.startLayerX;
+        const dy = snapped.y - deps.pointerState.startLayerY;
+        draft.centerX = deps.pointerState.startCenterX + dx;
+        draft.centerY = deps.pointerState.startCenterY + dy;
+        draft.pivotX = deps.pointerState.startPivotX + dx;
+        draft.pivotY = deps.pointerState.startPivotY + dy;
+        markDocumentOperationChanged();
+        doc.dirty = true;
         deps.renderEditorState();
         return;
       }
@@ -446,13 +937,83 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.pointerState.mode === "paint" && layer) {
-      const brush = deps.getBrushState();
-      drawStroke(layer, deps.pointerState.lastDocX, deps.pointerState.lastDocY, coords.x, coords.y, deps.getActiveTool() === "eraser" ? "eraser" : "brush", brush.brushSize, brush.brushOpacity, brush.activeColour, doc.selectionRect, doc.selectionInverted);
+    if (deps.pointerState.mode === "create-layer" && doc) {
+      const created = doc.layers.find((item) => item.id === deps.pointerState.creationLayerId);
+      if (!created) {
+        return;
+      }
       deps.pointerState.lastDocX = coords.x;
       deps.pointerState.lastDocY = coords.y;
-      markDocumentOperationChanged();
-      deps.renderCanvas();
+      const left = Math.min(deps.pointerState.startDocX, coords.x);
+      const top = Math.min(deps.pointerState.startDocY, coords.y);
+      const width = Math.max(1, Math.abs(coords.x - deps.pointerState.startDocX));
+      const height = Math.max(1, Math.abs(coords.y - deps.pointerState.startDocY));
+      if (created.type === "shape") {
+        created.x = Math.round(left);
+        created.y = Math.round(top);
+        created.shapeData.width = Math.round(width);
+        created.shapeData.height = Math.round(height);
+        if (created.shapeData.kind === "line") {
+          created.shapeData.width = Math.round(width);
+          created.shapeData.height = Math.round(height);
+        }
+        refreshLayerCanvas(created);
+      } else if (created.type === "text") {
+        const draggedFarEnough = Math.abs(coords.x - deps.pointerState.startDocX) > 8 || Math.abs(coords.y - deps.pointerState.startDocY) > 8;
+        created.x = Math.round(left);
+        created.y = Math.round(top);
+        created.textData.boxWidth = draggedFarEnough ? Math.max(40, Math.round(width)) : null;
+        refreshLayerCanvas(created);
+      }
+      deps.renderEditorState();
+      return;
+    }
+
+    if (deps.pointerState.mode === "paint" && layer) {
+      // Quick mask painting path
+      const qmCanvas = deps.getQuickMaskCanvas();
+      if (qmCanvas) {
+        const brush = deps.getBrushState();
+        const maskMode = deps.getActiveTool() === "brush" ? "reveal" : "hide";
+        drawMaskStroke(qmCanvas, deps.pointerState.lastDocX, deps.pointerState.lastDocY, coords.x, coords.y, brush.brushSize, brush.brushOpacity, maskMode);
+        deps.pointerState.lastDocX = coords.x;
+        deps.pointerState.lastDocY = coords.y;
+        markDocumentOperationChanged();
+        deps.renderCanvas();
+        return;
+      }
+      // Mask painting path
+      const maskTarget = deps.getMaskEditTarget();
+      if (maskTarget && layer.id === maskTarget && layer.mask) {
+        const brush = deps.getBrushState();
+        const maskMode = deps.getActiveTool() === "brush" ? "reveal" : "hide";
+        drawMaskStroke(layer.mask, deps.pointerState.lastDocX, deps.pointerState.lastDocY, coords.x, coords.y, brush.brushSize, brush.brushOpacity, maskMode);
+        deps.pointerState.lastDocX = coords.x;
+        deps.pointerState.lastDocY = coords.y;
+        markDocumentOperationChanged();
+        deps.renderCanvas();
+        return;
+      }
+      // Normal raster painting (smart objects blocked at pointer-down)
+      if (layer.type === "raster") {
+        if (deps.getActiveTool() === "clone-stamp") {
+          const brush = deps.getBrushState();
+          cloneStampStroke(layer, coords.x, coords.y, deps.pointerState.cloneOffsetX, deps.pointerState.cloneOffsetY, brush.brushSize, brush.brushOpacity, doc.selectionRect, doc.selectionInverted, doc.selectionShape);
+        } else if (deps.getActiveTool() === "smudge") {
+          const brush = deps.getBrushState();
+          smudgeStroke(layer, deps.pointerState.lastDocX, deps.pointerState.lastDocY, coords.x, coords.y, brush.brushSize, brush.brushOpacity, doc.selectionRect, doc.selectionInverted, doc.selectionShape);
+        } else if (deps.getActiveTool() === "healing-brush") {
+          const brush = deps.getBrushState();
+          healingStroke(layer, coords.x, coords.y, brush.brushSize, brush.brushOpacity, doc.selectionRect, doc.selectionInverted, doc.selectionShape);
+        } else {
+          const brush = deps.getBrushState();
+          drawStroke(layer, deps.pointerState.lastDocX, deps.pointerState.lastDocY, coords.x, coords.y, deps.getActiveTool() === "eraser" ? "eraser" : "brush", brush.brushSize, brush.brushOpacity, brush.activeColour, doc.selectionRect, doc.selectionInverted, doc.selectionShape, doc.selectionPath, doc.selectionMask);
+        }
+        deps.pointerState.lastDocX = coords.x;
+        deps.pointerState.lastDocY = coords.y;
+        markDocumentOperationChanged();
+        deps.renderCanvas();
+      }
       return;
     }
 
@@ -463,7 +1024,32 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     }
 
     if (deps.pointerState.mode === "marquee") {
-      doc.selectionRect = buildCropRect(deps.pointerState.startDocX, deps.pointerState.startDocY, coords.x, coords.y, doc);
+      // Center stays at the start point; cursor defines the radius
+      const cx = deps.pointerState.startDocX;
+      const cy = deps.pointerState.startDocY;
+      const mods = deps.getMarqueeModifiers();
+      let rx: number, ry: number;
+      if (mods.rotate) {
+        // When rotating, use distance so size stays stable as cursor orbits
+        const dist = Math.hypot(coords.x - cx, coords.y - cy);
+        rx = dist;
+        ry = dist;
+      } else {
+        rx = Math.abs(coords.x - cx);
+        ry = Math.abs(coords.y - cy);
+      }
+      const x0 = Math.max(0, cx - rx);
+      const y0 = Math.max(0, cy - ry);
+      const x1 = Math.min(doc.width, cx + rx);
+      const y1 = Math.min(doc.height, cy + ry);
+      doc.selectionRect = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+      deps.pointerState.lastDocX = coords.x;
+      deps.pointerState.lastDocY = coords.y;
+      deps.renderEditorState();
+    }
+
+    if (deps.pointerState.mode === "lasso" && doc.selectionPath && !doc.selectionPath.closed) {
+      deps.onLassoPoint(coords.x, coords.y);
       deps.renderEditorState();
     }
   }
@@ -483,11 +1069,48 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       }
     } else if (doc && deps.pointerState.mode === "paint") {
       const layer = deps.getActiveLayer(doc);
-      if (layer) {
+      const qmCanvas = deps.getQuickMaskCanvas();
+      const maskTarget = deps.getMaskEditTarget();
+      const isMaskPaint = maskTarget && layer && layer.id === maskTarget && layer.mask;
+      const isQuickMaskPaint = !!qmCanvas;
+      if (layer && !isMaskPaint && !isQuickMaskPaint) {
         syncLayerSource(layer);
       }
-      commitDocumentOperation(doc, deps.getActiveTool() === "brush" ? "Painted stroke" : "Erased pixels");
-      deps.log(`${deps.getActiveTool()} stroke committed`, "INFO");
+      const paintLabel = isQuickMaskPaint
+        ? "Painted quick mask"
+        : isMaskPaint
+          ? "Painted mask"
+          : deps.getActiveTool() === "clone-stamp"
+            ? "Cloned pixels"
+            : deps.getActiveTool() === "smudge"
+              ? "Smudged pixels"
+              : deps.getActiveTool() === "healing-brush"
+                ? "Healed pixels"
+                : deps.getActiveTool() === "brush"
+                  ? "Painted stroke"
+                  : "Erased pixels";
+      commitDocumentOperation(doc, paintLabel);
+      deps.log(`${isQuickMaskPaint ? "Quick mask paint" : isMaskPaint ? "Mask paint" : deps.getActiveTool()} stroke committed`, "INFO");
+    } else if (doc && deps.pointerState.mode === "create-layer") {
+      const created = doc.layers.find((item) => item.id === deps.pointerState.creationLayerId);
+      if (created) {
+        const draggedFarEnough = Math.abs(deps.pointerState.lastDocX - deps.pointerState.startDocX) > 8 || Math.abs(deps.pointerState.lastDocY - deps.pointerState.startDocY) > 8;
+        if (created.type === "text" && !draggedFarEnough) {
+          created.x = Math.round(deps.pointerState.startDocX);
+          created.y = Math.round(deps.pointerState.startDocY);
+          created.textData.boxWidth = null;
+          refreshLayerCanvas(created);
+        }
+        if (created.type === "shape" && !draggedFarEnough && created.shapeData.kind !== "line") {
+          created.shapeData.width = Math.max(created.shapeData.width, 140);
+          created.shapeData.height = Math.max(created.shapeData.height, 100);
+          refreshLayerCanvas(created);
+        }
+        commitDocumentOperation(doc, created.type === "text" ? "Created text layer" : "Created shape layer");
+        deps.log(`${created.type} creation committed`, "INFO");
+      } else {
+        cancelDocumentOperation();
+      }
     } else if (doc && deps.pointerState.mode === "crop") {
       if (!doc.cropRect || doc.cropRect.width < 2 || doc.cropRect.height < 2) {
         doc.cropRect = null;
@@ -501,21 +1124,61 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         deps.log(`Crop applied ${nextCrop.width}x${nextCrop.height}`, "INFO");
       }
       cancelDocumentOperation();
+    } else if (doc && deps.pointerState.mode === "lasso") {
+      deps.onLassoComplete();
+      cancelDocumentOperation();
     } else if (doc && deps.pointerState.mode === "marquee") {
       if (!doc.selectionRect || doc.selectionRect.width < 2 || doc.selectionRect.height < 2) {
-        doc.selectionRect = null;
-        deps.log("Selection cleared because marquee was too small", "WARN");
-      } else {
-        const nextSelection = applySelectionMode(
-          deps.pointerState.startSelectionInverted ? null : deps.pointerState.startSelectionRect,
-          doc.selectionRect,
-          deps.getSelectionMode()
-        );
-        doc.selectionRect = nextSelection;
-        doc.selectionInverted = false;
-        if (nextSelection) {
-          deps.log(`Selection committed ${nextSelection.width}x${nextSelection.height}`, "INFO");
+        const mode = deps.getSelectionMode();
+        if (mode === "replace") {
+          // Click without drag in replace mode clears the selection
+          doc.selectionRect = null;
+          doc.selectionMask = null;
+          doc.selectionPath = null;
+          doc.selectionInverted = false;
+          deps.log("Selection cleared (click)", "INFO");
+        } else if (doc.selectionMask) {
+          // Non-replace mode: restore bounding rect, ignore the tiny marquee
+          doc.selectionRect = maskBoundingRect(doc.selectionMask);
         } else {
+          doc.selectionRect = null;
+          doc.selectionPath = null;
+        }
+      } else {
+        const mode = deps.getSelectionMode();
+        const newRect = doc.selectionRect;
+        const sides = deps.getMarqueeShape();
+        const mods = deps.getMarqueeModifiers();
+
+        // Compute rotation: default orientation per polygon; Ctrl+Shift rotates toward cursor
+        let rotation = defaultPolygonRotation(sides);
+        if (mods.rotate && sides <= 10) {
+          const dx = deps.pointerState.lastDocX - deps.pointerState.startDocX;
+          const dy = deps.pointerState.lastDocY - deps.pointerState.startDocY;
+          rotation = Math.atan2(dy, dx);
+        }
+
+        // Rasterize the new marquee shape into a temp mask
+        const tmpMask = createMaskCanvas(doc.width, doc.height);
+        rasterizeRectToMask(tmpMask, newRect, sides, rotation, mods.perfect);
+
+        if (mode === "replace" || !doc.selectionMask) {
+          doc.selectionMask = tmpMask;
+        } else {
+          combineMasks(doc.selectionMask, tmpMask, mode);
+        }
+
+        // Update bounding rect from mask
+        const bounds = maskBoundingRect(doc.selectionMask);
+        doc.selectionRect = bounds;
+        doc.selectionInverted = false;
+        doc.selectionPath = null;
+        doc.selectionShape = "rect";
+
+        if (bounds) {
+          deps.log(`Selection committed ${bounds.width}x${bounds.height}`, "INFO");
+        } else {
+          doc.selectionMask = null;
           deps.log("Selection cleared after marquee operation", "INFO");
         }
       }
@@ -525,6 +1188,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     }
     deps.pointerState.mode = "none";
     deps.pointerState.transformHandle = null;
+    deps.pointerState.creationLayerId = null;
     deps.canvasWrap.classList.remove("is-dragging", "is-panning");
     if (hadActiveMode) deps.renderEditorState();
   }

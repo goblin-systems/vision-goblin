@@ -7,6 +7,8 @@ import { fileNameFromPath } from "../editor/utils";
 
 export const supportedImageExtensions = ["png", "jpg", "jpeg", "webp", "gif", "bmp"];
 
+export type IoController = ReturnType<typeof createIoController>;
+
 export function createIoController() {
   return {
     async openImageDialog() {

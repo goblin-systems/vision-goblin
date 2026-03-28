@@ -1,9 +1,10 @@
 import { createLayerThumb } from "./documents";
 import { canDeleteLayer } from "./layers";
+import { hasEnabledEffects } from "./layerStyles";
 import type { DocumentState } from "./types";
 
 interface LayerListActions {
-  onSelect: (layerId: string) => void;
+  onSelect: (layerId: string, event: { ctrlKey: boolean; shiftKey: boolean }) => void;
   onToggleVisibility: (layerId: string) => void;
   onMoveUp: (layerId: string) => void;
   onMoveDown: (layerId: string) => void;
@@ -38,16 +39,18 @@ export function renderLayerList(layerList: HTMLElement, doc: DocumentState, acti
   layerList.innerHTML = "";
 
   [...doc.layers].reverse().forEach((layer) => {
+    const isActive = layer.id === doc.activeLayerId;
+    const isMultiSelected = doc.selectedLayerIds.length > 0 && doc.selectedLayerIds.includes(layer.id);
     const row = document.createElement("div");
-    row.className = `layer-row${layer.id === doc.activeLayerId ? " is-active" : ""}`;
+    row.className = `layer-row${isActive ? " is-active" : isMultiSelected ? " is-selected" : ""}`;
     row.tabIndex = 0;
     row.setAttribute("role", "button");
     row.dataset.layerId = layer.id;
-    row.addEventListener("click", () => actions.onSelect(layer.id));
+    row.addEventListener("click", (e) => actions.onSelect(layer.id, { ctrlKey: e.ctrlKey || e.metaKey, shiftKey: e.shiftKey }));
     row.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        actions.onSelect(layer.id);
+        actions.onSelect(layer.id, { ctrlKey: false, shiftKey: false });
       }
     });
 
@@ -65,9 +68,24 @@ export function renderLayerList(layerList: HTMLElement, doc: DocumentState, acti
     top.appendChild(label);
 
     const flags = document.createElement("span");
-    flags.className = `badge ${layer.isBackground ? "default" : layer.locked ? "beta" : "success"}`;
-    flags.textContent = layer.isBackground ? "base" : layer.locked ? "locked" : "layer";
+    flags.className = `badge ${layer.isBackground ? "default" : layer.locked ? "beta" : layer.type === "text" ? "warning" : layer.type === "shape" ? "default" : layer.type === "adjustment" ? "warning" : layer.type === "smart-object" ? "beta" : "success"}`;
+    flags.textContent = layer.isBackground ? "base" : layer.locked ? "locked" : layer.type === "adjustment" ? "adj" : layer.type === "smart-object" ? "smart" : layer.type;
     top.appendChild(flags);
+
+    if (layer.mask) {
+      const maskBadge = document.createElement("span");
+      maskBadge.className = "badge default";
+      maskBadge.textContent = "mask";
+      top.appendChild(maskBadge);
+    }
+
+    if (hasEnabledEffects(layer.effects)) {
+      const fxBadge = document.createElement("span");
+      fxBadge.className = "badge success";
+      fxBadge.textContent = "fx";
+      top.appendChild(fxBadge);
+    }
+
     row.appendChild(top);
 
     const meta = document.createElement("span");

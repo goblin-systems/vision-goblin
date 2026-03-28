@@ -30,6 +30,7 @@ export async function addBlobAsLayer(doc: DocumentState, name: string, blob: Blo
 
   const layer: RasterLayer = {
     id: nextId("layer"),
+    type: "raster",
     name: stripExtension(name) || `Layer ${doc.layers.length}`,
     canvas: createLayerCanvas(doc.width, doc.height),
     x: Math.round((doc.width - image.naturalWidth) / 2),
@@ -37,6 +38,7 @@ export async function addBlobAsLayer(doc: DocumentState, name: string, blob: Blo
     visible: true,
     opacity: 1,
     locked: false,
+    effects: [],
   };
   getLayerContext(layer).drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight);
   syncLayerSource(layer);

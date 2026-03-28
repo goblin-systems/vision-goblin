@@ -46,6 +46,7 @@ describe("editor documents", () => {
   it("creates layer thumbnails at the expected size", () => {
     const layer = {
       id: "layer-1",
+      type: "raster" as const,
       name: "Layer",
       canvas: createLayerCanvas(200, 100),
       x: 0,
@@ -53,6 +54,7 @@ describe("editor documents", () => {
       visible: true,
       opacity: 1,
       locked: false,
+      effects: [],
     };
     const thumb = createLayerThumb(layer);
     expect(thumb.width).toBe(28);

@@ -18,9 +18,10 @@ The goal is not to prescribe exact code structure. The goal is to define a large
 ## Delivery Structure
 
 - Completed foundation: shell, document model, rendering baseline, tabs, file/project IO baseline, raster layers, history, crop/brush/eraser/move, and Goblin-based desktop UI.
-- Current phase: finish the missing editor core so the app becomes a trustworthy image editor, not just a strong shell.
-- Next phase after that: persistence and native desktop utilities.
-- Later phases: advanced non-AI editing, optional AI tools, automation, and extensibility.
+- Current phase: raise performance headroom for larger files, polish re-editing workflows, prepare the AI integration layer, and keep modularizing the app controller so `src/main.ts` shrinks toward a bootstrap-only role.
+- Modularization progress so far: capture workflow, destructive raster adjustment modal orchestration, selection-tools modal/session orchestration (color range, refine edge, quick mask), distort modal/session orchestration (warp, liquify), right-rail inspector orchestration, document/file lifecycle with autosave/recovery orchestration, workspace shell/chrome presentation, canvas workspace rendering/snapping/guide bindings, global editor interaction bindings, and layer/history panel orchestration now live in dedicated app-layer controllers instead of `src/main.ts`.
+- Next phase after that: polish re-editing workflows and remaining desktop differentiators.
+- Later phases: optional AI tools, workflow automation, and extensibility.
 
 ---
 
@@ -44,6 +45,44 @@ These items are no longer in the active backlog because the current app already 
 - Goblin design system migration and desktop menu structure
 - Selection engine baseline: rect storage, add/subtract/intersect modes, marching ants, invert/deselect/select all, paint clipping, undo/redo preservation
 - Transform tool baseline: free transform bounding box, scale with aspect ratio, rotate, skew, commit/cancel flow, live preview
+- Transform enhancements: configurable pivot point with drag repositioning, constrained rotation (Shift for 15-degree snapping), visual pivot indicator
+- Rulers, guides, and snapping: canvas-rendered rulers, drag-to-create guides, snap layers to canvas edges/guides/grid, toggle snap behavior
+- Grid system: configurable grid size, canvas-aligned grid rendering, snap-to-grid, grid size persistence
+- New document creation flow: web/social/print/icon presets, background choice, create-from-clipboard option
+- Image adjustments: brightness/contrast, hue/saturation, Gaussian blur with live preview and undo support
+- Elliptical marquee selection: rect/ellipse shape toggle, elliptical marching ants, elliptical paint clipping, elliptical delete
+- Pixel-level editing mode: nearest-neighbor rendering at high zoom (>=400%), pixel grid overlay at >=800% zoom, crisp pixel boundaries
+- Sharpen filter: unsharp mask sharpening with amount/radius controls, live preview, undo support
+- Color balance adjustment: shadow/midtone/highlight tonal range shifting across cyan-red, magenta-green, yellow-blue axes with live preview
+- Motion blur filter: directional blur with angle and distance controls, live preview, undo support
+- Noise tools: add noise (monochrome/color with amount control), reduce noise (edge-preserving selective averaging with strength control), both with live preview
+- Levels adjustment: input black/gamma/white controls with histogram display, live preview, undo support
+- Curves adjustment: interactive tone curve editor with click-to-add/drag-to-move/right-click-to-remove control points, monotone cubic interpolation, live preview
+- Gradient maps: luminance-to-gradient color mapping with 6 built-in presets (B&W, Sepia, Cool/Warm Duotone, Sunset, Infrared), preset selector, live preview
+- Smudge tool: pixel-pushing tool with circular brush, edge feathering, strength control (via brush opacity), selection clipping support, undo/redo
+- Clone stamp tool: Alt-click to set sample source, aligned sampling with offset, circular brush with feathering, selection clipping, undo/redo
+- LUT support: .cube file import, 3D LUT with trilinear interpolation, intensity slider, live preview, undo support
+- Command, action, and shortcut system: central command registry, keyboard dispatch, shortcut conflict detection, menu routing through commands
+- Autosave and crash recovery: periodic autosave to Tauri store, recovery prompt on launch, configurable interval
+- Recent files: persistent recent file list via Tauri store, top-nav submenu, clear recent, graceful handling of missing files
+- Lasso and polygonal lasso selection: freehand path capture, polygon vertex placement, double-click/Enter to close, Escape to cancel, marching ants rendering, selection clipping
+- Magic wand selection: flood-fill contiguous mode, full-scan non-contiguous mode, tolerance slider, contour tracing to polygon path
+- Healing brush: baseline defect repair with selection-aware blending, edge-preserving cleanup tuning, undo/redo support
+- Text tool: editable text layers, point text and box text, toolbar-based formatting controls, save/reopen persistence, transform participation baseline
+- Shape tools: editable rectangle/ellipse/line layers, click/drag creation, fill/stroke/radius controls, save/reopen persistence
+- Basic effects: non-destructive drop shadow and outline for supported layers, canvas/export rendering
+- Expanded transform/pivot workflow: right-drag pivot repositioning, left-drag transform move, improved selected-layer targeting
+- Layer deletion preference: optional delete confirmation, disabled by default
+- Adjustment layers: non-destructive brightness/contrast, hue/saturation, levels, curves, color balance, and gradient map as stackable, reorderable, toggleable layers with dedicated inspector controls and compositing pipeline integration
+- Smart objects: embedded source assets with non-destructive transform accumulation, rasterize/replace source, paint guards, serialization round-trip
+- Layer styles system: unified style framework with drop shadow, inner shadow, outer glow, outline, color overlay effects; multi-effect stacking, enable/disable per effect, copy/paste styles, effect normalization
+- Edge refinement: feather/smooth/expand controls on selection masks with float32 pipeline, preview backgrounds, output to selection/mask/layer
+- Select by color range: CIE Lab perceptual color distance, fuzziness with soft falloff, composite sampling, modal preview UI
+- Quick mask mode: paint-to-select with red overlay, tool switching, mask-to-selection conversion on exit
+- Alignment and distribution tools: multi-layer selection (Ctrl/Shift+click), align left/right/top/bottom/center, distribute H/V, align to canvas or selection
+- Command palette foundation: Ctrl+K fuzzy-search palette over all registered commands, keyboard navigation (ArrowUp/Down/Enter/Escape), recent commands, shortcut display, category badges
+- Distort and warp tools: interactive mesh-based warp with configurable grid density, perspective distort helper, bilinear-sampled triangle rasterization, commit/cancel with undo, live preview overlay
+- Liquify lite: displacement-map brush with push/pull/smooth modes, configurable brush size and strength, bilinear sampling, dedicated modal session UI with live preview, commit with undo
 
 ---
 
@@ -51,176 +90,16 @@ These items are no longer in the active backlog because the current app already 
 
 ## PHASE 1A - Finish the Core Editor
 
-### F0.4 Command, action, and shortcut system
-
-What it does:
-Creates a central command registry so menus, buttons, keyboard shortcuts, and future command palette entries all invoke one shared action layer.
-
-Why it exists:
-The app already has multiple entry points for the same behaviors. The next phase should unify them before more tools are added.
-
-Dependencies:
-- F0.1.
-
-Execution scope:
-- Define command ids, labels, shortcuts, context, enable/disable rules, and handlers.
-- Route top navigation menus and keyboard shortcuts through the same command registry.
-- Make command availability derive from current document/tool/selection state.
-- Prepare for command palette and automation later.
-
-Definition of done:
-- Common actions execute through one code path.
-- Disabled commands never fire.
-- Shortcut conflicts can be detected in one place.
-
-### F0.5 Autosave and crash recovery
-
-What it does:
-Periodically snapshots recoverable document state and offers restore after unexpected shutdown.
-
-Why it exists:
-The editor now has enough destructive capability that unsaved work protection is a priority.
-
-Dependencies:
-- F0.2.
-
-Execution scope:
-- Autosave dirty documents on interval and important state transitions.
-- Restore unsaved sessions on next launch.
-- Show recovery UI with per-document choices.
-- Clean up stale recovery entries on intentional successful close.
-
-Definition of done:
-- Forced crash during editing produces a recoverable session.
-- Restore/discard works per document.
-- Recovery never silently overwrites a user-saved file.
-
-### F1.2 File open, import, save, save as, and recent files
-
-What it does:
-Completes the file workflow with recent-file recall and better missing-file handling.
-
-Why it exists:
-Core file IO exists, but daily desktop use still needs a reliable recent-files layer.
-
-Dependencies:
-- F0.2, F0.5.
-
-Execution scope:
-- Keep current image open, project save, save as, and drag-drop behavior.
-- Add recent files/projects list with persistence.
-- Mark or remove stale entries cleanly.
-- Add a top-nav entry point for recent files.
-
-Definition of done:
-- User can reopen recent work quickly.
-- Invalid recent entries fail gracefully.
-
-### F1.4 New document creation flow
-
-What it does:
-Upgrades the current blank-canvas modal into a real new-document flow.
-
-Why it exists:
-The editor can create blank canvases, but common presets and background choices are still missing.
-
-Dependencies:
-- F0.2.
-
-Execution scope:
-- Keep custom dimensions.
-- Add presets for common web, social, and print outputs.
-- Add transparent or solid background choice.
-- Add create-from-clipboard as part of the same flow where available.
-
-Definition of done:
-- New canvas creation is fast for common use cases.
-- Blank, preset, and clipboard-start flows all feel intentional.
-
-### F1.10 Marquee tool - rectangular and elliptical
-
-What it does:
-Allows geometric selections with modifier keys for constrain-from-center and aspect behavior.
-
-Why it exists:
-Fast, precise geometric selections are everyday editing actions.
-
-Dependencies:
-- F1.9.
-
-Execution scope:
-- Rectangular marquee.
-- Elliptical marquee.
-- Feather value support placeholder or basic implementation.
-- Modifier behaviors for add/subtract/constrain.
-
-Definition of done:
-- User can make and modify geometric selections accurately.
-
-### F1.11 Lasso and polygonal lasso
-
-What it does:
-Allows freehand and point-by-point irregular selections.
-
-Why it exists:
-Many practical selections are not rectangular.
-
-Dependencies:
-- F1.9.
-
-Execution scope:
-- Freehand lasso path capture.
-- Polygonal lasso with click-to-place vertices.
-- Close path behavior and escape/cancel behavior.
-
-Definition of done:
-- User can create irregular selections with predictable edge behavior.
-
-### F1.12 Magic wand selection
-
-What it does:
-Selects connected or global pixels by color similarity.
-
-Why it exists:
-It is a fast baseline selection tool for simple isolation tasks.
-
-Dependencies:
-- F1.9.
-
-Execution scope:
-- Tolerance control.
-- Contiguous and non-contiguous modes.
-- Anti-alias handling.
-- Sample current layer versus composite.
-
-Definition of done:
-- Clicking visually similar areas creates expected selections on common test images.
-
-### F1.14 Transform tool - remaining enhancements
-
-What it does:
-Adds perspective transforms, configurable pivot point, and constrained rotation to the existing transform tool.
-
-Why it exists:
-The baseline transform (scale, rotate, skew, commit/cancel) is complete. These enhancements close the gap to professional parity.
-
-Dependencies:
-- Existing transform tool baseline.
-
-Execution scope:
-- Configurable pivot point with visual indicator and drag repositioning.
-- Constrained rotation snapping (Shift for 15-degree increments).
-- Visual pivot indicator rendered on the transform bounding box.
-
-Definition of done:
-- Pivot point can be moved and rotation snaps to angles when Shift is held.
-- Pivot indicator is visible and intuitive.
+Status: shipped. Command routing, autosave/recovery, recent files, lasso selection, and magic wand are already delivered and reflected in `Completed So Far`.
 
 ---
 
 ## PHASE 1B - Desktop Reliability and Differentiators
 
-### F1.31 Global screen snipping
+### F1.31 Global screen snipping (SHIPPED)
+
+Status:
+- Shipped.
 
 What it does:
 Captures screen regions, windows, or full displays into new editor documents.
@@ -232,16 +111,33 @@ Dependencies:
 - F0.4, F1.2.
 
 Execution scope:
-- Region, window, and full-screen capture.
-- Create a new document from captured pixels.
-- Preserve monitor scaling behavior correctly.
-- Add reliable shortcuts and permission handling.
+- Keep the existing region, window, and full-screen capture entry points.
+- Create a new document from captured pixels, add capture to the active document as a new layer, or copy to clipboard.
+- Replace primary-monitor-only assumptions with correct monitor targeting / virtual desktop coverage.
+- Preserve monitor scaling behavior correctly across single-monitor, multi-monitor, and mixed-DPI setups.
+- Move shortcuts into the normal command/keybinding system and resolve conflicts centrally.
+- Persist screen-capture preferences such as destination, delay, and hide-window behavior.
+- Add explicit permission-denied and capture-failed UX.
 
 Definition of done:
 - Snips land in the editor quickly and predictably.
 - Capture behaves correctly across common display setups.
 
-### F1.32 Global color picker
+Delivered baseline:
+- Tool menu actions for region, window, and full-screen capture.
+- Capture shortcuts routed through the shared command/keybinding settings model, with global shortcut registration derived from the same bindings.
+- Overlay-based region selection with crop-to-selection flow.
+- Countdown window and optional hide-window-before-capture flow.
+- Delivery destinations: new canvas, add to active canvas as a layer, copy to clipboard.
+- Persisted capture preferences for destination, delay, and hide-window behavior.
+- Baseline capture error handling and recovery to restore the app window after failed capture attempts.
+- Capture IPC optimised: Rust commands return raw binary via `tauri::ipc::Response` instead of JSON-serialised `Vec<u8>`, and PNG encoding uses fast compression (`CompressionType::Fast` / `FilterType::Sub`). JS side receives `ArrayBuffer` directly.
+- Capture overlay now renders the screenshot at 1:1 pixel mapping, filling the entire screen. Toolbar floats on top with fixed positioning instead of consuming layout space. Feels like cutting the screen itself rather than viewing a scaled-down screenshot.
+
+### F1.32 Global color picker (SHIPPED)
+
+Status:
+- Shipped.
 
 What it does:
 Lets the user sample any pixel on screen, not just inside the editor canvas.
@@ -253,13 +149,21 @@ Dependencies:
 - F0.4.
 
 Execution scope:
-- Global pick mode with magnified preview if feasible.
+- Keep the existing overlay-driven global pick mode with magnified preview and coordinate readout.
 - Return picked color to the active paint swatch and picker UI.
-- Handle cancel/escape cleanly.
+- Share capture infrastructure with global screen snipping where possible.
+- Support correct sampling on multi-monitor and mixed-DPI setups.
+- Handle cancel/escape and permission failures cleanly.
+- Decide whether to keep screenshot-based sampling as the shipped behavior or add live desktop sampling later as an upgrade.
 
 Definition of done:
 - User can sample off-canvas colors reliably.
 - Picked color immediately becomes usable inside the editor.
+
+Delivered baseline:
+- Tool menu action and shared keybinding/global shortcut baseline for pick-from-screen.
+- Overlay magnifier, color chip, and sampled color readout.
+- Click-to-apply sampled color to the active swatch.
 
 ### F1.34 Large image handling baseline
 
@@ -285,27 +189,13 @@ Definition of done:
 
 ## PHASE 1C - Expanded Raster Editing
 
-### F1.18 Clone stamp
-
-What it does:
-Copies sampled pixels from one area to another for repair and duplication.
-
-Why it exists:
-It is a foundational retouching tool for blemish removal and texture rebuilding.
-
-Dependencies:
-- F1.16, F1.9.
-
-Execution scope:
-- Alt/option-click sample point.
-- Aligned and non-aligned sampling modes.
-- Current layer or composite sampling.
-- Sample preview indicator.
-
-Definition of done:
-- Sampled content follows cursor accurately and predictably.
+Status: mostly complete at MVP level. The baseline tools below are implemented; remaining work is refinement, polish, and deeper re-editing UX.
 
 ### F1.19 Healing brush
+
+Status:
+- Done at baseline level.
+- Follow-up work should focus on stronger retouch quality, better sampling controls, and harder edge cases.
 
 What it does:
 Repairs local defects by blending sampled or inferred texture into surrounding tone and lighting.
@@ -324,162 +214,12 @@ Execution scope:
 Definition of done:
 - Common blemish and dust cleanup cases look plausibly blended.
 
-### F1.20 Smudge tool
-
-What it does:
-Pushes and blends nearby pixels to create smear or painterly transitions.
-
-Why it exists:
-Useful for quick blending, painterly workflows, and light retouching.
-
-Dependencies:
-- F1.16.
-
-Execution scope:
-- Strength control.
-- Sample accumulation along stroke.
-- Respect active selection.
-
-Definition of done:
-- Tool visibly drags color in a controllable way without instability.
-
-### F1.21 Basic adjustments - brightness and contrast
-
-What it does:
-Adjusts overall tonal intensity and contrast of the active layer or selection.
-
-Why it exists:
-Fast tonal correction is a universal entry-level need.
-
-Dependencies:
-- F1.5, F1.9.
-
-Execution scope:
-- Preview before apply.
-- Numeric sliders and reset.
-- Apply to selection or whole target.
-
-Definition of done:
-- Visible adjustment matches slider changes and is undoable.
-
-### F1.22 Levels
-
-What it does:
-Adjusts black point, white point, and midtone response with histogram guidance.
-
-Why it exists:
-Levels is a core serious correction tool.
-
-Dependencies:
-- F1.21.
-
-Execution scope:
-- Show histogram.
-- Input black, gamma, white controls.
-- Output range controls if feasible.
-- Live preview.
-
-Definition of done:
-- Histogram-driven edits apply correctly and preview accurately.
-
-### F1.23 Curves
-
-What it does:
-Provides fine-grained tone remapping through editable curve points.
-
-Why it exists:
-Curves is essential for advanced tonal control.
-
-Dependencies:
-- F1.22.
-
-Execution scope:
-- Composite curve editing baseline.
-- Point add/move/delete.
-- Reset and preset support.
-- Live preview.
-
-Definition of done:
-- Curve edits visibly and accurately affect tone mapping.
-
-### F1.24 Hue and saturation
-
-What it does:
-Adjusts overall or targeted color intensity and hue shift.
-
-Why it exists:
-Basic color correction and stylization require this control.
-
-Dependencies:
-- F1.21.
-
-Execution scope:
-- Hue shift.
-- Saturation control.
-- Lightness/value control if included.
-- Preview and reset.
-
-Definition of done:
-- Color adjustments produce predictable changes on representative images.
-
-### F1.25 Color balance
-
-What it does:
-Shifts shadows, midtones, and highlights toward chosen color ranges.
-
-Why it exists:
-It provides intuitive correction for warmth/coolness and cast removal.
-
-Dependencies:
-- F1.24.
-
-Execution scope:
-- Tonal range targeting.
-- Preserve luminosity option if supported.
-- Live preview.
-
-Definition of done:
-- Different tonal ranges can be shifted without obvious UI ambiguity.
-
-### F1.26 Gradient maps
-
-What it does:
-Maps luminance to custom gradient colors for stylization and grading.
-
-Why it exists:
-Useful for looks, duotones, and creative effects even before AI features.
-
-Dependencies:
-- F1.24.
-
-Execution scope:
-- Gradient editor baseline.
-- Preset gradients.
-- Preview and apply.
-
-Definition of done:
-- Gradient map output matches the configured gradient stops.
-
-### F1.27 LUT support
-
-What it does:
-Applies lookup-table based color transforms from supported LUT formats.
-
-Why it exists:
-It improves compatibility with existing creator and photo workflows.
-
-Dependencies:
-- F1.24.
-
-Execution scope:
-- Import supported LUT file formats.
-- Preview LUT effect.
-- Intensity slider if feasible.
-
-Definition of done:
-- User can apply a LUT and get a stable, repeatable result.
-
 ### F1.28 Text tool
+
+Status:
+- Mostly done at MVP level.
+- Editable text layers, point/box text, toolbar controls, persistence, and transform baseline are in place.
+- Remaining work is direct on-canvas re-editing, stronger text-specific transform behavior, and richer typography controls.
 
 What it does:
 Creates editable text layers with font, size, line spacing, kerning, alignment, fill, and transform controls.
@@ -502,6 +242,10 @@ Definition of done:
 
 ### F1.29 Shape tools
 
+Status:
+- Done at baseline level.
+- Remaining work is polish: multi-shape selection, better on-canvas handles, and more geometric controls.
+
 What it does:
 Creates rectangles, ellipses, and lines as editable vector-like shape layers or rasterized shapes depending on chosen implementation.
 
@@ -521,6 +265,10 @@ Definition of done:
 - Shapes can be created, restyled, and moved predictably.
 
 ### F1.30 Basic effects - shadow and outline
+
+Status:
+- Done at baseline level.
+- Remaining work is effect stacking, presets, and better per-layer style management.
 
 What it does:
 Adds simple layer-level visual effects for text and shapes.
@@ -544,7 +292,11 @@ Definition of done:
 
 ## PHASE 2 - Advanced Non-AI Editing
 
-### F2.1 Adjustment layers
+Status: all shipped. Adjustment layers, smart objects, layer styles, edge refinement, color range selection, quick mask, alignment/distribution, distort/warp, and liquify are all complete.
+
+This phase is now historical reference for shipped non-AI editor work. Remaining non-AI work is mostly captured as Phase 1B reliability and Phase 1C polish rather than net-new foundational editing systems.
+
+### F2.1 Adjustment layers (SHIPPED)
 
 What it does:
 Turns tonal and color adjustments into stackable, editable non-destructive layers.
@@ -564,7 +316,15 @@ Execution scope:
 Definition of done:
 - Adjustment layers can be reordered and toggled without permanently changing source pixels.
 
+Shipped scope:
+- Brightness/contrast, hue/saturation, levels, curves, color balance, gradient map as adjustment layer types.
+- Re-editable via inspector. Compositing pipeline applies adjustments non-destructively.
+- Layer masks on adjustment layers: add/delete/invert/reset mask, paint reveal/hide with brush/eraser, per-pixel blending in compositing pipeline, serialization round-trip, mask badge in layer list.
+- Clipping to lower layer deferred to future iteration.
+
 ### F2.2 Smart objects - lightweight embedded assets
+
+**SHIPPED.**
 
 What it does:
 Allows layers to reference embedded or linked source content that can be transformed without immediately rasterizing destructive loss.
@@ -580,6 +340,19 @@ Execution scope:
 - Edit source content in isolated workflow.
 - Update instances when source changes.
 - Handle unsupported operations with explicit rasterize prompts.
+
+Delivered:
+- SmartObjectLayer type with sourceDataUrl, sourceWidth/Height, scaleX/Y, rotateDeg, runtime sourceCanvas.
+- Core module (smartObject.ts): create, render (matrix-based from source), convert raster->smart, rasterize smart->raster, replace source.
+- Non-destructive transform commit: scale and rotation accumulate into smartObjectData without degrading source pixels.
+- Paint guards: brush, eraser, smudge, clone-stamp, healing-brush all blocked on smart objects with toast suggesting rasterize.
+- Inspector panel: source dimensions display, live scale/rotation editing, rasterize and replace source buttons.
+- Nav commands: Convert to Smart Object (enabled on raster layers), Rasterize Smart Object (enabled on smart object layers).
+- Layer list badge: "smart" with beta styling.
+- Full serialization/deserialization round-trip including source image data URL.
+- Clone support with independent sourceCanvas.
+- refreshLayerCanvas dispatches to renderSmartObjectLayer.
+- 18 tests covering create, render, convert, rasterize, replace, clone, refresh, serialize.
 
 Definition of done:
 - Repeated transforms do not degrade source content unnecessarily.
@@ -603,7 +376,7 @@ Execution scope:
 Definition of done:
 - Layer styles remain editable and export correctly.
 
-### F2.4 Edge refinement
+### F2.4 Edge refinement (SHIPPED)
 
 What it does:
 Improves existing selections with feathering, smoothing, contrast, and edge cleanup controls.
@@ -622,7 +395,15 @@ Execution scope:
 Definition of done:
 - Hair, product, and soft-edge selection cases visibly improve with refinement controls.
 
-### F2.5 Select by color range
+Delivered:
+- Extracted `edgeRefinement.ts` module with pure functions: `readMaskAlpha`, `morphExpand`, `boxBlurSmooth`, `gaussianFeather`, `alphaToMaskCanvas`, `refineMask`.
+- Float32 alpha buffer pipeline: morphological expand/contract with circular structuring element, separable box blur smoothing, separable Gaussian blur feathering.
+- Three output modes: selection, layer mask, new layer with mask.
+- Preview backgrounds: marching ants, black, white, checkerboard.
+- Modal UI with feather/smooth/expand sliders and live preview.
+- 15 unit tests covering all pure functions and integration.
+
+### F2.5 Select by color range (SHIPPED)
 
 What it does:
 Selects pixels across the image based on sampled color families rather than only local adjacency.
@@ -641,7 +422,15 @@ Execution scope:
 Definition of done:
 - User can isolate repeated colors across non-contiguous regions with acceptable accuracy.
 
-### F2.6 Quick mask mode
+Delivered:
+- `colorRange.ts` module with CIE Lab color space conversion for perceptual accuracy.
+- `rgbToLab`, `labDistance`, `buildColorRangeMask` (returns Uint8ClampedArray), `alphaToMaskImageData`, `samplePixel`.
+- Soft falloff in outer 30% of fuzziness threshold for natural edges.
+- Modal UI with fuzziness slider, click-to-sample on preview, live mask preview.
+- Uses `compositeDocumentOnto` for accurate pixel sampling across all layers.
+- 15 unit tests.
+
+### F2.6 Quick mask mode (SHIPPED)
 
 What it does:
 Temporarily converts the selection into a paintable overlay so users can refine it with brush-like controls.
@@ -660,64 +449,15 @@ Execution scope:
 Definition of done:
 - Entering and leaving quick mask preserves intended selection state.
 
-### F2.7 Blur filter suite
+Delivered:
+- Toggle via Q key or menu. Entering saves current tool, creates mask canvas (copies existing selection if any), switches to brush.
+- Paint interception in `canvasPointer.ts` via `getQuickMaskCanvas` — brush strokes go to mask canvas, not layer.
+- Semi-transparent red overlay rendered in `render.ts` using `destination-out` compositing to show unselected areas.
+- Exiting converts painted mask back to `selectionMask` / `selectionRect` with undo support.
+- Non-destructive: empty mask on exit makes no selection change.
+- Red border CSS indicator and floating chip instructions while active.
 
-What it does:
-Adds Gaussian blur and motion blur as baseline blur effects.
-
-Why it exists:
-Blur is needed for depth, softening, masks, and graphic effects.
-
-Dependencies:
-- F1.5.
-
-Execution scope:
-- Gaussian blur.
-- Motion blur with angle and distance.
-- Preview and apply.
-
-Definition of done:
-- Blur effects render correctly on whole layers or selections.
-
-### F2.8 Sharpen filter suite
-
-What it does:
-Adds baseline sharpening for detail recovery and local crispness.
-
-Why it exists:
-Sharpening is a standard corrective tool.
-
-Dependencies:
-- F2.7.
-
-Execution scope:
-- Basic sharpen.
-- Strength control.
-- Preview and apply.
-
-Definition of done:
-- Sharpen visibly increases edge contrast without UI ambiguity.
-
-### F2.9 Noise add and reduce
-
-What it does:
-Adds or removes image noise for creative and corrective workflows.
-
-Why it exists:
-Noise handling is important for low-light images and stylized textures.
-
-Dependencies:
-- F2.7.
-
-Execution scope:
-- Add monochrome or color noise.
-- Basic noise reduction.
-- Preview and apply.
-
-Definition of done:
-- User can intentionally add grain or reduce visible noise with understandable controls.
-
-### F2.10 Distort and warp tools
+### F2.10 Distort and warp tools (SHIPPED)
 
 What it does:
 Allows local geometric deformation beyond simple free transform.
@@ -736,7 +476,7 @@ Execution scope:
 Definition of done:
 - Local shape changes preview smoothly and commit accurately.
 
-### F2.11 Liquify lite
+**SHIPPED.** Delivered: `warp.ts` module with `WarpMesh` type, configurable grid density (1x1 to 5x5), interactive control point dragging with live preview, `applyPerspectiveDistort` helper for four-corner mapping with bilinear interior interpolation, triangle-rasterized `renderWarp` with bilinear sampling, mesh overlay drawing, modal UI with grid size selector, reset, and commit/cancel with undo. 13 tests. Registered as `warp` command, nav item with raster-layer guard.
 
 What it does:
 Provides a restrained liquify feature for push, pull, and subtle reshape operations.
@@ -755,46 +495,9 @@ Execution scope:
 Definition of done:
 - User can make localized shape adjustments without obvious artifacting in common cases.
 
-### F2.12 Rulers, guides, and snapping
+**SHIPPED.** Delivered: inline displacement-map engine in `openLiquifyModal` with Float32Array dispX/dispY buffers, three brush modes (push/pull/smooth), configurable brush size (5-200px) and strength (1-100%), Gaussian-weighted brush kernel, bilinear sampling for sub-pixel displacement, modal session UI with sliders and live preview, commit/cancel with undo. Registered as `liquify` command, nav item with raster-layer guard.
 
-What it does:
-Adds alignment infrastructure for precision layout work.
-
-Why it exists:
-Essential for design-oriented and UI composition workflows.
-
-Dependencies:
-- F0.3.
-
-Execution scope:
-- Show rulers.
-- Drag guides from rulers.
-- Snap layers, shapes, and selections to guides and canvas edges.
-- Toggle snap behavior.
-
-Definition of done:
-- Guides are visible, movable, and influence alignment predictably.
-
-### F2.13 Grid system
-
-What it does:
-Displays configurable document grids for spacing and alignment.
-
-Why it exists:
-Supports precision composition and consistent layout.
-
-Dependencies:
-- F2.12.
-
-Execution scope:
-- Grid visibility toggle.
-- Grid spacing and subdivisions.
-- Snap to grid.
-
-Definition of done:
-- Grid settings persist per document or globally according to chosen design.
-
-### F2.14 Alignment and distribution tools
+### F2.14 Alignment and distribution tools (SHIPPED)
 
 What it does:
 Aligns multiple selected layers or objects relative to each other or the canvas.
@@ -813,24 +516,14 @@ Execution scope:
 Definition of done:
 - Multiple objects reposition exactly as requested.
 
-### F2.15 Pixel-level editing mode
-
-What it does:
-Improves precision for high-zoom work such as icon editing, texture cleanup, and exact pixel changes.
-
-Why it exists:
-Some workflows demand explicit pixel control.
-
-Dependencies:
-- F0.3, F1.16.
-
-Execution scope:
-- Crisp nearest-neighbor view at high zoom.
-- Single-pixel brush behavior.
-- Pixel grid overlay.
-
-Definition of done:
-- High-zoom editing does not blur actual pixel boundaries in the view.
+Delivered:
+- Multi-layer selection system: `selectedLayerIds: string[]` on DocumentState, `toggleLayerMultiSelect` (Ctrl+click), `rangeSelectLayers` (Shift+click), `getSelectedLayerIds`.
+- Layer list UI with `is-selected` CSS class for multi-selected rows.
+- `alignment.ts` with 8 functions: `alignLeft/Right/Top/Bottom`, `alignCenterH/V`, `distributeH/V`.
+- `AlignTarget` type: `"selection" | "canvas"` — toggle via menu command.
+- 12 alignment/distribution nav menu items in Layer dropdown.
+- 9 registered commands + `toggle-align-target`.
+- 18 unit tests.
 
 ---
 
@@ -1122,7 +815,7 @@ Definition of done:
 
 ## PHASE 4 - AI Workflows and Agent Layer
 
-### F4.1 Command palette foundation
+### F4.1 Command palette foundation (SHIPPED)
 
 What it does:
 Adds a searchable command palette for tools, actions, workflows, and future natural-language commands.
@@ -1140,6 +833,8 @@ Execution scope:
 
 Definition of done:
 - User can launch core commands faster than navigating menus.
+
+**SHIPPED.** Delivered: `commandPalette.ts` module with `scoreMatch` fuzzy scoring, `filterCommands` search/sort, `openPalette`/`closePalette`/`togglePalette`/`isPaletteOpen`, `getRecentCommandIds`/`pushRecent` for command history, full DOM rendering with keyboard navigation (ArrowUp/Down to navigate, Enter to execute, Escape to close), category badges, shortcut display, empty-state message. Registered as `command-palette` command with `Ctrl+K` shortcut. 16 tests. Palette-aware keydown handling blocks other shortcuts while open.
 
 ### F4.2 Natural-language command execution
 
@@ -1294,6 +989,10 @@ Definition of done:
 - User can create and rerun a saved custom workflow without rebuilding it manually each time.
 
 ---
+
+### F4.10 - AI & Documentation
+Add documentation section as tab. 
+Document all functionality and add ask AI option
 
 ## PHASE 5 - Differentiators and Long-Term Power Features
 

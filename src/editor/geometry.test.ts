@@ -14,6 +14,7 @@ function makeDoc(overrides: Partial<DocumentState> = {}): DocumentState {
     dirty: false,
     layers: [],
     activeLayerId: "layer-1",
+    selectedLayerIds: [],
     history: [],
     sourcePath: null,
     projectPath: null,
@@ -22,7 +23,10 @@ function makeDoc(overrides: Partial<DocumentState> = {}): DocumentState {
     redoStack: [],
     cropRect: null,
     selectionRect: null,
+    selectionShape: "rect",
     selectionInverted: false,
+    selectionPath: null,
+    selectionMask: null,
     guides: [],
     ...overrides,
   };

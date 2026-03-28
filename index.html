@@ -54,6 +54,11 @@
                     <div class="recent-menu-heading">Images</div>
                     <div id="recent-images-nav"></div>
                   </div>
+                  <div class="nav-divider"></div>
+                  <button class="nav-option" type="button" data-nav-id="clear-recent">
+                    <span class="nav-option-icon"><i data-lucide="trash-2"></i></span>
+                    <span class="nav-option-label">Clear recent</span>
+                  </button>
                 </div>
               </div>
               <div class="nav-divider"></div>
@@ -138,10 +143,198 @@
                 <span class="nav-option-label">Invert selection</span>
                 <span class="nav-option-shortcut">Ctrl+Shift+I</span>
               </button>
+              <div class="nav-divider"></div>
+              <button id="color-range-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="color-range">
+                <span class="nav-option-icon"><i data-lucide="pipette"></i></span>
+                <span class="nav-option-label">Select by Color Range</span>
+              </button>
+              <button id="refine-edge-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="refine-edge">
+                <span class="nav-option-icon"><i data-lucide="scan-line"></i></span>
+                <span class="nav-option-label">Refine Edge</span>
+              </button>
+              <button id="quick-mask-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="toggle-quick-mask">
+                <span class="nav-option-icon"><i data-lucide="paintbrush"></i></span>
+                <span class="nav-option-label">Quick Mask Mode</span>
+                <span class="nav-option-shortcut">Q</span>
+              </button>
             </div>
           </div>
           <div class="nav-item">
-            <button class="nav-trigger" type="button">Window <i data-lucide="chevron-down"></i></button>
+            <button class="nav-trigger" type="button">Adjust <i data-lucide="chevron-down"></i></button>
+            <div class="nav-dropdown">
+              <button id="brightness-contrast-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="brightness-contrast">
+                <span class="nav-option-icon"><i data-lucide="sun"></i></span>
+                <span class="nav-option-label">Brightness / Contrast</span>
+              </button>
+              <button id="hue-saturation-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="hue-saturation">
+                <span class="nav-option-icon"><i data-lucide="palette"></i></span>
+                <span class="nav-option-label">Hue / Saturation</span>
+              </button>
+              <button id="lut-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="lut">
+                <span class="nav-option-icon"><i data-lucide="table"></i></span>
+                <span class="nav-option-label">Apply LUT</span>
+              </button>
+              <button id="gradient-map-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="gradient-map">
+                <span class="nav-option-icon"><i data-lucide="blend"></i></span>
+                <span class="nav-option-label">Gradient Map</span>
+              </button>
+              <button id="curves-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="curves">
+                <span class="nav-option-icon"><i data-lucide="spline"></i></span>
+                <span class="nav-option-label">Curves</span>
+              </button>
+              <button id="levels-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="levels">
+                <span class="nav-option-icon"><i data-lucide="bar-chart-3"></i></span>
+                <span class="nav-option-label">Levels</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button id="gaussian-blur-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="gaussian-blur">
+                <span class="nav-option-icon"><i data-lucide="cloudy"></i></span>
+                <span class="nav-option-label">Gaussian Blur</span>
+              </button>
+              <button id="motion-blur-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="motion-blur">
+                <span class="nav-option-icon"><i data-lucide="move-right"></i></span>
+                <span class="nav-option-label">Motion Blur</span>
+              </button>
+              <button id="sharpen-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="sharpen">
+                <span class="nav-option-icon"><i data-lucide="diamond"></i></span>
+                <span class="nav-option-label">Sharpen</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button id="color-balance-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="color-balance">
+                <span class="nav-option-icon"><i data-lucide="sliders-horizontal"></i></span>
+                <span class="nav-option-label">Color Balance</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button id="add-noise-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="add-noise">
+                <span class="nav-option-icon"><i data-lucide="sparkles"></i></span>
+                <span class="nav-option-label">Add Noise</span>
+              </button>
+              <button id="reduce-noise-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="reduce-noise">
+                <span class="nav-option-icon"><i data-lucide="eraser"></i></span>
+                <span class="nav-option-label">Reduce Noise</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button id="warp-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="warp">
+                <span class="nav-option-icon"><i data-lucide="move-3d"></i></span>
+                <span class="nav-option-label">Warp</span>
+              </button>
+              <button id="liquify-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="liquify">
+                <span class="nav-option-icon"><i data-lucide="waves"></i></span>
+                <span class="nav-option-label">Liquify</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-item">
+            <button class="nav-trigger" type="button">Layer <i data-lucide="chevron-down"></i></button>
+            <div class="nav-dropdown">
+              <button id="add-adj-brightness-contrast-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="add-adj-brightness-contrast">
+                <span class="nav-option-icon"><i data-lucide="sun"></i></span>
+                <span class="nav-option-label">Brightness / Contrast</span>
+              </button>
+              <button id="add-adj-hue-saturation-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="add-adj-hue-saturation">
+                <span class="nav-option-icon"><i data-lucide="palette"></i></span>
+                <span class="nav-option-label">Hue / Saturation</span>
+              </button>
+              <button id="add-adj-levels-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="add-adj-levels">
+                <span class="nav-option-icon"><i data-lucide="bar-chart-3"></i></span>
+                <span class="nav-option-label">Levels</span>
+              </button>
+              <button id="add-adj-curves-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="add-adj-curves">
+                <span class="nav-option-icon"><i data-lucide="spline"></i></span>
+                <span class="nav-option-label">Curves</span>
+              </button>
+              <button id="add-adj-color-balance-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="add-adj-color-balance">
+                <span class="nav-option-icon"><i data-lucide="sliders-horizontal"></i></span>
+                <span class="nav-option-label">Color Balance</span>
+              </button>
+              <button id="add-adj-gradient-map-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="add-adj-gradient-map">
+                <span class="nav-option-icon"><i data-lucide="blend"></i></span>
+                <span class="nav-option-label">Gradient Map</span>
+              </button>
+              <hr class="nav-divider" />
+              <button id="convert-to-smart-object-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="convert-to-smart-object">
+                <span class="nav-option-icon"><i data-lucide="package"></i></span>
+                <span class="nav-option-label">Convert to Smart Object</span>
+              </button>
+              <button id="rasterize-layer-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="rasterize-layer">
+                <span class="nav-option-icon"><i data-lucide="image"></i></span>
+                <span class="nav-option-label">Rasterize Layer</span>
+              </button>
+              <hr class="nav-divider" />
+              <button id="align-left-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="align-left">
+                <span class="nav-option-icon"><i data-lucide="align-horizontal-justify-start"></i></span>
+                <span class="nav-option-label">Align Left</span>
+              </button>
+              <button id="align-center-h-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="align-center-h">
+                <span class="nav-option-icon"><i data-lucide="align-center-horizontal"></i></span>
+                <span class="nav-option-label">Align Center Horizontal</span>
+              </button>
+              <button id="align-right-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="align-right">
+                <span class="nav-option-icon"><i data-lucide="align-horizontal-justify-end"></i></span>
+                <span class="nav-option-label">Align Right</span>
+              </button>
+              <button id="align-top-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="align-top">
+                <span class="nav-option-icon"><i data-lucide="align-vertical-justify-start"></i></span>
+                <span class="nav-option-label">Align Top</span>
+              </button>
+              <button id="align-center-v-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="align-center-v">
+                <span class="nav-option-icon"><i data-lucide="align-center-vertical"></i></span>
+                <span class="nav-option-label">Align Center Vertical</span>
+              </button>
+              <button id="align-bottom-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="align-bottom">
+                <span class="nav-option-icon"><i data-lucide="align-vertical-justify-end"></i></span>
+                <span class="nav-option-label">Align Bottom</span>
+              </button>
+              <hr class="nav-divider" />
+              <button id="distribute-h-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="distribute-h">
+                <span class="nav-option-icon"><i data-lucide="align-horizontal-space-between"></i></span>
+                <span class="nav-option-label">Distribute Horizontal</span>
+              </button>
+              <button id="distribute-v-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="distribute-v">
+                <span class="nav-option-icon"><i data-lucide="align-vertical-space-between"></i></span>
+                <span class="nav-option-label">Distribute Vertical</span>
+              </button>
+              <hr class="nav-divider" />
+              <button id="align-to-canvas-nav" class="nav-option nav-option--disabled" type="button" data-nav-id="toggle-align-target">
+                <span class="nav-option-icon"><i data-lucide="square-dashed"></i></span>
+                <span id="align-to-canvas-label" class="nav-option-label">Align to Canvas</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-item">
+            <button class="nav-trigger" type="button">Tools <i data-lucide="chevron-down"></i></button>
+            <div class="nav-dropdown">
+              <button class="nav-option" type="button" data-nav-id="command-palette">
+                <span class="nav-option-icon"><i data-lucide="search"></i></span>
+                <span class="nav-option-label">Command Palette</span>
+                <span class="nav-option-shortcut">Ctrl+K</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="capture-region">
+                <span class="nav-option-icon"><i data-lucide="scan-search"></i></span>
+                <span class="nav-option-label">Capture region</span>
+                <span class="nav-option-shortcut">Ctrl+Shift+4</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="capture-window">
+                <span class="nav-option-icon"><i data-lucide="app-window"></i></span>
+                <span class="nav-option-label">Capture window</span>
+                <span class="nav-option-shortcut">Ctrl+Shift+6</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="capture-fullscreen">
+                <span class="nav-option-icon"><i data-lucide="monitor-up"></i></span>
+                <span class="nav-option-label">Capture full screen</span>
+                <span class="nav-option-shortcut">Ctrl+Shift+5</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="pick-from-screen">
+                <span class="nav-option-icon"><i data-lucide="pipette"></i></span>
+                <span class="nav-option-label">Pick colour from screen</span>
+                <span class="nav-option-shortcut">Ctrl+Shift+C</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-item">
+            <button class="nav-trigger" type="button">View <i data-lucide="chevron-down"></i></button>
             <div class="nav-dropdown">
               <button id="toggle-tools-nav" class="nav-option" type="button" data-nav-id="toggle-tools-panel">
                 <span class="nav-option-icon"><i data-lucide="panel-left-close"></i></span>
@@ -203,6 +396,30 @@
                 <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="eraser" aria-label="Eraser tool" title="Eraser tool">
                   <i data-lucide="eraser"></i>
                 </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="smudge" aria-label="Smudge tool" title="Smudge tool">
+                  <i data-lucide="hand"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="clone-stamp" aria-label="Clone Stamp tool" title="Clone Stamp tool">
+                  <i data-lucide="stamp"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="healing-brush" aria-label="Healing Brush tool" title="Healing Brush tool">
+                  <i data-lucide="sparkles"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="text" aria-label="Text tool" title="Text tool">
+                  <i data-lucide="type"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="shape" aria-label="Shape tool" title="Shape tool">
+                  <i data-lucide="shapes"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="lasso" aria-label="Lasso tool" title="Lasso tool">
+                  <i data-lucide="lasso"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="polygon-lasso" aria-label="Polygonal Lasso tool" title="Polygonal Lasso tool">
+                  <i data-lucide="pentagon"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="magic-wand" aria-label="Magic Wand tool" title="Magic Wand tool">
+                  <i data-lucide="wand-sparkles"></i>
+                </button>
                 <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="eyedropper" aria-label="Eyedropper tool" title="Eyedropper tool">
                   <i data-lucide="pipette"></i>
                 </button>
@@ -217,12 +434,59 @@
                   <span class="badge default">live</span>
                 </div>
                 <p id="tool-settings-empty" class="hint" hidden>Select a tool to see relevant settings.</p>
-                <p id="marquee-tool-hint" class="hint" hidden>Drag to create a rectangular selection. Hold Ctrl to add, Shift to subtract, Alt to intersect. Press Escape to clear it.</p>
+                <p id="healing-tool-hint" class="hint" hidden>Paint over dust and blemishes to blend them with nearby colour and texture.</p>
+                <p id="text-tool-hint" class="hint" hidden>Click or drag on the canvas to add text. Drag sets a box width for wrapped text.</p>
+                <p id="shape-tool-hint" class="hint" hidden>Click or drag on the canvas to create a new shape layer.</p>
+                <label id="shape-kind-field" class="field-block" hidden>
+                  <span>Shape kind</span>
+                  <select id="shape-kind-select">
+                    <option value="rectangle">Rectangle</option>
+                    <option value="ellipse">Ellipse</option>
+                    <option value="line">Line</option>
+                  </select>
+                </label>
+                <p id="marquee-tool-hint" class="hint" hidden>Drag to create a selection. Ctrl+Shift=rotate, Alt+Shift=stretch, both=all. Shift=add, Ctrl=subtract, Alt=intersect.</p>
+                <div id="marquee-shape-field" class="marquee-sides-row" hidden>
+                  <input id="marquee-sides-slider" type="range" min="3" max="11" value="4" style="flex:1;accent-color:#7c73ff;">
+                  <span id="marquee-sides-label" style="min-width:64px;font-size:11px;color:rgba(255,255,255,0.7);">Square</span>
+                </div>
                 <div id="marquee-mode-field" class="selection-mode-group" hidden>
                   <button class="secondary-btn slim-btn selection-mode-btn is-active" type="button" data-selection-mode="replace">Set</button>
-                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="add">Add (Ctrl)</button>
-                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="subtract">Subtract (Shift)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="add">Add (Shift)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="subtract">Subtract (Ctrl)</button>
                   <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="intersect">Intersect (Alt)</button>
+                </div>
+                <p id="lasso-tool-hint" class="hint" hidden>Draw a freehand selection. Hold Shift to add, Ctrl to subtract, Alt to intersect.</p>
+                <div id="lasso-mode-field" class="selection-mode-group" hidden>
+                  <button class="secondary-btn slim-btn selection-mode-btn is-active" type="button" data-selection-mode="replace">Set</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="add">Add (Shift)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="subtract">Subtract (Ctrl)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="intersect">Intersect (Alt)</button>
+                </div>
+                <p id="polygon-lasso-tool-hint" class="hint" hidden>Click to place vertices. Double-click or Enter to close. Hold Shift to add, Ctrl to subtract, Alt to intersect.</p>
+                <div id="polygon-lasso-mode-field" class="selection-mode-group" hidden>
+                  <button class="secondary-btn slim-btn selection-mode-btn is-active" type="button" data-selection-mode="replace">Set</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="add">Add (Shift)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="subtract">Subtract (Ctrl)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="intersect">Intersect (Alt)</button>
+                </div>
+                <p id="magic-wand-tool-hint" class="hint" hidden>Click to select similar pixels. Hold Shift to add, Ctrl to subtract, Alt to intersect.</p>
+                <div id="magic-wand-mode-field" class="selection-mode-group" hidden>
+                  <button class="secondary-btn slim-btn selection-mode-btn is-active" type="button" data-selection-mode="replace">Set</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="add">Add (Shift)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="subtract">Subtract (Ctrl)</button>
+                  <button class="secondary-btn slim-btn selection-mode-btn" type="button" data-selection-mode="intersect">Intersect (Alt)</button>
+                </div>
+                <div id="magic-wand-settings" hidden>
+                  <label class="field-block">
+                    <span>Tolerance</span>
+                    <input id="magic-wand-tolerance-input" type="range" min="0" max="128" step="1" value="32" />
+                  </label>
+                  <p id="magic-wand-tolerance-label" class="hint">Tolerance: 32</p>
+                  <label class="checkbox-label">
+                    <input id="magic-wand-contiguous-checkbox" type="checkbox" checked />
+                    <span>Contiguous</span>
+                  </label>
                 </div>
                 <p id="transform-tool-hint" class="hint" hidden>Drag corner handles to scale, edge handles to skew, and hold Alt for rotate. Hold Ctrl while scaling to preserve aspect ratio.</p>
                 <div id="transform-mode-field" class="selection-mode-group" hidden>
@@ -270,6 +534,159 @@
                     <div id="brush-colour-value" class="colour-value compact-colour-value">#6C63FF</div>
                     <p class="hint">Eyedropper updates the active paint colour.</p>
                   </div>
+                </div>
+              </div>
+              <div id="text-inspector" class="mini-panel" hidden>
+                <div class="pane-heading-row">
+                  <h4>Text</h4>
+                  <span class="badge warning">layer</span>
+                </div>
+                <label class="field-block"><span>Text</span><textarea id="text-value-input" rows="3">Text</textarea></label>
+                <label class="field-block"><span>Font family</span><input id="text-font-family-input" type="text" value="Georgia" /></label>
+                <div class="inline-control-grid">
+                  <label class="field-block"><span>Font size</span><input id="text-font-size-input" type="number" min="8" value="64" /></label>
+                  <label class="field-block"><span>Line height</span><input id="text-line-height-input" type="number" min="0.8" step="0.1" value="1.2" /></label>
+                </div>
+                <div class="inline-control-grid">
+                  <label class="field-block"><span>Kerning</span><input id="text-kerning-input" type="number" step="0.5" value="0" /></label>
+                  <label class="field-block"><span>Box width</span><input id="text-box-width-input" type="number" min="0" placeholder="Auto" /></label>
+                </div>
+                <div class="inline-control-grid">
+                  <label class="field-block"><span>Alignment</span><select id="text-alignment-select"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
+                  <label class="field-block"><span>Fill</span><input id="text-fill-input" type="color" value="#ffffff" /></label>
+                </div>
+                <div class="toolbar-toggle-row">
+                  <label class="checkbox-label"><input id="text-bold-input" type="checkbox" /><span>Bold</span></label>
+                  <label class="checkbox-label"><input id="text-italic-input" type="checkbox" /><span>Italic</span></label>
+                </div>
+              </div>
+              <div id="shape-inspector" class="mini-panel" hidden>
+                <div class="pane-heading-row">
+                  <h4>Shape</h4>
+                  <span class="badge default">layer</span>
+                </div>
+                <label class="field-block"><span>Shape kind</span><select id="shape-kind-inspector-select"><option value="rectangle">Rectangle</option><option value="ellipse">Ellipse</option><option value="line">Line</option></select></label>
+                <div class="inline-control-grid">
+                  <label class="field-block"><span>Width</span><input id="shape-width-input" type="number" min="1" value="220" /></label>
+                  <label class="field-block"><span>Height</span><input id="shape-height-input" type="number" min="1" value="160" /></label>
+                </div>
+                <div class="inline-control-grid">
+                  <label class="field-block"><span>Fill</span><input id="shape-fill-input" type="color" value="#4ade80" /></label>
+                  <label class="field-block"><span>Stroke</span><input id="shape-stroke-input" type="color" value="#f8fafc" /></label>
+                </div>
+                <div class="inline-control-grid">
+                  <label class="field-block"><span>Stroke width</span><input id="shape-stroke-width-input" type="number" min="0" value="4" /></label>
+                  <label class="field-block"><span>Corner radius</span><input id="shape-corner-radius-input" type="number" min="0" value="18" /></label>
+                </div>
+              </div>
+              <div id="adjustment-inspector" class="mini-panel" hidden>
+                <div class="pane-heading-row">
+                  <h4>Adjustment</h4>
+                  <span class="badge warning" id="adj-kind-badge">layer</span>
+                </div>
+                <!-- Brightness / Contrast -->
+                <div id="adj-bc-fields" hidden>
+                  <label class="field-block"><span>Brightness</span><input id="adj-bc-brightness" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <label class="field-block"><span>Contrast</span><input id="adj-bc-contrast" type="range" min="-100" max="100" step="1" value="0" /></label>
+                </div>
+                <!-- Hue / Saturation -->
+                <div id="adj-hs-fields" hidden>
+                  <label class="field-block"><span>Hue</span><input id="adj-hs-hue" type="range" min="-180" max="180" step="1" value="0" /></label>
+                  <label class="field-block"><span>Saturation</span><input id="adj-hs-saturation" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <label class="field-block"><span>Lightness</span><input id="adj-hs-lightness" type="range" min="-100" max="100" step="1" value="0" /></label>
+                </div>
+                <!-- Levels -->
+                <div id="adj-levels-fields" hidden>
+                  <label class="field-block"><span>Input black</span><input id="adj-levels-black" type="range" min="0" max="255" step="1" value="0" /></label>
+                  <label class="field-block"><span>Gamma</span><input id="adj-levels-gamma" type="range" min="10" max="1000" step="1" value="100" /></label>
+                  <label class="field-block"><span>Input white</span><input id="adj-levels-white" type="range" min="0" max="255" step="1" value="255" /></label>
+                </div>
+                <!-- Curves — simplified: single midpoint control -->
+                <div id="adj-curves-fields" hidden>
+                  <label class="field-block"><span>Midpoint input</span><input id="adj-curves-mid-x" type="range" min="0" max="255" step="1" value="128" /></label>
+                  <label class="field-block"><span>Midpoint output</span><input id="adj-curves-mid-y" type="range" min="0" max="255" step="1" value="128" /></label>
+                </div>
+                <!-- Color Balance -->
+                <div id="adj-cb-fields" hidden>
+                  <strong class="field-block-label">Shadows</strong>
+                  <label class="field-block"><span>Cyan-Red</span><input id="adj-cb-sh-cr" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <label class="field-block"><span>Magenta-Green</span><input id="adj-cb-sh-mg" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <label class="field-block"><span>Yellow-Blue</span><input id="adj-cb-sh-yb" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <strong class="field-block-label">Midtones</strong>
+                  <label class="field-block"><span>Cyan-Red</span><input id="adj-cb-mt-cr" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <label class="field-block"><span>Magenta-Green</span><input id="adj-cb-mt-mg" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <label class="field-block"><span>Yellow-Blue</span><input id="adj-cb-mt-yb" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <strong class="field-block-label">Highlights</strong>
+                  <label class="field-block"><span>Cyan-Red</span><input id="adj-cb-hl-cr" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <label class="field-block"><span>Magenta-Green</span><input id="adj-cb-hl-mg" type="range" min="-100" max="100" step="1" value="0" /></label>
+                  <label class="field-block"><span>Yellow-Blue</span><input id="adj-cb-hl-yb" type="range" min="-100" max="100" step="1" value="0" /></label>
+                </div>
+                <!-- Gradient Map (preset only for now) -->
+                <div id="adj-gm-fields" hidden>
+                  <label class="field-block"><span>Preset</span>
+                    <select id="adj-gm-preset">
+                      <option value="0">Black &amp; White</option>
+                      <option value="1">Sepia</option>
+                      <option value="2">Cool Duotone</option>
+                      <option value="3">Warm Duotone</option>
+                      <option value="4">Sunset</option>
+                      <option value="5">Infrared</option>
+                    </select>
+                  </label>
+                </div>
+                <!-- Layer Mask -->
+                <div id="adj-mask-fields" class="adj-mask-controls">
+                  <div class="inline-control-grid" style="gap:4px; margin-top:6px">
+                    <button id="adj-mask-add-btn" type="button" class="btn btn-sm">Add Mask</button>
+                    <button id="adj-mask-delete-btn" type="button" class="btn btn-sm" disabled>Delete Mask</button>
+                  </div>
+                  <div id="adj-mask-edit-row" hidden style="margin-top:4px">
+                    <label class="checkbox-label"><input id="adj-mask-edit-toggle" type="checkbox" /><span>Edit Mask (brush=reveal, eraser=hide)</span></label>
+                    <div class="inline-control-grid" style="gap:4px; margin-top:4px">
+                      <button id="adj-mask-invert-btn" type="button" class="btn btn-sm">Invert</button>
+                      <button id="adj-mask-clear-btn" type="button" class="btn btn-sm">Reset</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="smart-object-inspector" class="mini-panel" hidden>
+                <div class="pane-heading-row">
+                  <h4>Smart Object</h4>
+                  <span class="badge beta">smart</span>
+                </div>
+                <div class="field-block"><span>Source</span><span id="so-source-dims">— × —</span></div>
+                <label class="field-block"><span>Scale X (%)</span><input id="so-scale-x" type="number" min="1" max="10000" step="1" value="100" /></label>
+                <label class="field-block"><span>Scale Y (%)</span><input id="so-scale-y" type="number" min="1" max="10000" step="1" value="100" /></label>
+                <label class="field-block"><span>Rotation (°)</span><input id="so-rotate-deg" type="number" step="0.1" value="0" /></label>
+                <div class="inline-control-grid" style="gap:4px; margin-top:6px">
+                  <button id="so-rasterize-btn" type="button" class="btn btn-sm">Rasterize</button>
+                  <button id="so-replace-btn" type="button" class="btn btn-sm">Replace Source</button>
+                </div>
+              </div>
+              <div id="effects-inspector" class="mini-panel" hidden>
+                <div class="pane-heading-row">
+                  <h4>Effects</h4>
+                  <span class="badge beta">live</span>
+                </div>
+                <div id="effects-list"></div>
+                <div class="inline-control-grid" style="gap:4px; margin-top:6px">
+                  <select id="effects-add-select" class="select-sm" style="flex:1">
+                    <option value="">+ Add effect...</option>
+                    <option value="drop-shadow">Drop Shadow</option>
+                    <option value="inner-shadow">Inner Shadow</option>
+                    <option value="outer-glow">Outer Glow</option>
+                    <option value="outline">Outline</option>
+                    <option value="color-overlay">Colour Overlay</option>
+                  </select>
+                </div>
+                <div style="margin-top:6px">
+                  <select id="effects-preset-select" class="select-sm" style="width:100%">
+                    <option value="">Apply preset...</option>
+                  </select>
+                </div>
+                <div class="inline-control-grid" style="gap:4px; margin-top:4px">
+                  <button id="effects-save-preset-btn" type="button" class="btn btn-sm" style="flex:1">Save as Preset</button>
+                  <button id="effects-clear-btn" type="button" class="btn btn-sm" style="flex:1">Clear All</button>
                 </div>
               </div>
               <div class="mini-panel">
@@ -362,31 +779,17 @@
         <div class="tools-grid">
           <section class="settings-section">
             <div class="section-heading-row">
-              <h2>Screen Snip</h2>
-              <span class="badge beta">next</span>
-            </div>
-            <p class="hint">Phase 1 utility shell for region, window, and full-screen capture into a new editor tab.</p>
-            <div class="stack-actions">
-              <button id="capture-region-btn" class="secondary-btn" type="button"><i data-lucide="scan-search"></i><span>Capture region</span></button>
-              <button id="capture-window-btn" class="secondary-btn" type="button"><i data-lucide="app-window"></i><span>Capture window</span></button>
-              <button id="capture-fullscreen-btn" class="secondary-btn" type="button"><i data-lucide="monitor-up"></i><span>Capture full screen</span></button>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <div class="section-heading-row">
-              <h2>Colour Picker</h2>
+              <h2>Colour Palette</h2>
               <span class="badge default">foundation</span>
             </div>
             <div class="colour-preview-row">
               <div id="colour-preview" class="colour-preview"></div>
               <div>
                 <div id="colour-value" class="colour-value">#6C63FF</div>
-                <p class="hint">Pick from the canvas, preset swatches, or global screen overlay.</p>
+                <p class="hint">Pick from preset swatches or use Tool &gt; Pick colour from screen.</p>
               </div>
             </div>
             <div class="stack-actions compact-actions">
-              <button id="global-picker-btn" class="secondary-btn" type="button"><i data-lucide="pipette"></i><span>Pick from screen</span></button>
               <button class="secondary-btn" type="button" data-colour-swatch="#6C63FF"><i data-lucide="swatch-book"></i><span>Primary</span></button>
               <button class="secondary-btn" type="button" data-colour-swatch="#4ADE80"><i data-lucide="leaf"></i><span>Accent</span></button>
               <button class="secondary-btn" type="button" data-colour-swatch="#F59E0B"><i data-lucide="sun-medium"></i><span>Warm</span></button>
@@ -425,6 +828,10 @@
               <input id="snap-toggle" type="checkbox" />
               <span>Enable snap-ready layout guides</span>
             </label>
+            <label class="checkbox-label">
+              <input id="confirm-layer-deletion-checkbox" type="checkbox" />
+              <span>Confirm before deleting layers</span>
+            </label>
             <div class="inline-control-grid">
               <label class="field-block">
                 <span>Left panel width</span>
@@ -435,6 +842,12 @@
                 <input id="right-panel-width-range" type="range" min="220" max="420" step="10" value="260" />
               </label>
             </div>
+          </section>
+
+          <section class="settings-section settings-wide-card" id="keybindings-section">
+            <h2>Keyboard Shortcuts</h2>
+            <div class="keybindings-grid" id="keybindings-grid"></div>
+            <button id="reset-keybindings-btn" class="secondary-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset to defaults</span></button>
           </section>
 
           <section class="settings-section">
@@ -480,6 +893,43 @@
           </section>
 
           <section class="settings-section">
+            <h2>Screen Capture</h2>
+            <label class="field-block">
+              <span>Destination</span>
+              <select id="capture-destination-select">
+                <option value="new-canvas">New canvas</option>
+                <option value="add-layer">Paste into current canvas</option>
+                <option value="clipboard">Copy to clipboard</option>
+              </select>
+            </label>
+            <label class="field-block">
+              <span>Capture delay</span>
+              <select id="capture-delay-select">
+                <option value="0">None</option>
+                <option value="3">3 seconds</option>
+                <option value="5">5 seconds</option>
+              </select>
+            </label>
+            <label class="checkbox-label">
+              <input id="capture-hide-window-checkbox" type="checkbox" checked />
+              <span>Hide window before capture</span>
+            </label>
+          </section>
+
+          <section class="settings-section">
+            <h2>Autosave</h2>
+            <label class="checkbox-label">
+              <input id="autosave-enabled-checkbox" type="checkbox" checked />
+              <span>Enable autosave and crash recovery</span>
+            </label>
+            <label class="field-block">
+              <span>Interval (seconds)</span>
+              <input id="autosave-interval-input" type="number" min="10" max="600" step="10" value="60" class="input input-sm" style="width: 80px" />
+            </label>
+            <p class="hint">Dirty documents are auto-saved periodically. On crash, you will be offered a restore prompt.</p>
+          </section>
+
+          <section class="settings-section">
             <h2>Debug</h2>
             <label class="checkbox-label">
               <input id="debug-logging-checkbox" type="checkbox" />
@@ -513,11 +963,36 @@
               <span>Preset</span>
               <select id="new-document-preset-select">
                 <option value="custom">Custom</option>
-                <option value="1920x1080">HD 1920x1080</option>
-                <option value="1080x1080">Square 1080x1080</option>
-                <option value="1080x1350">Portrait 1080x1350</option>
-                <option value="1600x900">Wide 1600x900</option>
-                <option value="2480x3508">A4 Print 2480x3508</option>
+                <optgroup label="Web">
+                  <option value="1920x1080">HD 1920 x 1080</option>
+                  <option value="1280x720">HD 720p 1280 x 720</option>
+                  <option value="1600x900">Wide 1600 x 900</option>
+                  <option value="800x600">Small 800 x 600</option>
+                </optgroup>
+                <optgroup label="Social Media">
+                  <option value="1080x1080">Instagram Square 1080 x 1080</option>
+                  <option value="1080x1350">Instagram Portrait 1080 x 1350</option>
+                  <option value="1080x1920">Instagram Story 1080 x 1920</option>
+                  <option value="1200x630">Facebook Post 1200 x 630</option>
+                  <option value="1500x500">Twitter Header 1500 x 500</option>
+                  <option value="1280x720">YouTube Thumbnail 1280 x 720</option>
+                </optgroup>
+                <optgroup label="Print (300 DPI)">
+                  <option value="2480x3508">A4 2480 x 3508</option>
+                  <option value="3508x4961">A3 3508 x 4961</option>
+                  <option value="2550x3300">US Letter 2550 x 3300</option>
+                  <option value="1200x1800">4x6 Photo 1200 x 1800</option>
+                  <option value="1500x2100">5x7 Photo 1500 x 2100</option>
+                </optgroup>
+                <optgroup label="Icon">
+                  <option value="16x16">Favicon 16 x 16</option>
+                  <option value="32x32">Icon 32 x 32</option>
+                  <option value="64x64">Icon 64 x 64</option>
+                  <option value="128x128">Icon 128 x 128</option>
+                  <option value="256x256">Icon 256 x 256</option>
+                  <option value="512x512">Icon 512 x 512</option>
+                  <option value="1024x1024">App Icon 1024 x 1024</option>
+                </optgroup>
               </select>
             </label>
             <label class="field-block">
@@ -543,6 +1018,7 @@
             </label>
           </div>
           <div class="modal-footer">
+            <button id="new-document-clipboard-btn" class="secondary-btn" type="button"><i data-lucide="clipboard-paste"></i><span>From clipboard</span></button>
             <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
             <button id="new-document-submit-btn" class="modal-btn-accept modal-submit-btn" type="button">Create canvas</button>
           </div>
@@ -639,7 +1115,7 @@
               <i data-lucide="x"></i>
             </button>
           </div>
-          <p class="modal-body-text">Choose an open window to capture into a new document.</p>
+          <p class="modal-body-text">Choose an open window to capture into the editor using your current capture destination.</p>
           <label class="field-block">
             <span>Window</span>
             <select id="capture-window-select"></select>
@@ -652,7 +1128,12 @@
       </div>
 
       <div id="capture-overlay" class="capture-overlay" hidden>
-        <div class="capture-overlay-toolbar">
+        <div id="capture-loading-card" class="capture-loading-card" hidden>
+          <span class="capture-loading-spinner"></span>
+          <span>Capturing screen...</span>
+        </div>
+        <canvas id="capture-overlay-canvas" class="capture-overlay-canvas"></canvas>
+        <div id="capture-overlay-toolbar" class="capture-overlay-toolbar">
           <div>
             <strong id="capture-overlay-title">Screen Snip</strong>
             <p id="capture-overlay-hint" class="hint">Drag to select a region.</p>
@@ -666,8 +1147,532 @@
             <button id="capture-overlay-cancel-btn" class="secondary-btn" type="button"><i data-lucide="x"></i><span>Cancel</span></button>
           </div>
         </div>
-        <div id="capture-overlay-stage" class="capture-overlay-stage">
-          <canvas id="capture-overlay-canvas"></canvas>
+      </div>
+
+      <div id="brightness-contrast-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="brightness-contrast-title">
+          <div class="modal-header">
+            <h3 id="brightness-contrast-title">Brightness / Contrast</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Adjust the brightness and contrast of the active layer.</p>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Brightness <output id="bc-brightness-value">0</output></span>
+              <input id="bc-brightness-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Contrast <output id="bc-contrast-value">0</output></span>
+              <input id="bc-contrast-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="bc-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="hue-saturation-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="hue-saturation-title">
+          <div class="modal-header">
+            <h3 id="hue-saturation-title">Hue / Saturation</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Adjust the hue, saturation, and lightness of the active layer.</p>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Hue <output id="hs-hue-value">0</output>&deg;</span>
+              <input id="hs-hue-range" type="range" min="-180" max="180" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Saturation <output id="hs-saturation-value">0</output></span>
+              <input id="hs-saturation-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Lightness <output id="hs-lightness-value">0</output></span>
+              <input id="hs-lightness-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="hs-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="gaussian-blur-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="gaussian-blur-title">
+          <div class="modal-header">
+            <h3 id="gaussian-blur-title">Gaussian Blur</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Apply a Gaussian blur to the active layer.</p>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Radius <output id="blur-radius-value">0</output>px</span>
+              <input id="blur-radius-range" type="range" min="0" max="50" step="1" value="0" />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="blur-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="lut-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="lut-title">
+          <div class="modal-header">
+            <h3 id="lut-title">Apply LUT</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Load a .cube LUT file and apply it to the active layer.</p>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>LUT File</span>
+              <input id="lut-file-input" type="file" accept=".cube" />
+            </label>
+            <p id="lut-status" class="hint">No LUT loaded.</p>
+            <label class="field-block">
+              <span>Intensity <output id="lut-intensity-value">100</output>%</span>
+              <input id="lut-intensity-range" type="range" min="0" max="100" step="1" value="100" />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="lut-apply-btn" class="modal-btn-accept modal-submit-btn" type="button" disabled>Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="gradient-map-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="gradient-map-title">
+          <div class="modal-header">
+            <h3 id="gradient-map-title">Gradient Map</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Map luminance to gradient colors. Choose a preset.</p>
+          <div class="modal-form-grid">
+            <canvas id="gradient-map-preview" width="256" height="24" style="width:100%;height:24px;border-radius:2px;"></canvas>
+            <label class="field-block">
+              <span>Preset</span>
+              <select id="gradient-map-preset" class="field-select"></select>
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="gradient-map-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="curves-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="curves-title">
+          <div class="modal-header">
+            <h3 id="curves-title">Curves</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Click to add points, drag to move. Right-click to remove.</p>
+          <div class="modal-form-grid">
+            <canvas id="curves-canvas" width="256" height="256" style="width:256px;height:256px;background:#111;border-radius:2px;cursor:crosshair;"></canvas>
+            <button id="curves-reset-btn" class="secondary-btn" type="button" style="width:auto;">Reset</button>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="curves-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="levels-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="levels-title">
+          <div class="modal-header">
+            <h3 id="levels-title">Levels</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Adjust input levels with histogram guidance.</p>
+          <div class="modal-form-grid">
+            <canvas id="levels-histogram" width="256" height="100" style="width:100%;height:100px;background:#111;border-radius:2px;"></canvas>
+            <label class="field-block">
+              <span>Input Black <output id="levels-black-value">0</output></span>
+              <input id="levels-black-range" type="range" min="0" max="254" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Gamma <output id="levels-gamma-value">1.0</output></span>
+              <input id="levels-gamma-range" type="range" min="0.1" max="10" step="0.01" value="1" />
+            </label>
+            <label class="field-block">
+              <span>Input White <output id="levels-white-value">255</output></span>
+              <input id="levels-white-range" type="range" min="1" max="255" step="1" value="255" />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="levels-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="motion-blur-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="motion-blur-title">
+          <div class="modal-header">
+            <h3 id="motion-blur-title">Motion Blur</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Apply directional motion blur to the active layer.</p>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Angle <output id="mb-angle-value">0</output>&deg;</span>
+              <input id="mb-angle-range" type="range" min="0" max="360" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Distance <output id="mb-distance-value">1</output>px</span>
+              <input id="mb-distance-range" type="range" min="1" max="100" step="1" value="1" />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="mb-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="add-noise-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="add-noise-title">
+          <div class="modal-header">
+            <h3 id="add-noise-title">Add Noise</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Add random noise to the active layer.</p>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Amount <output id="noise-amount-value">0</output>%</span>
+              <input id="noise-amount-range" type="range" min="0" max="100" step="1" value="0" />
+            </label>
+            <label class="field-block field-block--inline">
+              <input id="noise-mono-check" type="checkbox" checked />
+              <span>Monochrome</span>
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="noise-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="reduce-noise-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="reduce-noise-title">
+          <div class="modal-header">
+            <h3 id="reduce-noise-title">Reduce Noise</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Reduce noise while preserving edges.</p>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Strength <output id="denoise-strength-value">0</output>%</span>
+              <input id="denoise-strength-range" type="range" min="0" max="100" step="1" value="0" />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="denoise-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="sharpen-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sharpen-title">
+          <div class="modal-header">
+            <h3 id="sharpen-title">Sharpen</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Apply unsharp mask sharpening to the active layer.</p>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Amount <output id="sharpen-amount-value">0</output>%</span>
+              <input id="sharpen-amount-range" type="range" min="0" max="200" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Radius <output id="sharpen-radius-value">1</output>px</span>
+              <input id="sharpen-radius-range" type="range" min="0.1" max="10" step="0.1" value="1" />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="sharpen-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="color-balance-modal" class="modal-backdrop" hidden>
+        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="color-balance-title">
+          <div class="modal-header">
+            <h3 id="color-balance-title">Color Balance</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Adjust color balance for shadows, midtones, and highlights.</p>
+          <div class="modal-form-grid">
+            <h4 class="modal-section-heading">Shadows</h4>
+            <label class="field-block">
+              <span>Cyan–Red <output id="cb-sh-cr-value">0</output></span>
+              <input id="cb-sh-cr-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Magenta–Green <output id="cb-sh-mg-value">0</output></span>
+              <input id="cb-sh-mg-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Yellow–Blue <output id="cb-sh-yb-value">0</output></span>
+              <input id="cb-sh-yb-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <h4 class="modal-section-heading">Midtones</h4>
+            <label class="field-block">
+              <span>Cyan–Red <output id="cb-mt-cr-value">0</output></span>
+              <input id="cb-mt-cr-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Magenta–Green <output id="cb-mt-mg-value">0</output></span>
+              <input id="cb-mt-mg-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Yellow–Blue <output id="cb-mt-yb-value">0</output></span>
+              <input id="cb-mt-yb-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <h4 class="modal-section-heading">Highlights</h4>
+            <label class="field-block">
+              <span>Cyan–Red <output id="cb-hl-cr-value">0</output></span>
+              <input id="cb-hl-cr-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Magenta–Green <output id="cb-hl-mg-value">0</output></span>
+              <input id="cb-hl-mg-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <label class="field-block">
+              <span>Yellow–Blue <output id="cb-hl-yb-value">0</output></span>
+              <input id="cb-hl-yb-range" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="cb-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="save-preset-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="save-preset-title">
+          <div class="modal-header">
+            <h3 id="save-preset-title">Save style preset</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Save the current layer effects as a reusable style preset.</p>
+          <label class="field-block">
+            <span>Preset name</span>
+            <input id="save-preset-name-input" type="text" placeholder="My preset" value="" />
+          </label>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="save-preset-submit-btn" class="modal-btn-accept modal-submit-btn" type="button">Save preset</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Color Range Selection modal -->
+      <div id="color-range-modal" class="modal-backdrop" hidden>
+        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="color-range-title">
+          <div class="modal-header">
+            <h3 id="color-range-title">Select by Color Range</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Click the canvas to sample a color. Shift+click to add more samples. Adjust fuzziness to widen or narrow the selection.</p>
+          <div class="field-row">
+            <label class="field-block" style="flex:1">
+              <span>Fuzziness</span>
+              <div class="range-with-value">
+                <input id="cr-fuzziness-range" type="range" min="0" max="200" step="1" value="40" />
+                <output id="cr-fuzziness-value">40</output>
+              </div>
+            </label>
+          </div>
+          <div class="field-row" style="gap:var(--space-3)">
+            <div style="flex:1;display:flex;flex-direction:column;gap:var(--space-2)">
+              <span class="field-label">Preview</span>
+              <canvas id="cr-preview-canvas" width="300" height="200" style="border:1px solid var(--border);background:var(--bg-section);max-width:100%;image-rendering:pixelated"></canvas>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:var(--space-2);min-width:120px">
+              <span class="field-label">Sampled colors</span>
+              <div id="cr-samples-list" style="display:flex;flex-wrap:wrap;gap:var(--space-1)"></div>
+              <button id="cr-clear-samples-btn" class="secondary-btn" type="button" style="margin-top:auto">Clear samples</button>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="cr-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Edge Refinement modal -->
+      <div id="edge-refine-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="edge-refine-title">
+          <div class="modal-header">
+            <h3 id="edge-refine-title">Refine Selection Edge</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Improve the selection edge with feathering, smoothing, and expansion controls.</p>
+          <div class="field-row">
+            <label class="field-block" style="flex:1">
+              <span>Feather</span>
+              <div class="range-with-value">
+                <input id="er-feather-range" type="range" min="0" max="100" step="0.5" value="0" />
+                <output id="er-feather-value">0</output>
+              </div>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field-block" style="flex:1">
+              <span>Smooth</span>
+              <div class="range-with-value">
+                <input id="er-smooth-range" type="range" min="0" max="100" step="1" value="0" />
+                <output id="er-smooth-value">0</output>
+              </div>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field-block" style="flex:1">
+              <span>Contract / Expand</span>
+              <div class="range-with-value">
+                <input id="er-expand-range" type="range" min="-50" max="50" step="1" value="0" />
+                <output id="er-expand-value">0</output>
+              </div>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field-block" style="flex:1">
+              <span>Preview background</span>
+              <select id="er-preview-bg">
+                <option value="marching-ants" selected>Marching ants</option>
+                <option value="black">On black</option>
+                <option value="white">On white</option>
+                <option value="checkerboard">On checkerboard</option>
+              </select>
+            </label>
+            <label class="field-block" style="flex:1">
+              <span>Output</span>
+              <select id="er-output-mode">
+                <option value="selection" selected>Selection</option>
+                <option value="mask">Layer mask</option>
+                <option value="new-layer">New layer with mask</option>
+              </select>
+            </label>
+          </div>
+          <div class="field-row">
+            <canvas id="er-preview-canvas" width="300" height="200" style="border:1px solid var(--border);background:var(--bg-section);max-width:100%;flex:1;image-rendering:pixelated"></canvas>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="er-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Warp modal -->
+      <div id="warp-modal" class="modal-backdrop" hidden>
+        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="warp-title">
+          <div class="modal-header">
+            <h3 id="warp-title">Warp</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Drag control points to deform the layer. Use the grid size selector to change mesh density.</p>
+          <div class="field-row">
+            <label class="field-block" style="flex:0 0 auto">
+              <span>Grid</span>
+              <select id="warp-grid-select">
+                <option value="2">2 × 2</option>
+                <option value="3" selected>3 × 3</option>
+                <option value="4">4 × 4</option>
+                <option value="5">5 × 5</option>
+              </select>
+            </label>
+            <button id="warp-reset-btn" class="secondary-btn" type="button" style="margin-left:auto">Reset</button>
+          </div>
+          <div class="field-row" style="justify-content:center">
+            <canvas id="warp-preview-canvas" width="400" height="300" style="border:1px solid var(--border);background:var(--bg-section);max-width:100%;cursor:crosshair"></canvas>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="warp-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Liquify modal -->
+      <div id="liquify-modal" class="modal-backdrop" hidden>
+        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="liquify-title">
+          <div class="modal-header">
+            <h3 id="liquify-title">Liquify</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Click and drag to push pixels. Shift+drag to pull. Right-click to smooth.</p>
+          <div class="field-row">
+            <label class="field-block" style="flex:1">
+              <span>Brush size</span>
+              <div class="range-with-value">
+                <input id="liq-size-range" type="range" min="10" max="200" step="1" value="50" />
+                <output id="liq-size-value">50</output>
+              </div>
+            </label>
+            <label class="field-block" style="flex:1">
+              <span>Strength</span>
+              <div class="range-with-value">
+                <input id="liq-strength-range" type="range" min="1" max="100" step="1" value="50" />
+                <output id="liq-strength-value">50</output>
+              </div>
+            </label>
+          </div>
+          <div class="field-row" style="justify-content:center">
+            <canvas id="liq-preview-canvas" width="400" height="300" style="border:1px solid var(--border);background:var(--bg-section);max-width:100%;cursor:crosshair"></canvas>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="liq-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
         </div>
       </div>
 

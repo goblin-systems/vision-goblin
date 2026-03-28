@@ -1,4 +1,5 @@
 import { byId } from "./dom";
+import { isCaptureDestination, normalizeCaptureDelaySeconds } from "./capture";
 import type { VisionSettings } from "../settings";
 import type { ActiveTool, ResizeAnchor } from "../editor/types";
 import { clamp } from "../editor/utils";
@@ -45,6 +46,9 @@ export function bindSettingsInputs(deps: BindingDeps) {
   byId<HTMLInputElement>("snap-toggle").addEventListener("change", async (event: Event) => {
     await deps.setSettings({ ...deps.getSettings(), snapEnabled: (event.currentTarget as HTMLInputElement).checked });
   });
+  byId<HTMLInputElement>("confirm-layer-deletion-checkbox").addEventListener("change", async (event: Event) => {
+    await deps.setSettings({ ...deps.getSettings(), confirmLayerDeletion: (event.currentTarget as HTMLInputElement).checked });
+  });
   byId<HTMLSelectElement>("default-zoom-select").addEventListener("change", async (event: Event) => {
     await deps.setSettings({ ...deps.getSettings(), defaultZoom: Number((event.currentTarget as HTMLSelectElement).value) });
   });
@@ -57,6 +61,18 @@ export function bindSettingsInputs(deps: BindingDeps) {
   byId<HTMLInputElement>("export-quality-range").addEventListener("input", async (event: Event) => {
     await deps.setSettings({ ...deps.getSettings(), exportQuality: Number((event.currentTarget as HTMLInputElement).value) });
     deps.renderSettingsUI();
+  });
+  byId<HTMLSelectElement>("capture-destination-select").addEventListener("change", async (event: Event) => {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    if (!isCaptureDestination(value)) return;
+    await deps.setSettings({ ...deps.getSettings(), captureDestination: value });
+  });
+  byId<HTMLSelectElement>("capture-delay-select").addEventListener("change", async (event: Event) => {
+    const value = normalizeCaptureDelaySeconds(Number((event.currentTarget as HTMLSelectElement).value));
+    await deps.setSettings({ ...deps.getSettings(), captureDelaySeconds: value });
+  });
+  byId<HTMLInputElement>("capture-hide-window-checkbox").addEventListener("change", async (event: Event) => {
+    await deps.setSettings({ ...deps.getSettings(), captureHideWindow: (event.currentTarget as HTMLInputElement).checked });
   });
   byId<HTMLInputElement>("left-panel-width-range").addEventListener("input", async (event: Event) => {
     await deps.setSettings({ ...deps.getSettings(), leftPanelWidth: Number((event.currentTarget as HTMLInputElement).value), leftPanelCollapsed: false });

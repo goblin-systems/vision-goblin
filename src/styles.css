@@ -129,6 +129,7 @@ button svg {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-5);
+  padding-bottom: var(--space-8);
 }
 
 .tools-wide-card,
@@ -146,6 +147,7 @@ button svg {
 
 .tab-panel {
   min-height: 0;
+  overflow-y: auto;
 }
 
 .editor-toolbar-row,
@@ -235,6 +237,12 @@ button svg {
   gap: var(--space-3);
 }
 
+.toolbar-toggle-row {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
 .tool-btn {
   width: 100%;
   min-height: 58px;
@@ -246,10 +254,58 @@ button svg {
   background: var(--bg-section);
 }
 
+.keybindings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.keybinding-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.keybinding-row label {
+  flex: 1;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.keybinding-row input {
+  width: 80px;
+  font-size: 11px;
+  text-align: center;
+  padding: 2px 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.9);
+  border-radius: 3px;
+}
+
+.keybinding-row input:focus {
+  outline: 1px solid #7c73ff;
+  border-color: #7c73ff;
+}
+
 .selection-mode-group {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
+}
+
+.marquee-sides-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.marquee-sides-row[hidden] {
+  display: none;
 }
 
 .transform-controls-grid {
@@ -266,9 +322,45 @@ button svg {
   position: fixed;
   inset: 0;
   z-index: 50;
+  background: transparent;
+}
+
+.capture-overlay-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+  z-index: 0;
+}
+
+.capture-loading-card {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
   display: flex;
-  flex-direction: column;
-  background: rgba(3, 6, 12, 0.92);
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  background: var(--bg-section);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.capture-loading-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--text-muted);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
 }
 
 .capture-overlay-toolbar {
@@ -276,27 +368,15 @@ button svg {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  background: rgba(8, 11, 20, 0.88);
   border-bottom: 1px solid var(--border);
-  background: rgba(8, 11, 20, 0.92);
-  position: relative;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 2;
-}
-
-.capture-overlay-stage {
-  position: relative;
-  flex: 1;
-  overflow: hidden;
-  cursor: crosshair;
-}
-
-.capture-overlay-stage canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  cursor: crosshair;
+  pointer-events: auto;
 }
 
 .capture-magnifier {
@@ -305,6 +385,30 @@ button svg {
   border: 1px solid var(--border);
   background: var(--bg-input);
   image-rendering: pixelated;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.secondary-btn.is-loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.secondary-btn.is-loading .btn-spinner {
+  display: inline-block;
+}
+
+.btn-spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--text-muted);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
 }
 
 .selection-mode-btn.is-active {
@@ -370,6 +474,11 @@ button svg {
 .layer-row.is-active {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--bg-section) 78%, black 22%);
+}
+
+.layer-row.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent 40%);
+  background: color-mix(in srgb, var(--bg-section) 88%, black 12%);
 }
 
 .layer-row-top {
@@ -641,4 +750,122 @@ button svg {
   .canvas-stage {
     min-height: 420px;
   }
+}
+
+/* Quick Mask mode indicator */
+.canvas-editor-wrap.quick-mask-active {
+  outline: 2px solid rgba(255, 0, 0, 0.6);
+  outline-offset: -2px;
+}
+.canvas-editor-wrap.quick-mask-active .canvas-floating-chip {
+  border-color: rgba(255, 60, 60, 0.6);
+}
+
+/* ---------------------------------------------------------------------------
+   Command Palette
+   --------------------------------------------------------------------------- */
+
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  justify-content: center;
+  padding-top: 15vh;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.command-palette-backdrop[hidden] {
+  display: none;
+}
+
+.command-palette-card {
+  width: 520px;
+  max-width: 90vw;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-section);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  align-self: flex-start;
+}
+
+.command-palette-input {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+}
+
+.command-palette-input::placeholder {
+  color: var(--text-muted);
+}
+
+.command-palette-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-1) 0;
+}
+
+.command-palette-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-palette-item.is-active {
+  background: var(--bg-hover);
+}
+
+.command-palette-item.is-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.command-palette-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-item-shortcut {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.command-palette-item-category {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  min-width: 48px;
+  text-align: right;
+}
+
+.command-palette-empty {
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
 }
