@@ -1,64 +1,65 @@
-import { describe, expect, it } from "vitest";
-import { pathBoundingRect, isPointInPath, simplifyPath } from "./selection";
-import type { SelectionPath } from "./types";
+import { describe, expect, it, vi } from "vitest";
+import { defaultPolygonRotation, isAxisAlignedRectMarquee, traceMarqueeShape } from "./selection";
 
-describe("pathBoundingRect", () => {
-  it("computes bounding rect of a triangle", () => {
-    const path: SelectionPath = { points: [{ x: 10, y: 20 }, { x: 50, y: 20 }, { x: 30, y: 60 }], closed: true };
-    const rect = pathBoundingRect(path);
-    expect(rect.x).toBe(10);
-    expect(rect.y).toBe(20);
-    expect(rect.width).toBe(40);
-    expect(rect.height).toBe(40);
+describe("selection marquee geometry", () => {
+  it("treats the four-sided marquee as an axis-aligned rectangle", () => {
+    expect(isAxisAlignedRectMarquee(4)).toBe(true);
+    expect(isAxisAlignedRectMarquee(3)).toBe(false);
+    expect(isAxisAlignedRectMarquee(11)).toBe(false);
   });
 
-  it("returns zero rect for empty path", () => {
-    const rect = pathBoundingRect({ points: [], closed: false });
-    expect(rect.width).toBe(0);
-    expect(rect.height).toBe(0);
-  });
-});
+  it("draws the four-sided marquee with rect geometry instead of a rotated polygon", () => {
+    const ctx = {
+      beginPath: vi.fn(),
+      rect: vi.fn(),
+      ellipse: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      closePath: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
 
-describe("isPointInPath", () => {
-  const square: SelectionPath = {
-    points: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
-    closed: true,
-  };
+    traceMarqueeShape(ctx, 25, 35, 15, 10, 4, defaultPolygonRotation(4), false);
 
-  it("returns true for point inside", () => {
-    expect(isPointInPath(50, 50, square)).toBe(true);
-  });
-
-  it("returns false for point outside", () => {
-    expect(isPointInPath(150, 50, square)).toBe(false);
+    expect(ctx.beginPath).toHaveBeenCalledTimes(1);
+    expect(ctx.rect).toHaveBeenCalledWith(10, 25, 30, 20);
+    expect(ctx.moveTo).not.toHaveBeenCalled();
+    expect(ctx.lineTo).not.toHaveBeenCalled();
+    expect(ctx.closePath).not.toHaveBeenCalled();
   });
 
-  it("returns false for open path", () => {
-    expect(isPointInPath(50, 50, { ...square, closed: false })).toBe(false);
+  it("can still trace a four-sided marquee as a rotated polygon when requested", () => {
+    const ctx = {
+      beginPath: vi.fn(),
+      rect: vi.fn(),
+      ellipse: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      closePath: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
+
+    traceMarqueeShape(ctx, 25, 35, 15, 15, 4, Math.PI / 4, true, false);
+
+    expect(ctx.rect).not.toHaveBeenCalled();
+    expect(ctx.moveTo).toHaveBeenCalledTimes(1);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.closePath).toHaveBeenCalledTimes(1);
   });
 
-  it("returns false for too few points", () => {
-    expect(isPointInPath(50, 50, { points: [{ x: 0, y: 0 }, { x: 100, y: 0 }], closed: true })).toBe(false);
-  });
-});
+  it("still traces non-rectangular polygons with polygon vertices", () => {
+    const ctx = {
+      beginPath: vi.fn(),
+      rect: vi.fn(),
+      ellipse: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      closePath: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
 
-describe("simplifyPath", () => {
-  it("removes points closer than minDistance", () => {
-    const points = [
-      { x: 0, y: 0 },
-      { x: 0.5, y: 0.5 }, // too close
-      { x: 1, y: 1 },     // too close
-      { x: 10, y: 10 },
-      { x: 20, y: 20 },
-    ];
-    const result = simplifyPath(points, 3);
-    expect(result.length).toBeLessThan(points.length);
-    expect(result[0]).toEqual({ x: 0, y: 0 });
-    expect(result[result.length - 1]).toEqual({ x: 20, y: 20 });
-  });
+    traceMarqueeShape(ctx, 25, 35, 15, 10, 5, defaultPolygonRotation(5), false);
 
-  it("keeps all points if distance is large enough", () => {
-    const points = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }];
-    expect(simplifyPath(points, 1)).toHaveLength(3);
+    expect(ctx.rect).not.toHaveBeenCalled();
+    expect(ctx.moveTo).toHaveBeenCalledTimes(1);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(4);
+    expect(ctx.closePath).toHaveBeenCalledTimes(1);
   });
 });

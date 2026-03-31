@@ -128,6 +128,14 @@ interface BuildWorkspaceShellStateParams {
   activeShapeKind: ShapeKind;
 }
 
+function formatSelectionDimension(value: number): string {
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+
+  return Number.parseFloat(value.toFixed(2)).toString();
+}
+
 export function formatShortcutFromKeyboardEvent(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "shiftKey" | "altKey">): string | null {
   if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) {
     return null;
@@ -263,7 +271,7 @@ export function buildWorkspaceShellState(params: BuildWorkspaceShellStateParams)
   };
   return {
     hasDocument: true,
-    activeDocMeta: `${doc.width} x ${doc.height} px - ${doc.layers.length} layers${doc.selectionRect ? ` - ${doc.selectionInverted ? "inverted " : ""}selection ${doc.selectionRect.width}x${doc.selectionRect.height}` : ""}${doc.dirty ? " - unsaved" : ""}`,
+    activeDocMeta: `${doc.width} x ${doc.height} px - ${doc.layers.length} layers${doc.selectionRect ? ` - ${doc.selectionInverted ? "inverted " : ""}selection ${formatSelectionDimension(doc.selectionRect.width)}x${formatSelectionDimension(doc.selectionRect.height)}` : ""}${doc.dirty ? " - unsaved" : ""}`,
     zoomReadout: `${doc.zoom}%`,
     statusRight,
     saveProjectLabel: doc.projectPath ? "Save project" : "Save project as",

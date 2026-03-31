@@ -1,4 +1,5 @@
 import { load, type Store } from "@tauri-apps/plugin-store";
+import { DEFAULT_AI_SETTINGS, cloneAiSettings, normalizeAiSettings, type AiSettings } from "./app/ai/config";
 
 export type AppTab = "editor" | "tools" | "settings";
 export type ToolName = "move" | "marquee" | "transform" | "crop" | "brush" | "eraser" | "eyedropper" | "smudge" | "clone-stamp" | "healing-brush" | "text" | "shape" | "lasso" | "polygon-lasso" | "magic-wand";
@@ -31,6 +32,7 @@ export interface VisionSettings {
   autosaveIntervalSeconds: number;
   confirmLayerDeletion: boolean;
   keybindings: Record<string, string>;
+  ai: AiSettings;
 }
 
 export const DEFAULT_KEYBINDINGS: Record<string, string> = {
@@ -92,6 +94,7 @@ const DEFAULTS: VisionSettings = {
   autosaveIntervalSeconds: 60,
   confirmLayerDeletion: false,
   keybindings: { ...DEFAULT_KEYBINDINGS },
+  ai: cloneAiSettings(DEFAULT_AI_SETTINGS),
 };
 
 let store: Store | null = null;
@@ -104,7 +107,13 @@ async function getStore(): Promise<Store> {
 }
 
 export function getDefaultSettings(): VisionSettings {
-  return { ...DEFAULTS };
+  return {
+    ...DEFAULTS,
+    recentImages: [...DEFAULTS.recentImages],
+    recentProjects: [...DEFAULTS.recentProjects],
+    keybindings: { ...DEFAULTS.keybindings },
+    ai: cloneAiSettings(DEFAULTS.ai),
+  };
 }
 
 export async function loadSettings(): Promise<VisionSettings> {
@@ -230,6 +239,8 @@ export async function loadSettings(): Promise<VisionSettings> {
     }
   }
 
+  next.ai = normalizeAiSettings(await s.get<unknown>("ai"));
+
   return next;
 }
 
@@ -259,5 +270,6 @@ export async function saveSettings(settings: VisionSettings): Promise<void> {
   await s.set("autosaveIntervalSeconds", settings.autosaveIntervalSeconds);
   await s.set("confirmLayerDeletion", settings.confirmLayerDeletion);
   await s.set("keybindings", settings.keybindings);
+  await s.set("ai", settings.ai);
   await s.save();
 }

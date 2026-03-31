@@ -42,3 +42,23 @@ export function debugLog(message: string, level: "INFO" | "WARN" | "ERROR" = "IN
 export async function openDebugLogFolder(): Promise<void> {
   await invoke("open_debug_log_folder");
 }
+
+export function saveAiDebugImage(
+  dataUrl: string,
+  jobName: string,
+  direction: "input" | "output",
+  label: string,
+): void {
+  if (!debugEnabled) return;
+
+  const base64 = dataUrl.replace(/^data:image\/[^;]+;base64,/, "");
+
+  invoke("save_ai_debug_image", {
+    imageBase64: base64,
+    jobName,
+    direction,
+    label,
+  }).catch((err) => {
+    console.error("Failed to save AI debug image:", err);
+  });
+}

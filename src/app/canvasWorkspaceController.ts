@@ -1,6 +1,6 @@
 import { getCanvasBounds } from "../editor/geometry";
 import { pushHistory } from "../editor/history";
-import { defaultPolygonRotation } from "../editor/selection";
+import { defaultPolygonRotation, isAxisAlignedRectMarquee } from "../editor/selection";
 import { renderCanvas as renderCanvasView } from "../editor/render";
 import { buildTransformPreview } from "../editor/documents";
 import type { DocumentState, Guide, Layer, PointerState } from "../editor/types";
@@ -206,6 +206,7 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
               sides: marqueeSides,
               rotation,
               perfect: modifiers.perfect,
+              axisAlignedRect: isAxisAlignedRectMarquee(marqueeSides) && !modifiers.rotate,
             };
           })()
         : null,

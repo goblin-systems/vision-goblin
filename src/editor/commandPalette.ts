@@ -100,6 +100,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   layer: "Layer",
   window: "Window",
   tool: "Tool",
+  ai: "AI",
 };
 
 export function categoryLabel(cat: string): string {

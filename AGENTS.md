@@ -67,24 +67,34 @@ The app is intentionally split into layers. Keep it that way.
 
 ## Backlog Source Of Truth
 
-`plan.md` is the project backlog. Treat it as the authoritative roadmap.
+`AGENTS.md` is the repo-level backlog entrypoint. Use it with the epic-based backlog under `backlog/`.
 
 ### Backlog management rules
 
-- If a feature is fully shipped at MVP level, move it into `Completed So Far`
-- If a feature is only partially done, keep it in its roadmap section and add or update a `Status:` note
-- When work changes scope, update the relevant section in `plan.md` in the same task whenever possible
-- Do not leave shipped features listed as active roadmap items unless the remaining work is explicitly called out as follow-up or polish
-- Preserve the distinction between shipped baseline, partial MVP, future polish, and net-new features
-- If a feature is delivered, update any stale phase summary text too
+- Start with the relevant backlog index in `backlog/`, then open the matching epic file(s)
+- Use `backlog/index-active.md` for current priorities, `backlog/index-follow-up.md` for shipped areas with remaining work, `backlog/index-future.md` for deferred scope, and `backlog/index-done.md` for shipped baseline or MVP work
+- Backlog work lives in epic files, not broad section buckets; keep updates in the relevant epic file plus its index entry
+- Follow the filename convention: `epic-pNNN-*` for current priorities, `epic-fNNN-*` for feature or future epics, `epic-rNNN-*` for cross-cutting requirements, and `backlog/done/epic-dNNN-*` for shipped epics
+- If a feature is fully shipped at MVP or baseline level, move or update it under `backlog/done/` instead of leaving it in active indexes
+- If a feature is only partially done, keep it in active or follow-up indexes with explicit remaining scope and current `Status:` notes
+- When work changes scope or status, update the relevant epic file and index in the same task whenever possible
+
+### Backlog navigation
+
+- Start with `backlog/index-active.md` for current priorities
+- Check `backlog/index-follow-up.md` for shipped areas with remaining work
+- Use `backlog/index-future.md` for deferred scope and longer-horizon planning
+- Use `backlog/index-done.md` to confirm what is already shipped at MVP or baseline
+- Use `backlog/README.md` for local file naming and maintenance rules inside the backlog folder
 
 ### Practical rule for sessions
 
 Before starting substantial work:
 
-1. Read the relevant section in `plan.md`
-2. Check whether the feature is marked shipped, partial, or active
-3. After implementation, update `plan.md` so the backlog reflects reality
+1. Open the relevant backlog index and epic file(s) under `backlog/`
+2. Use `backlog/README.md` if you need naming or maintenance rules
+3. Check whether the work is active, follow-up, future, or done
+4. After implementation, update the relevant epic file and index so the backlog reflects reality
 
 ## Testing And Validation
 
@@ -116,21 +126,22 @@ Relevant files:
 
 At the start of a coding session:
 
-1. Read `plan.md`
-2. Inspect current git status
-3. Identify the touched area:
+1. Read the relevant backlog index and epic file(s) under `backlog/`
+2. Read `backlog/README.md` if backlog structure or naming is relevant
+3. Inspect current git status
+4. Identify the touched area:
    - `src/main.ts` orchestration
    - `src/app/*` app bindings and IO
    - `src/editor/*` core editor logic
    - `src-tauri/*` native functionality
-4. Follow existing patterns before introducing new abstractions
-5. Keep feature code organized in separate modules
-6. Add tests for meaningful logic changes
-7. After feature completion, update `plan.md` backlog status
+5. Follow existing patterns before introducing new abstractions
+6. Keep feature code organized in separate modules
+7. Add tests for meaningful logic changes
+8. After feature completion, update the relevant epic file and index when backlog status or scope changed
 
 ## Repo-Specific Guidance
 
 - This project does not use a frontend framework; prefer small reusable functions over framework-style patterns
-- `README.md` is currently minimal; use `plan.md` and the codebase as the main operational references
+- `README.md` is currently minimal; use `AGENTS.md`, the backlog indexes, and the codebase as the main operational references
 - Respect Goblin design system patterns already present in the UI
 - Keep new code readable, modular, and easy to evolve

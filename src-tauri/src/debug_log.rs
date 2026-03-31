@@ -1,3 +1,4 @@
+use base64::Engine;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -66,18 +67,7 @@ pub fn write_debug_log(
     level: String,
     message: String,
 ) -> Result<(), String> {
-    if !state.is_enabled() {
-        return Ok(());
-    }
-
-    let path = resolve_log_file_path(&app)?;
-    let _guard = state
-        .write_lock
-        .lock()
-        .map_err(|_| "Failed to lock debug log writer".to_string())?;
-
-    append_log_line(&path, &level, &message)?;
-    prune_log_entries(&path)
+    write_debug_log_entry(&app, &state, &level, &message)
 }
 
 #[tauri::command]
@@ -114,6 +104,66 @@ pub fn open_debug_log_folder(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+const AI_JOBS_TIMESTAMP_FORMAT: &[time::format_description::FormatItem<'static>] =
+    format_description!("[year][month][day]-[hour][minute][second]");
+
+#[tauri::command]
+pub fn save_ai_debug_image(
+    app: AppHandle,
+    state: State<DebugLogState>,
+    image_base64: String,
+    job_name: String,
+    direction: String,
+    label: String,
+) -> Result<String, String> {
+    if !state.is_enabled() {
+        return Ok(String::new());
+    }
+
+    let log_file = resolve_log_file_path(&app)?;
+    let debug_dir = log_file
+        .parent()
+        .ok_or("Failed to resolve debug log directory".to_string())?;
+    let ai_jobs_dir = debug_dir.join("ai-jobs");
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&image_base64)
+        .map_err(|e| format!("Failed to decode base64 image data: {}", e))?;
+
+    let sanitized_name: String = job_name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c == ' ' { '-' } else { c })
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+
+    let local_offset = time::UtcOffset::current_local_offset()
+        .map_err(|e| format!("Failed to determine local time offset: {}", e))?;
+    let now = time::OffsetDateTime::now_utc().to_offset(local_offset);
+    let ts = now
+        .format(AI_JOBS_TIMESTAMP_FORMAT)
+        .map_err(|e| format!("Failed to format timestamp: {}", e))?;
+    let millis = now.millisecond();
+
+    let filename = format!(
+        "{}-{:03}_{}_{}_{}.png",
+        ts, millis, sanitized_name, direction, label
+    );
+    let file_path = ai_jobs_dir.join(&filename);
+
+    let _guard = state
+        .write_lock
+        .lock()
+        .map_err(|_| "Failed to lock debug log writer".to_string())?;
+
+    fs::create_dir_all(&ai_jobs_dir)
+        .map_err(|e| format!("Failed to create ai-jobs directory: {}", e))?;
+
+    fs::write(&file_path, &bytes).map_err(|e| format!("Failed to write AI debug image: {}", e))?;
+
+    Ok(file_path.to_string_lossy().to_string())
+}
+
 fn resolve_log_file_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -121,6 +171,42 @@ fn resolve_log_file_path(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("Failed to resolve app local data dir: {}", e))?;
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create log directory: {}", e))?;
     Ok(dir.join("debug.log"))
+}
+
+pub(crate) fn log_native_debug_message(
+    app: &AppHandle,
+    state: &DebugLogState,
+    level: &str,
+    message: &str,
+) {
+    match level {
+        "ERROR" => eprintln!("[{}] {}", level, message),
+        _ => println!("[{}] {}", level, message),
+    }
+
+    if let Err(error) = write_debug_log_entry(app, state, level, message) {
+        eprintln!("[ERROR] Failed to write debug log entry: {}", error);
+    }
+}
+
+fn write_debug_log_entry(
+    app: &AppHandle,
+    state: &DebugLogState,
+    level: &str,
+    message: &str,
+) -> Result<(), String> {
+    if !state.is_enabled() {
+        return Ok(());
+    }
+
+    let path = resolve_log_file_path(app)?;
+    let _guard = state
+        .write_lock
+        .lock()
+        .map_err(|_| "Failed to lock debug log writer".to_string())?;
+
+    append_log_line(&path, level, message)?;
+    prune_log_entries(&path)
 }
 
 fn append_log_line(path: &PathBuf, level: &str, message: &str) -> Result<(), String> {

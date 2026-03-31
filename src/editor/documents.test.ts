@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canDeleteLayer } from "./layers";
-import { cloneDocument, createBlankDocument, createLayerCanvas, createLayerThumb, resizeCanvasDocument } from "./documents";
+import { cloneDocument, createBlankDocument, createLayerCanvas, createLayerThumb, resizeCanvasDocument, serializeDocument } from "./documents";
 import { getResizeOffset } from "./geometry";
 
 describe("editor documents", () => {
@@ -59,5 +59,23 @@ describe("editor documents", () => {
     const thumb = createLayerThumb(layer);
     expect(thumb.width).toBe(28);
     expect(thumb.height).toBe(28);
+  });
+
+  it("serializes AI provenance on layers", () => {
+    const doc = createBlankDocument("Untitled", 320, 240, 100);
+    doc.layers[1].aiProvenance = {
+      providerId: "openai-compatible",
+      model: "gpt-4.1-mini",
+      taskId: "task-42",
+      family: "enhancement",
+      operation: "upscale",
+      warnings: ["offline"],
+      createdAt: "2026-03-28T00:00:00.000Z",
+    };
+
+    const serialized = serializeDocument(doc);
+
+    expect(serialized.layers[1].aiProvenance?.operation).toBe("upscale");
+    expect(serialized.layers[1].aiProvenance?.warnings).toEqual(["offline"]);
   });
 });

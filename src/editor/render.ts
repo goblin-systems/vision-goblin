@@ -11,7 +11,7 @@ export function renderCanvas(params: {
   doc: DocumentState | null;
   activeTool?: ActiveTool;
   activeLayer?: Layer | null;
-  marqueePreview?: { baseRect: Rect | null; previewRect: Rect | null; mode: "replace" | "add" | "subtract" | "intersect"; sides: number; rotation: number; perfect: boolean } | null;
+  marqueePreview?: { baseRect: Rect | null; previewRect: Rect | null; mode: "replace" | "add" | "subtract" | "intersect"; sides: number; rotation: number; perfect: boolean; axisAlignedRect?: boolean } | null;
   transformPreview?: { layerId: string; canvas: HTMLCanvasElement; x: number; y: number; width: number; height: number } | null;
   pivotPoint?: { x: number; y: number } | null;
   guides?: Array<{ orientation: "horizontal" | "vertical"; position: number }>;
@@ -340,14 +340,14 @@ export function renderCanvas(params: {
     const previewY = bounds.originY + marqueePreview.previewRect.y * bounds.scale;
     const previewW = marqueePreview.previewRect.width * bounds.scale;
     const previewH = marqueePreview.previewRect.height * bounds.scale;
-    const { sides, rotation, perfect } = marqueePreview;
+    const { sides, rotation, perfect, axisAlignedRect } = marqueePreview;
     const modeColor = marqueePreview.mode === "subtract" ? "rgba(255,100,100,0.85)"
       : marqueePreview.mode === "intersect" ? "rgba(255,200,60,0.85)"
       : marqueePreview.mode === "add" ? "rgba(100,200,255,0.85)"
       : "rgba(255,255,255,0.95)";
 
     const tracePreview = (c: CanvasRenderingContext2D) => {
-      traceMarqueeShape(c, previewX + previewW / 2, previewY + previewH / 2, previewW / 2, previewH / 2, sides, rotation, perfect);
+      traceMarqueeShape(c, previewX + previewW / 2, previewY + previewH / 2, previewW / 2, previewH / 2, sides, rotation, perfect, axisAlignedRect);
     };
 
     ctx.save();

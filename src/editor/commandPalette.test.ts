@@ -103,6 +103,7 @@ describe("commandPalette", () => {
       expect(categoryLabel("edit")).toBe("Edit");
       expect(categoryLabel("adjust")).toBe("Adjust");
       expect(categoryLabel("tool")).toBe("Tool");
+      expect(categoryLabel("ai")).toBe("AI");
     });
 
     it("returns raw string for unknown categories", () => {

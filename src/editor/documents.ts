@@ -505,6 +505,7 @@ export function cloneLayer(layer: Layer): Layer {
     fillColor: layer.fillColor,
     effects: normalizeEffects(layer.effects),
     mask: layer.mask ? cloneCanvas(layer.mask) : undefined,
+    aiProvenance: layer.aiProvenance ? { ...layer.aiProvenance, warnings: [...layer.aiProvenance.warnings] } : undefined,
   };
   if (layer.type === "text") {
     return { ...base, type: "text", textData: { ...layer.textData } };
@@ -623,6 +624,7 @@ export function serializeDocument(doc: DocumentState): SerializedDocument {
         rotateDeg: layer.smartObjectData.rotateDeg,
       } : undefined,
       maskDataUrl: layer.mask ? serializeMask(layer.mask) : undefined,
+      aiProvenance: layer.aiProvenance ? { ...layer.aiProvenance, warnings: [...layer.aiProvenance.warnings] } : undefined,
     })),
   };
 }
@@ -646,6 +648,7 @@ export async function deserializeDocument(payload: SerializedDocument, projectPa
       canvas,
       sourceCanvas: cloneCanvas(canvas),
       effects: normalizeEffects(item.effects),
+      aiProvenance: item.aiProvenance ? { ...item.aiProvenance, warnings: [...item.aiProvenance.warnings] } : undefined,
     };
     let layer: Layer;
     if (item.type === "text" && item.textData) {

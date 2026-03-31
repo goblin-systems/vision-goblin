@@ -75,4 +75,23 @@ describe("selectionController", () => {
     expect(controller.getEffectiveMarqueeMode()).toBe("add");
     expect(renderToolState).toHaveBeenCalled();
   });
+
+  it("maps marquee modifier combinations to rotate and perfect semantics", () => {
+    const doc = makeNewDocument("Doc", 100, 80, 100, "transparent");
+    const controller = createSelectionController({
+      getActiveDocument: () => doc,
+      getActiveLayer: (activeDoc) => activeDoc.layers[0],
+      getActiveTool: () => "marquee",
+      setActiveTool: vi.fn(),
+      renderEditorState: vi.fn(),
+      renderToolState: vi.fn(),
+      showToast: vi.fn(),
+      log: vi.fn(),
+      snapshotDocument: vi.fn(() => "snapshot"),
+    });
+
+    expect(controller.getMarqueeModifiers({ ctrlPressed: true, shiftPressed: true, altPressed: false })).toEqual({ rotate: true, perfect: true });
+    expect(controller.getMarqueeModifiers({ ctrlPressed: false, shiftPressed: true, altPressed: true })).toEqual({ rotate: false, perfect: false });
+    expect(controller.getMarqueeModifiers({ ctrlPressed: false, shiftPressed: false, altPressed: false })).toEqual({ rotate: false, perfect: true });
+  });
 });

@@ -11,7 +11,7 @@
       <div class="window-frame-row" data-tauri-drag-region>
         <div class="window-title-wrap">
           <div class="window-title">Vision Goblin</div>
-          <p class="window-subtitle">Phase 1 foundation - editor, tools, settings</p>
+          <p class="window-subtitle"></p>
         </div>
         <div class="window-actions" aria-label="Window controls">
           <button id="window-minimize-btn" class="icon-btn window-action-btn" type="button" aria-label="Minimize window" title="Minimize">
@@ -330,6 +330,78 @@
                 <span class="nav-option-icon"><i data-lucide="pipette"></i></span>
                 <span class="nav-option-label">Pick colour from screen</span>
                 <span class="nav-option-shortcut">Ctrl+Shift+C</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-item">
+            <button class="nav-trigger" type="button">AI <i data-lucide="chevron-down"></i></button>
+            <div class="nav-dropdown">
+              <button class="nav-option" type="button" data-nav-id="ai-select-subject">
+                <span class="nav-option-icon"><i data-lucide="scan"></i></span>
+                <span class="nav-option-label">Select Subject</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-select-background">
+                <span class="nav-option-icon"><i data-lucide="scan-search"></i></span>
+                <span class="nav-option-label">Select Background</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-select-object">
+                <span class="nav-option-icon"><i data-lucide="search"></i></span>
+                <span class="nav-option-label">Select Object by Prompt</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="ai-remove-background">
+                <span class="nav-option-icon"><i data-lucide="layers"></i></span>
+                <span class="nav-option-label">Remove Background</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-remove-object">
+                <span class="nav-option-icon"><i data-lucide="eraser"></i></span>
+                <span class="nav-option-label">Remove Object</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-inpaint">
+                <span class="nav-option-icon"><i data-lucide="paintbrush-2"></i></span>
+                <span class="nav-option-label">Inpaint Selection</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-outpaint">
+                <span class="nav-option-icon"><i data-lucide="frame"></i></span>
+                <span class="nav-option-label">Outpaint Canvas</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="ai-auto-enhance">
+                <span class="nav-option-icon"><i data-lucide="sparkles"></i></span>
+                <span class="nav-option-label">Auto Enhance</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-denoise">
+                <span class="nav-option-icon"><i data-lucide="sliders-horizontal"></i></span>
+                <span class="nav-option-label">Denoise</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-upscale">
+                <span class="nav-option-icon"><i data-lucide="maximize-2"></i></span>
+                <span class="nav-option-label">Upscale</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-style-transfer">
+                <span class="nav-option-icon"><i data-lucide="palette"></i></span>
+                <span class="nav-option-label">Style Transfer</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-restore-photo">
+                <span class="nav-option-icon"><i data-lucide="heart-pulse"></i></span>
+                <span class="nav-option-label">Restore Photo</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-generate-thumbnail">
+                <span class="nav-option-icon"><i data-lucide="image"></i></span>
+                <span class="nav-option-label">Generate Thumbnail</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="ai-freeform">
+                <span class="nav-option-icon"><i data-lucide="wand-2"></i></span>
+                <span class="nav-option-label">Freeform AI</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="open-ai-jobs">
+                <span class="nav-option-icon"><i data-lucide="list-todo"></i></span>
+                <span class="nav-option-label">Jobs</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="open-ai-settings">
+                <span class="nav-option-icon"><i data-lucide="settings"></i></span>
+                <span class="nav-option-label">Settings</span>
               </button>
             </div>
           </div>
@@ -742,6 +814,14 @@
                 </div>
                 <div id="history-list" class="history-list"></div>
               </div>
+              <div id="ai-jobs-panel" class="mini-panel">
+                <div class="pane-heading-row">
+                  <h3>AI Jobs</h3>
+                  <button id="focus-ai-settings-btn" class="secondary-btn slim-btn" type="button"><i data-lucide="settings-2"></i><span>Settings</span></button>
+                </div>
+                <p id="ai-jobs-summary" class="hint">AI idle. Validation and future tool jobs appear here.</p>
+                <div id="ai-jobs-list" class="history-list"></div>
+              </div>
               <div class="mini-panel">
                 <h3>Inspector</h3>
                 <div class="stat-grid">
@@ -766,6 +846,7 @@
             </div>
             <div class="editor-status-actions">
               <span id="status-right">RGB - Snap off - Grid on</span>
+              <button id="ai-jobs-status-btn" class="secondary-btn slim-btn" type="button"><i data-lucide="bot"></i><span>AI idle</span></button>
               <button id="reset-view-btn" class="secondary-btn slim-btn" type="button"><i data-lucide="locate-fixed"></i><span>Reset view</span></button>
               <button class="icon-btn icon-btn-sm" type="button" data-zoom-step="out" aria-label="Zoom out" title="Zoom out"><i data-lucide="minus"></i></button>
               <span id="zoom-readout" class="zoom-pill">100%</span>
@@ -805,6 +886,8 @@
               <li>Next build steps: file IO, canvas interactions, actual raster operations, and native utilities.</li>
             </ul>
           </section>
+
+
         </div>
       </section>
 
@@ -927,6 +1010,77 @@
               <input id="autosave-interval-input" type="number" min="10" max="600" step="10" value="60" class="input input-sm" style="width: 80px" />
             </label>
             <p class="hint">Dirty documents are auto-saved periodically. On crash, you will be offered a restore prompt.</p>
+          </section>
+
+          <section id="ai-settings-section" class="settings-section settings-wide-card">
+            <div class="section-heading-row">
+              <h2>AI Platform</h2>
+              <button id="focus-ai-jobs-btn" class="secondary-btn" type="button"><i data-lucide="bot"></i><span>Open jobs</span></button>
+            </div>
+            <p class="hint">Configure provider routing, keep secrets in secure storage, and validate connections before tool-specific AI flows land.</p>
+            <label class="checkbox-label">
+              <input id="ai-show-estimated-costs-checkbox" type="checkbox" />
+              <span>Show estimated cost messaging when the provider reports or implies a cost</span>
+            </label>
+            <div class="ai-provider-grid">
+              <article class="mini-panel ai-provider-card">
+                <div class="pane-heading-row">
+                  <h3>OpenAI compatible</h3>
+                  <span class="badge warning">remote</span>
+                </div>
+                <label class="checkbox-label">
+                  <input id="ai-provider-openai-compatible-enabled" type="checkbox" />
+                  <span>Enable remote OpenAI compatible provider</span>
+                </label>
+                <label class="field-block">
+                  <span>Endpoint</span>
+                  <input id="ai-provider-openai-compatible-endpoint" type="url" class="input" placeholder="https://api.openai.com/v1" />
+                </label>
+                <label class="field-block">
+                  <span>API key</span>
+                  <input id="ai-provider-openai-compatible-secret" type="password" class="input" placeholder="Stored in secure native credential storage" autocomplete="off" />
+                </label>
+                <div class="stack-actions compact-actions">
+                  <button id="ai-provider-openai-compatible-save-secret-btn" class="secondary-btn" type="button"><i data-lucide="key-round"></i><span>Save key</span></button>
+                  <button id="ai-provider-openai-compatible-clear-secret-btn" class="secondary-btn" type="button"><i data-lucide="trash-2"></i><span>Clear key</span></button>
+                  <button id="ai-provider-openai-compatible-validate-btn" class="secondary-btn" type="button"><i data-lucide="plug-zap"></i><span>Validate</span></button>
+                </div>
+                <p id="ai-provider-openai-compatible-secret-status" class="hint">No key stored.</p>
+                <p id="ai-provider-openai-compatible-status" class="hint">Not checked yet.</p>
+              </article>
+              <article class="mini-panel ai-provider-card">
+                <div class="pane-heading-row">
+                  <h3>Google Gemini</h3>
+                  <span class="badge warning">remote</span>
+                </div>
+                <label class="checkbox-label">
+                  <input id="ai-provider-gemini-enabled" type="checkbox" />
+                  <span>Enable Google Gemini provider</span>
+                </label>
+                <label class="field-block">
+                  <span>Endpoint</span>
+                  <input id="ai-provider-gemini-endpoint" type="url" class="input" placeholder="https://generativelanguage.googleapis.com/v1beta/openai" />
+                </label>
+                <label class="field-block">
+                  <span>API key</span>
+                  <input id="ai-provider-gemini-secret" type="password" class="input" placeholder="Stored in secure native credential storage" autocomplete="off" />
+                </label>
+                <div class="stack-actions compact-actions">
+                  <button id="ai-provider-gemini-save-secret-btn" class="secondary-btn" type="button"><i data-lucide="key-round"></i><span>Save key</span></button>
+                  <button id="ai-provider-gemini-clear-secret-btn" class="secondary-btn" type="button"><i data-lucide="trash-2"></i><span>Clear key</span></button>
+                  <button id="ai-provider-gemini-validate-btn" class="secondary-btn" type="button"><i data-lucide="plug-zap"></i><span>Validate</span></button>
+                </div>
+                <p id="ai-provider-gemini-secret-status" class="hint">No key stored.</p>
+                <p id="ai-provider-gemini-status" class="hint">Not checked yet.</p>
+              </article>
+            </div>
+            <div>
+              <div class="pane-heading-row">
+                <h3>Task Routing</h3>
+                <span class="badge beta">shared runtime</span>
+              </div>
+              <div id="ai-routing-grid" class="ai-routing-grid"></div>
+            </div>
           </section>
 
           <section class="settings-section">
@@ -1677,6 +1831,7 @@
       </div>
 
       <div id="app-toast" class="app-toast" role="status" aria-live="polite" aria-atomic="true"></div>
+      <div id="goblin-toast" class="goblin-toast" role="status" aria-live="polite" aria-atomic="true"></div>
     </main>
   </body>
   </html>

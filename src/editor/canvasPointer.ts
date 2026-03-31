@@ -3,7 +3,7 @@ import { buildCropRect, getDocCoordinates } from "./geometry";
 import type { DocumentState, Layer, PointerState, RasterLayer, Rect, SelectionPath, TransformDraft, TransformHandle } from "./types";
 import { applyCropToDocument, buildTransformPreview, snapshotDocument, createLayerCanvas, compositeDocumentOnto, getLayerContext, refreshLayerCanvas, syncLayerSource } from "./documents";
 import { clamp } from "./utils";
-import { applySelectionClip, combineMasks, createMaskCanvas, defaultPolygonRotation, drawThroughMask, maskBoundingRect, rasterizeRectToMask, type SelectionMode } from "./selection";
+import { applySelectionClip, combineMasks, createMaskCanvas, defaultPolygonRotation, drawThroughMask, isAxisAlignedRectMarquee, maskBoundingRect, maskContainsRect, rasterizeRectToMask, type SelectionMode } from "./selection";
 import { drawMaskStroke } from "./layerMask";
 
 type TransformMode = "scale" | "rotate";
@@ -62,6 +62,34 @@ function subtractRect(base: Rect, cut: Rect): Rect | null {
   }
 
   return candidates.sort((left, right) => right.width * right.height - left.width * left.height)[0] ?? null;
+}
+
+function buildCornerMarqueeRect(
+  startX: number,
+  startY: number,
+  currentX: number,
+  currentY: number,
+  doc: Pick<DocumentState, "width" | "height">,
+  perfect = false,
+): Rect {
+  if (!perfect) {
+    return buildCropRect(startX, startY, currentX, currentY, doc);
+  }
+
+  const anchorX = clamp(Math.round(startX), 0, doc.width);
+  const anchorY = clamp(Math.round(startY), 0, doc.height);
+  const cursorX = clamp(Math.round(currentX), 0, doc.width);
+  const cursorY = clamp(Math.round(currentY), 0, doc.height);
+  const size = Math.max(1, Math.min(Math.abs(cursorX - anchorX), Math.abs(cursorY - anchorY)));
+  const dragLeft = cursorX < anchorX;
+  const dragUp = cursorY < anchorY;
+
+  return {
+    x: dragLeft ? anchorX - size : anchorX,
+    y: dragUp ? anchorY - size : anchorY,
+    width: size,
+    height: size,
+  };
 }
 
 function applySelectionMode(current: Rect | null, next: Rect | null, mode: "replace" | "add" | "subtract" | "intersect") {
@@ -1024,25 +1052,23 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     }
 
     if (deps.pointerState.mode === "marquee") {
-      // Center stays at the start point; cursor defines the radius
       const cx = deps.pointerState.startDocX;
       const cy = deps.pointerState.startDocY;
       const mods = deps.getMarqueeModifiers();
-      let rx: number, ry: number;
+
       if (mods.rotate) {
-        // When rotating, use distance so size stays stable as cursor orbits
+        // Rotate mode keeps the drag origin at the center so the cursor can orbit
+        // around the marquee while preserving its size.
         const dist = Math.hypot(coords.x - cx, coords.y - cy);
-        rx = dist;
-        ry = dist;
+        const x0 = Math.max(0, cx - dist);
+        const y0 = Math.max(0, cy - dist);
+        const x1 = Math.min(doc.width, cx + dist);
+        const y1 = Math.min(doc.height, cy + dist);
+        doc.selectionRect = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
       } else {
-        rx = Math.abs(coords.x - cx);
-        ry = Math.abs(coords.y - cy);
+        doc.selectionRect = buildCornerMarqueeRect(cx, cy, coords.x, coords.y, doc, mods.perfect);
       }
-      const x0 = Math.max(0, cx - rx);
-      const y0 = Math.max(0, cy - ry);
-      const x1 = Math.min(doc.width, cx + rx);
-      const y1 = Math.min(doc.height, cy + ry);
-      doc.selectionRect = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+
       deps.pointerState.lastDocX = coords.x;
       deps.pointerState.lastDocY = coords.y;
       deps.renderEditorState();
@@ -1149,6 +1175,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         const newRect = doc.selectionRect;
         const sides = deps.getMarqueeShape();
         const mods = deps.getMarqueeModifiers();
+        const axisAlignedRect = isAxisAlignedRectMarquee(sides) && !mods.rotate;
 
         // Compute rotation: default orientation per polygon; Ctrl+Shift rotates toward cursor
         let rotation = defaultPolygonRotation(sides);
@@ -1157,10 +1184,10 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
           const dy = deps.pointerState.lastDocY - deps.pointerState.startDocY;
           rotation = Math.atan2(dy, dx);
         }
-
+        
         // Rasterize the new marquee shape into a temp mask
         const tmpMask = createMaskCanvas(doc.width, doc.height);
-        rasterizeRectToMask(tmpMask, newRect, sides, rotation, mods.perfect);
+        rasterizeRectToMask(tmpMask, newRect, sides, rotation, mods.perfect, axisAlignedRect);
 
         if (mode === "replace" || !doc.selectionMask) {
           doc.selectionMask = tmpMask;
@@ -1168,15 +1195,21 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
           combineMasks(doc.selectionMask, tmpMask, mode);
         }
 
-        // Update bounding rect from mask
-        const bounds = maskBoundingRect(doc.selectionMask);
-        doc.selectionRect = bounds;
+        // Keep the dragged marquee bounds when they still contain selected pixels so
+        // the committed selection does not visually jump away from the marquee the
+        // user just drew. Fall back to mask bounds for compound operations that move
+        // or shrink the actual selected area outside the live drag rect.
+        const maskBounds = maskBoundingRect(doc.selectionMask);
+        const committedRect = mode === "replace" && maskContainsRect(doc.selectionMask, newRect)
+          ? newRect
+          : maskBounds;
+        doc.selectionRect = committedRect;
         doc.selectionInverted = false;
         doc.selectionPath = null;
-        doc.selectionShape = "rect";
+        doc.selectionShape = sides > 10 ? "ellipse" : "rect";
 
-        if (bounds) {
-          deps.log(`Selection committed ${bounds.width}x${bounds.height}`, "INFO");
+        if (committedRect) {
+          deps.log(`Selection committed ${committedRect.width}x${committedRect.height}`, "INFO");
         } else {
           doc.selectionMask = null;
           deps.log("Selection cleared after marquee operation", "INFO");

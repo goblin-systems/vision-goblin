@@ -74,6 +74,53 @@ button svg {
   margin-top: var(--space-1);
 }
 
+.goblin-toast {
+  position: fixed;
+  right: var(--space-8);
+  bottom: calc(var(--space-8) + 56px);
+  z-index: 40;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity var(--duration-base), transform var(--duration-base);
+}
+
+.goblin-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.goblin-toast-card {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(420px, calc(100vw - 32px));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: color-mix(in srgb, var(--bg-section) 88%, #000 12%);
+  box-shadow: var(--shadow-toast);
+  color: var(--text);
+}
+
+.goblin-toast-card--subtle {
+  border-color: color-mix(in srgb, var(--text-muted) 35%, var(--border));
+  background: color-mix(in srgb, var(--bg-section) 82%, #000 18%);
+  color: var(--text-subtle);
+}
+
+.goblin-toast-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.goblin-toast-message {
+  line-height: 1.35;
+}
+
 .window-actions {
   display: flex;
   gap: var(--space-2);
@@ -292,6 +339,76 @@ button svg {
   border-color: #7c73ff;
 }
 
+.ai-provider-grid,
+.ai-routing-grid {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ai-provider-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: var(--space-4);
+}
+
+.ai-provider-card {
+  gap: var(--space-3);
+}
+
+.ai-routing-grid {
+  margin-top: var(--space-4);
+}
+
+.ai-route-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+}
+
+.ai-route-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ai-route-copy strong {
+  color: var(--text-heading);
+}
+
+.ai-route-copy span {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.ai-job-row {
+  gap: var(--space-3);
+}
+
+.ai-job-meta,
+.ai-job-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.ai-job-note {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.ai-jobs-empty {
+  padding: var(--space-4);
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+
+.ai-job-status {
+  text-transform: capitalize;
+}
+
 .selection-mode-group {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -409,6 +526,10 @@ button svg {
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
   flex-shrink: 0;
+}
+
+#ai-jobs-status-btn .btn-spinner {
+  margin-left: var(--space-2);
 }
 
 .selection-mode-btn.is-active {
@@ -715,7 +836,9 @@ button svg {
   .tools-grid,
   .settings-grid,
   .inline-control-grid,
-  .stat-grid {
+  .stat-grid,
+  .ai-provider-grid,
+  .ai-route-row {
     grid-template-columns: 1fr;
   }
 

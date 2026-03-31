@@ -15,6 +15,7 @@ pub fn run() {
             debug_log::set_debug_logging_enabled,
             debug_log::write_debug_log,
             debug_log::open_debug_log_folder,
+            debug_log::save_ai_debug_image,
         ])
         .manage(debug_log::DebugLogState::default())
         .run(tauri::generate_context!())

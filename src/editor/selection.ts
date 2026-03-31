@@ -36,6 +36,10 @@ export function defaultPolygonRotation(sides: number): number {
     : -Math.PI / 2;
 }
 
+export function isAxisAlignedRectMarquee(sides: number): boolean {
+  return sides === 4;
+}
+
 /**
  * Trace a regular polygon path (or ellipse when sides > 10) onto a context.
  * When `perfect` is true (default), both radii use min(rx, ry) so the polygon
@@ -44,13 +48,15 @@ export function defaultPolygonRotation(sides: number): number {
 export function traceMarqueeShape(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, rx: number, ry: number,
-  sides: number, rotation = defaultPolygonRotation(sides), perfect = true,
+  sides: number, rotation = defaultPolygonRotation(sides), perfect = true, axisAlignedRect = isAxisAlignedRectMarquee(sides),
 ) {
   const actualRx = perfect ? Math.min(rx, ry) : rx;
   const actualRy = perfect ? Math.min(rx, ry) : ry;
   ctx.beginPath();
   if (sides > 10) {
     ctx.ellipse(cx, cy, Math.max(0, actualRx), Math.max(0, actualRy), 0, 0, Math.PI * 2);
+  } else if (isAxisAlignedRectMarquee(sides) && axisAlignedRect) {
+    ctx.rect(cx - actualRx, cy - actualRy, Math.max(0, actualRx * 2), Math.max(0, actualRy * 2));
   } else {
     for (let i = 0; i < sides; i++) {
       const angle = rotation + (Math.PI * 2 * i) / sides;
@@ -77,7 +83,7 @@ export const SHAPE_NAMES: Record<number, string> = {
 
 export function rasterizeRectToMask(
   mask: HTMLCanvasElement, rect: Rect,
-  sides: number, rotation = defaultPolygonRotation(sides), perfect = true,
+  sides: number, rotation = defaultPolygonRotation(sides), perfect = true, axisAlignedRect = isAxisAlignedRectMarquee(sides),
 ) {
   const ctx = mask.getContext("2d")!;
   ctx.fillStyle = "#fff";
@@ -85,7 +91,7 @@ export function rasterizeRectToMask(
   const cy = rect.y + rect.height / 2;
   const rx = rect.width / 2;
   const ry = rect.height / 2;
-  traceMarqueeShape(ctx, cx, cy, rx, ry, sides, rotation, perfect);
+  traceMarqueeShape(ctx, cx, cy, rx, ry, sides, rotation, perfect, axisAlignedRect);
   ctx.fill();
 }
 
@@ -181,6 +187,26 @@ export function maskBoundingRect(mask: HTMLCanvasElement): Rect | null {
   }
   if (maxX < 0) return null;
   return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+export function maskContainsRect(mask: HTMLCanvasElement, rect: Rect): boolean {
+  const startX = Math.max(0, Math.floor(rect.x));
+  const startY = Math.max(0, Math.floor(rect.y));
+  const endX = Math.min(mask.width, Math.ceil(rect.x + rect.width));
+  const endY = Math.min(mask.height, Math.ceil(rect.y + rect.height));
+  if (endX <= startX || endY <= startY) {
+    return false;
+  }
+  const ctx = mask.getContext("2d")!;
+  const { data, width } = ctx.getImageData(0, 0, mask.width, mask.height);
+  for (let y = startY; y < endY; y++) {
+    for (let x = startX; x < endX; x++) {
+      if (data[(y * width + x) * 4 + 3] > 0) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 export function isMaskEmpty(mask: HTMLCanvasElement): boolean {

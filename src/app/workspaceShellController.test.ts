@@ -55,6 +55,25 @@ describe("workspaceShellController helpers", () => {
     expect(state.redoDisabled).toBe(false);
   });
 
+  it("clips fractional selection dimensions in document metadata", () => {
+    const settings = getDefaultSettings();
+    const doc = makeNewDocument("Doc", 400, 300, 100, "transparent");
+    doc.selectionRect = { x: 10, y: 20, width: 14.33333333, height: 16.6666666666666 };
+
+    const state = buildWorkspaceShellState({
+      settings,
+      doc,
+      activeLayer: doc.layers[0] ?? null,
+      selectedLayerCount: 1,
+      quickMaskActive: false,
+      activeShapeKind: "rectangle",
+    });
+
+    expect(state.activeDocMeta).toContain("selection 14.33x16.67");
+    expect(state.activeDocMeta).not.toContain("14.33333333");
+    expect(state.activeDocMeta).not.toContain("16.6666666666666");
+  });
+
   it("formats tooltips and floating chip copy", () => {
     expect(getToolTooltipLabel("Move tool", "V")).toBe("Move tool (V)");
     expect(getCanvasFloatingChipText({

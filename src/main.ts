@@ -28,7 +28,9 @@ import { createLayerPanelController } from "./app/layerPanelController";
 import { buildEditorCommands } from "./app/registerEditorCommands";
 import { createSelectionToolsController } from "./app/selectionToolsController";
 import { createWorkspaceShellController, type WorkspaceShellController } from "./app/workspaceShellController";
-import { configureDebugLogging, debugLog, getDebugLogPath, openDebugLogFolder } from "./logger";
+import { createAiController } from "./app/ai/controller";
+import { createAiEditingController } from "./app/ai/editingController";
+import { configureDebugLogging, debugLog, getDebugLogPath, openDebugLogFolder, saveAiDebugImage } from "./logger";
 import { pushHistory } from "./editor/history";
 import { getResizeOffset } from "./editor/geometry";
 import { addLayer, addAdjustmentLayer, addShapeLayer, addTextLayer, getSelectedLayerIds, setBackgroundLayerColor } from "./editor/layers";
@@ -44,6 +46,7 @@ import { applySelectionClip, type SelectionMode } from "./editor/selection";
 import { registerCommands, executeCommand, applyKeybindings } from "./editor/commands";
 import { createSelectionController } from "./editor/selectionController";
 import { createTransformController } from "./editor/transformController";
+import { createGoblinPersonalityController } from "./app/goblin/personalityController";
 
 const documentSession = createDocumentSession();
 const documents = documentSession.documents;
@@ -60,6 +63,14 @@ let cloneSource: { x: number; y: number } | null = null;
 let workspaceShellController: WorkspaceShellController;
 let layerPanelController: ReturnType<typeof createLayerPanelController>;
 let canvasWorkspaceController: ReturnType<typeof createCanvasWorkspaceController>;
+let aiController: ReturnType<typeof createAiController>;
+let aiEditingController: ReturnType<typeof createAiEditingController>;
+let goblinPersonalityController: ReturnType<typeof createGoblinPersonalityController>;
+
+const windowSubtitle = document.querySelector<HTMLElement>(".window-subtitle");
+if (!windowSubtitle) {
+  throw new Error("Missing .window-subtitle element");
+}
 
 function renderEditorState() {
   workspaceShellController.renderEditorState();
@@ -314,6 +325,7 @@ const canvasPointer = createCanvasPointerController({
   onColourPicked: (colour) => {
     editorInteractionController.setActiveColour(colour);
     showToast(`Sampled ${colour}`);
+    goblinPersonalityController.signal({ type: "eyedropper-sampled" });
   },
   getCloneSource: () => cloneSource,
   setCloneSource: (source) => {
@@ -343,6 +355,7 @@ const canvasPointer = createCanvasPointerController({
     debugLog(`Added text layer '${layer.name}'`, "INFO");
     renderEditorState();
     showToast("Added text layer");
+    goblinPersonalityController.signal({ type: "layer-created" });
     return layer;
   },
   onCreateShapeLayer: (x, y) => {
@@ -353,6 +366,7 @@ const canvasPointer = createCanvasPointerController({
     debugLog(`Added shape layer '${layer.name}'`, "INFO");
     renderEditorState();
     showToast(`Added ${editorInteractionController.getActiveShapeKind()}`);
+    goblinPersonalityController.signal({ type: "layer-created" });
     return layer;
   },
   log: debugLog,
@@ -611,6 +625,7 @@ async function applySettings(next: VisionSettings) {
   settings = next;
   await saveSettings(settings);
   workspaceShellController.syncFromSettings();
+  aiController.render();
 }
 
 async function persistSettings(next: VisionSettings, message?: string) {
@@ -628,6 +643,7 @@ async function persistSettings(next: VisionSettings, message?: string) {
     await captureController.refreshGlobalShortcuts();
   }
   workspaceShellController.syncFromSettings();
+  aiController.render();
   if (message) {
     showToast(message);
   }
@@ -655,6 +671,7 @@ async function handleUndo() {
   doc.history = ["Undo", ...doc.history].slice(0, 20);
   debugLog(`Undo applied for document '${doc.name}'`, "INFO");
   renderEditorState();
+  goblinPersonalityController.signal({ type: "undo-succeeded" });
 }
 
 async function handleRedo() {
@@ -735,6 +752,7 @@ function handleAddAdjustmentLayer(kind: AdjustmentKind) {
   debugLog(`Added adjustment layer '${layer.name}' (${kind}) to '${doc.name}'`, "INFO");
   showToast(`Added ${ADJUSTMENT_LABELS[kind]} adjustment layer`, "success");
   renderEditorState();
+  goblinPersonalityController.signal({ type: "layer-created" });
 }
 
 function handleConvertToSmartObject() {
@@ -852,6 +870,22 @@ function registerEditorCommands() {
     beginGlobalColourPick: () => captureController.beginGlobalColourPick(),
     clearRecent: documentWorkflowController.clearRecent,
     switchTool,
+    openAiJobs: () => aiController.focusJobs(),
+    openAiSettings: () => aiController.focusSettings(),
+    selectAiSubject: () => aiEditingController.selectSubject(),
+    selectAiBackground: () => aiEditingController.selectBackground(),
+    selectAiObjectByPrompt: () => aiEditingController.selectObjectByPrompt(),
+    removeAiBackground: () => aiEditingController.removeBackground(),
+    removeAiObject: () => aiEditingController.removeObject(),
+    openAiAutoEnhanceModal: () => aiEditingController.openAutoEnhanceModal(),
+    runAiUpscale: () => aiEditingController.upscaleActiveLayer(),
+    openAiDenoiseModal: () => aiEditingController.openDenoiseModal(),
+    runAiInpaint: () => aiEditingController.inpaintSelection(),
+    runAiOutpaint: () => aiEditingController.outpaintCanvas(),
+    openAiStyleTransferModal: () => aiEditingController.openStyleTransferModal(),
+    openAiRestoreModal: () => aiEditingController.openRestoreModal(),
+    runAiThumbnail: () => aiEditingController.generateThumbnail(),
+    runAiFreeform: () => aiEditingController.freeformAi(),
   }));
   applyKeybindings(settings.keybindings);
 }
@@ -885,6 +919,7 @@ function bindDocumentActions() {
     const layer = addLayer(doc);
     debugLog(`Added layer '${layer.name}' to '${doc.name}'`, "INFO");
     renderEditorState();
+    goblinPersonalityController.signal({ type: "layer-created" });
   });
   byId<HTMLInputElement>("background-colour-input").addEventListener("input", (event) => {
     const doc = getActiveDocument();
@@ -903,6 +938,7 @@ function bindDocumentActions() {
 
 async function init() {
   setupWindowControls();
+  goblinPersonalityController.init();
   settings = await loadSettings();
   settings = {
     ...settings,
@@ -922,6 +958,8 @@ async function init() {
   registerEditorCommands();
   workspaceShellController.updateToolTooltips();
   workspaceShellController.bind();
+  aiController.bind();
+  aiEditingController.bind();
   canvasWorkspaceController.bindZoomControls();
   bindDocumentActions();
   editorInteractionController.bind();
@@ -931,15 +969,44 @@ async function init() {
   await captureController.refreshGlobalShortcuts();
 
   workspaceShellController.syncFromSettings();
+  aiController.render();
   await documentWorkflowController.checkCrashRecovery();
   documentWorkflowController.configureAutosaveTimer();
 
   window.addEventListener("beforeunload", () => {
+    goblinPersonalityController.destroy();
     void documentWorkflowController.cleanShutdown();
   });
   currentWindow.onCloseRequested(async () => {
+    goblinPersonalityController.destroy();
     await documentWorkflowController.cleanShutdown();
   });
 }
+
+aiController = createAiController({
+  getSettings: () => settings,
+  persistSettings,
+  showToast,
+  log: debugLog,
+});
+
+aiEditingController = createAiEditingController({
+  aiController,
+  getActiveDocument,
+  getActiveLayer,
+  renderCanvas,
+  renderEditorState,
+  showToast,
+  log: debugLog,
+  saveDebugImage: saveAiDebugImage,
+});
+
+goblinPersonalityController = createGoblinPersonalityController({
+  subtitleElement: windowSubtitle,
+  toastRoot: byId<HTMLElement>("goblin-toast"),
+  canvasStage,
+  editorCanvas,
+  getActiveTool: () => settings.activeTool,
+});
 
 void init();

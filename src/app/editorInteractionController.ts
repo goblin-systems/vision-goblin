@@ -123,6 +123,14 @@ export function createEditorInteractionController(deps: EditorInteractionControl
       modifierState.ctrlPressed = event.ctrlKey;
       modifierState.altPressed = event.altKey;
 
+      // Let input elements handle their own keyboard events (Delete, Enter, Escape, etc.)
+      // Modified keys (Ctrl/Meta/Alt) still pass through for shortcuts like Ctrl+Z.
+      const el = event.target instanceof HTMLElement ? event.target : null;
+      const isInputFocused = el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || el?.tagName === "SELECT" || el?.isContentEditable === true || el?.contentEditable === "true";
+      if (isInputFocused && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        return;
+      }
+
       if (event.key === "Enter" && deps.getTransformDraft()) {
         event.preventDefault();
         deps.commitTransformDraft();

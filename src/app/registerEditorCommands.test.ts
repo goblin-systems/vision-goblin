@@ -59,6 +59,22 @@ function createDeps(overrides: Partial<RegisterEditorCommandsDeps> = {}): Regist
     beginGlobalColourPick: overrides.beginGlobalColourPick ?? vi.fn(),
     clearRecent: overrides.clearRecent ?? vi.fn(),
     switchTool: overrides.switchTool ?? vi.fn(),
+    openAiJobs: overrides.openAiJobs ?? vi.fn(),
+    openAiSettings: overrides.openAiSettings ?? vi.fn(),
+    selectAiSubject: overrides.selectAiSubject ?? vi.fn(),
+    selectAiBackground: overrides.selectAiBackground ?? vi.fn(),
+    selectAiObjectByPrompt: overrides.selectAiObjectByPrompt ?? vi.fn(),
+    removeAiBackground: overrides.removeAiBackground ?? vi.fn(),
+    removeAiObject: overrides.removeAiObject ?? vi.fn(),
+    openAiAutoEnhanceModal: overrides.openAiAutoEnhanceModal ?? vi.fn(),
+    runAiUpscale: overrides.runAiUpscale ?? vi.fn(),
+    openAiDenoiseModal: overrides.openAiDenoiseModal ?? vi.fn(),
+    runAiInpaint: overrides.runAiInpaint ?? vi.fn(),
+    runAiOutpaint: overrides.runAiOutpaint ?? vi.fn(),
+    openAiStyleTransferModal: overrides.openAiStyleTransferModal ?? vi.fn(),
+    openAiRestoreModal: overrides.openAiRestoreModal ?? vi.fn(),
+    runAiThumbnail: overrides.runAiThumbnail ?? vi.fn(),
+    runAiFreeform: overrides.runAiFreeform ?? vi.fn(),
   };
 }
 
@@ -91,5 +107,30 @@ describe("buildEditorCommands", () => {
 
     expect(brush?.shortcut).toBe("B");
     expect(brush?.category).toBe("tool");
+  });
+
+  it("registers AI window commands", () => {
+    const commands = buildEditorCommands(createDeps());
+
+    expect(commands.find((command) => command.id === "open-ai-jobs")?.enabled()).toBe(true);
+    expect(commands.find((command) => command.id === "open-ai-settings")?.enabled()).toBe(true);
+    expect(commands.find((command) => command.id === "ai-auto-enhance")?.enabled()).toBe(true);
+  });
+
+  it("assigns ai category to all AI commands", () => {
+    const commands = buildEditorCommands(createDeps());
+    const aiCommands = commands.filter((c) => c.id.startsWith("ai-") || c.id.startsWith("open-ai-"));
+    expect(aiCommands.length).toBe(16);
+    for (const cmd of aiCommands) {
+      expect(cmd.category).toBe("ai");
+    }
+  });
+
+  it("uses 'AI: ' prefix for all AI command labels", () => {
+    const commands = buildEditorCommands(createDeps());
+    const aiCommands = commands.filter((c) => c.category === "ai");
+    for (const cmd of aiCommands) {
+      expect(cmd.label.startsWith("AI: ")).toBe(true);
+    }
   });
 });

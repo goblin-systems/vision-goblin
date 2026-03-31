@@ -57,6 +57,22 @@ export interface RegisterEditorCommandsDeps {
   beginGlobalColourPick: () => void | Promise<void>;
   clearRecent: () => void | Promise<void>;
   switchTool: (tool: ToolName) => void | Promise<void>;
+  openAiJobs: () => void | Promise<void>;
+  openAiSettings: () => void | Promise<void>;
+  selectAiSubject: () => void | Promise<void>;
+  selectAiBackground: () => void | Promise<void>;
+  selectAiObjectByPrompt: () => void | Promise<void>;
+  removeAiBackground: () => void | Promise<void>;
+  removeAiObject: () => void | Promise<void>;
+  openAiAutoEnhanceModal: () => void | Promise<void>;
+  runAiUpscale: () => void | Promise<void>;
+  openAiDenoiseModal: () => void | Promise<void>;
+  runAiInpaint: () => void | Promise<void>;
+  runAiOutpaint: () => void | Promise<void>;
+  openAiStyleTransferModal: () => void | Promise<void>;
+  openAiRestoreModal: () => void | Promise<void>;
+  runAiThumbnail: () => void | Promise<void>;
+  runAiFreeform: () => void | Promise<void>;
 }
 
 const TOOL_LABELS: Record<ToolName, string> = {
@@ -132,6 +148,9 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
     { id: "color-range", label: "Select by Color Range", category: "select", enabled: hasDoc, execute: () => deps.openColorRangeModal() },
     { id: "refine-edge", label: "Refine Edge", category: "select", enabled: hasSelection, execute: () => deps.openRefineEdgeModal() },
     { id: "toggle-quick-mask", label: "Quick Mask Mode", shortcut: "Q", category: "select", enabled: hasDoc, execute: () => deps.toggleQuickMask() },
+    { id: "ai-select-subject", label: "AI: Select Subject", category: "ai", enabled: hasDoc, execute: () => void deps.selectAiSubject() },
+    { id: "ai-select-background", label: "AI: Select Background", category: "ai", enabled: hasDoc, execute: () => void deps.selectAiBackground() },
+    { id: "ai-select-object", label: "AI: Select Object by Prompt", category: "ai", enabled: hasDoc, execute: () => void deps.selectAiObjectByPrompt() },
 
     { id: "brightness-contrast", label: "Brightness / Contrast", category: "adjust", enabled: hasDoc, execute: () => deps.openBrightnessContrastModal() },
     { id: "hue-saturation", label: "Hue / Saturation", category: "adjust", enabled: hasDoc, execute: () => deps.openHueSaturationModal() },
@@ -147,6 +166,17 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
     { id: "reduce-noise", label: "Reduce noise", category: "adjust", enabled: hasDoc, execute: () => deps.openReduceNoiseModal() },
     { id: "warp", label: "Warp", category: "adjust", enabled: hasDoc, execute: () => deps.openWarpModal() },
     { id: "liquify", label: "Liquify", category: "adjust", enabled: hasDoc, execute: () => deps.openLiquifyModal() },
+    { id: "ai-remove-background", label: "AI: Remove Background", category: "ai", enabled: hasDoc, execute: () => void deps.removeAiBackground() },
+    { id: "ai-remove-object", label: "AI: Remove Object", category: "ai", enabled: hasDoc, execute: () => void deps.removeAiObject() },
+    { id: "ai-auto-enhance", label: "AI: Auto Enhance", category: "ai", enabled: hasDoc, execute: () => void deps.openAiAutoEnhanceModal() },
+    { id: "ai-upscale", label: "AI: Upscale", category: "ai", enabled: hasDoc, execute: () => void deps.runAiUpscale() },
+    { id: "ai-denoise", label: "AI: Denoise", category: "ai", enabled: hasDoc, execute: () => void deps.openAiDenoiseModal() },
+    { id: "ai-inpaint", label: "AI: Inpaint Selection", category: "ai", enabled: hasSelection, execute: () => void deps.runAiInpaint() },
+    { id: "ai-outpaint", label: "AI: Outpaint Canvas", category: "ai", enabled: hasDoc, execute: () => void deps.runAiOutpaint() },
+    { id: "ai-style-transfer", label: "AI: Style Transfer", category: "ai", enabled: hasDoc, execute: () => void deps.openAiStyleTransferModal() },
+    { id: "ai-restore-photo", label: "AI: Restore Photo", category: "ai", enabled: hasDoc, execute: () => void deps.openAiRestoreModal() },
+    { id: "ai-generate-thumbnail", label: "AI: Generate Thumbnail", category: "ai", enabled: hasDoc, execute: () => void deps.runAiThumbnail() },
+    { id: "ai-freeform", label: "AI: Freeform", category: "ai", enabled: hasDoc, execute: () => void deps.runAiFreeform() },
 
     { id: "add-adj-brightness-contrast", label: "Add Brightness/Contrast layer", category: "layer", enabled: hasDoc, execute: () => deps.handleAddAdjustmentLayer("brightness-contrast") },
     { id: "add-adj-hue-saturation", label: "Add Hue/Saturation layer", category: "layer", enabled: hasDoc, execute: () => deps.handleAddAdjustmentLayer("hue-saturation") },
@@ -181,6 +211,8 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
     { id: "toggle-tools-panel", label: "Toggle tools panel", category: "window", enabled: () => true, execute: () => void deps.toggleWindowPanel("left") },
     { id: "toggle-inspector-panel", label: "Toggle inspector panel", category: "window", enabled: () => true, execute: () => void deps.toggleWindowPanel("right") },
     { id: "command-palette", label: "Command Palette", shortcut: "Ctrl+K", category: "window", enabled: () => true, execute: () => deps.togglePalette() },
+    { id: "open-ai-jobs", label: "AI: Open Jobs", category: "ai", enabled: () => true, execute: () => void deps.openAiJobs() },
+    { id: "open-ai-settings", label: "AI: Open Settings", category: "ai", enabled: () => true, execute: () => void deps.openAiSettings() },
 
     { id: "capture-region", label: "Capture region", category: "tool", enabled: () => true, execute: () => void deps.beginRegionSnip() },
     { id: "capture-window", label: "Capture window", category: "tool", enabled: () => true, execute: () => void deps.chooseWindowCapture() },

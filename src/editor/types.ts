@@ -39,6 +39,18 @@ export interface LayerBase {
   effects?: LayerEffect[];
   /** Optional grayscale mask canvas (white = reveal, black = hide). */
   mask?: HTMLCanvasElement;
+  aiProvenance?: AiProvenanceRecord;
+}
+
+export interface AiProvenanceRecord {
+  providerId: string;
+  model?: string;
+  taskId: string;
+  family: string;
+  operation: string;
+  prompt?: string;
+  warnings: string[];
+  createdAt: string;
 }
 
 export interface RasterLayer extends LayerBase {
@@ -270,6 +282,7 @@ export interface SerializedLayer {
     rotateDeg: number;
   };
   maskDataUrl?: string;
+  aiProvenance?: AiProvenanceRecord;
 }
 
 export interface SerializedDocument {
