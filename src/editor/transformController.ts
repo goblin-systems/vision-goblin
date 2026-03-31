@@ -1,5 +1,6 @@
 import { pushHistory } from "./history";
-import { buildTransformPreview, refreshLayerCanvas, snapshotDocument, syncLayerSource } from "./documents";
+import { buildTransformMatrix, buildTransformPreview, refreshLayerCanvas, snapshotDocument, syncLayerSource } from "./documents";
+import { isMaskEmpty, maskBoundingRect, normalizeSelectionToMask, transformMaskInDocumentSpace } from "./selection";
 import { renderSmartObjectLayer } from "./smartObject";
 import type { DocumentState, Layer, TransformDraft } from "./types";
 
@@ -96,6 +97,14 @@ export function createTransformController(deps: TransformControllerDeps) {
     const layer = doc.layers.find((item) => item.id === draft.layerId);
     if (!layer) return;
     const preview = buildTransformPreview(draft);
+    const normalizedSelectionMask = normalizeSelectionToMask(
+      doc.width,
+      doc.height,
+      doc.selectionRect,
+      doc.selectionShape,
+      doc.selectionPath,
+      doc.selectionMask,
+    );
     doc.undoStack.push(draft.snapshot);
     doc.redoStack = [];
     const isPureRotation = Math.abs(draft.scaleX - 1) < 0.001
@@ -125,6 +134,24 @@ export function createTransformController(deps: TransformControllerDeps) {
       layer.x = Math.round(preview.x);
       layer.y = Math.round(preview.y);
       syncLayerSource(layer);
+    }
+    if (normalizedSelectionMask) {
+      const transformedSelectionMask = transformMaskInDocumentSpace(
+        normalizedSelectionMask,
+        doc.width,
+        doc.height,
+        buildTransformMatrix(draft),
+        draft.pivotX,
+        draft.pivotY,
+      );
+      if (isMaskEmpty(transformedSelectionMask)) {
+        doc.selectionMask = null;
+        doc.selectionRect = null;
+      } else {
+        doc.selectionMask = transformedSelectionMask;
+        doc.selectionRect = maskBoundingRect(transformedSelectionMask);
+      }
+      doc.selectionPath = null;
     }
     doc.dirty = true;
     pushHistory(doc, "Applied transform");

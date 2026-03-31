@@ -2,6 +2,7 @@ import type { ToolName, VisionSettings } from "../settings";
 import { getSelectedLayerIds } from "../editor/layers";
 import type { CommandDefinition } from "../editor/commands";
 import type { DocumentState, Layer } from "../editor/types";
+import type { UiTheme } from "./theme";
 
 type AlignmentKind = "left" | "right" | "top" | "bottom" | "center-h" | "center-v" | "distribute-h" | "distribute-v";
 type AdjustmentLayerKind = "brightness-contrast" | "hue-saturation" | "levels" | "curves" | "color-balance" | "gradient-map";
@@ -73,6 +74,7 @@ export interface RegisterEditorCommandsDeps {
   openAiRestoreModal: () => void | Promise<void>;
   runAiThumbnail: () => void | Promise<void>;
   runAiFreeform: () => void | Promise<void>;
+  setTheme: (theme: UiTheme) => void | Promise<void>;
 }
 
 const TOOL_LABELS: Record<ToolName, string> = {
@@ -218,6 +220,10 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
     { id: "capture-window", label: "Capture window", category: "tool", enabled: () => true, execute: () => void deps.chooseWindowCapture() },
     { id: "capture-fullscreen", label: "Capture full screen", category: "tool", enabled: () => true, execute: () => void deps.captureFullscreen() },
     { id: "pick-from-screen", label: "Pick colour from screen", category: "tool", enabled: () => true, execute: () => void deps.beginGlobalColourPick() },
+
+    { id: "set-theme-goblin", label: "Theme: Goblin", category: "view", enabled: () => true, execute: () => void deps.setTheme("goblin") },
+    { id: "set-theme-dark", label: "Theme: Dark", category: "view", enabled: () => true, execute: () => void deps.setTheme("dark") },
+    { id: "set-theme-light", label: "Theme: Light", category: "view", enabled: () => true, execute: () => void deps.setTheme("light") },
   ];
 
   for (const tool of Object.keys(TOOL_LABELS) as ToolName[]) {

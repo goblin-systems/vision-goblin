@@ -1,6 +1,30 @@
 :root {
   --left-panel-width: 220px;
   --right-panel-width: 260px;
+
+  /* Canvas / editor surface — app-owned, Goblin defaults */
+  --canvas-stage-bg: linear-gradient(180deg, rgba(7, 11, 21, 0.96), rgba(13, 18, 31, 0.98));
+  --floating-chip-border: rgba(108, 99, 255, 0.35);
+  --floating-chip-bg: rgba(9, 13, 24, 0.9);
+  --floating-chip-color: var(--text-subtle);
+  --overlay-toolbar-bg: rgba(8, 11, 20, 0.88);
+  --checker-color: rgba(255, 255, 255, 0.03);
+
+  /* Scrollbar — plain colours for Firefox scrollbar-color (can't use gradient) */
+  --scrollbar-thumb-color: rgba(108, 99, 255, 0.45);
+  --scrollbar-track-color: rgba(10, 14, 26, 0.42);
+
+  /* Design-system override tokens (beat DS specificity via [data-theme] element rules) */
+  --body-bg-override: initial;
+  --tab-active-bg: linear-gradient(180deg, rgba(108, 99, 255, 0.20), rgba(108, 99, 255, 0.08)), #0f1729e0;
+  --tab-active-border: rgba(108, 99, 255, 0.58);
+  --tab-inactive-bg: #0f1729e0;
+  --doc-tab-inactive-bg: #0c1222e0;
+  --status-bar-bg: rgba(11, 16, 32, 0.72);
+  --status-bar-border: rgba(255, 255, 255, 0.05);
+  --stat-card-bg: rgba(12, 18, 34, 0.8);
+  --stat-card-border: rgba(255, 255, 255, 0.04);
+  --selection-bg: rgba(108, 99, 255, 0.35);
 }
 
 html,
@@ -317,7 +341,7 @@ button svg {
 .keybinding-row label {
   flex: 1;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -328,15 +352,15 @@ button svg {
   font-size: 11px;
   text-align: center;
   padding: 2px 4px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.9);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
   border-radius: 3px;
 }
 
 .keybinding-row input:focus {
-  outline: 1px solid #7c73ff;
-  border-color: #7c73ff;
+  outline: 1px solid var(--border-focus);
+  border-color: var(--border-focus);
 }
 
 .ai-provider-grid,
@@ -486,7 +510,7 @@ button svg {
   justify-content: space-between;
   gap: var(--space-4);
   padding: var(--space-3) var(--space-5);
-  background: rgba(8, 11, 20, 0.88);
+  background: var(--overlay-toolbar-bg);
   border-bottom: 1px solid var(--border);
   position: fixed;
   top: 0;
@@ -640,10 +664,10 @@ button svg {
   flex-shrink: 0;
   border: 1px solid var(--border);
   background:
-    linear-gradient(45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%);
+    linear-gradient(45deg, var(--checker-color) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checker-color) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checker-color) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checker-color) 75%);
   background-size: 14px 14px;
   background-position: 0 0, 0 7px, 7px -7px, -7px 0;
   overflow: hidden;
@@ -662,7 +686,7 @@ button svg {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(7, 11, 21, 0.96), rgba(13, 18, 31, 0.98));
+  background: var(--canvas-stage-bg);
 }
 
 .editor-status-bar {
@@ -717,10 +741,10 @@ button svg {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(45deg, rgba(255, 255, 255, 0.03) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(255, 255, 255, 0.03) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.03) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.03) 75%);
+    linear-gradient(45deg, var(--checker-color) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checker-color) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checker-color) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checker-color) 75%);
   background-size: 28px 28px;
   background-position: 0 0, 0 14px, 14px -14px, -14px 0;
 }
@@ -756,8 +780,8 @@ button svg {
   left: var(--space-5);
   bottom: var(--space-5);
   padding: var(--space-3) var(--space-4);
-  border: 1px solid rgba(108, 99, 255, 0.35);
-  background: rgba(9, 13, 24, 0.9);
+  border: 1px solid var(--floating-chip-border);
+  background: var(--floating-chip-bg);
   font-size: var(--font-size-md);
   color: var(--text-subtle);
 }
@@ -992,3 +1016,229 @@ button svg {
   color: var(--text-muted);
   font-size: 13px;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Themes                                                              */
+/*                                                                      */
+/*  To add a new theme:                                                 */
+/*    1. Add a [data-theme="my-theme"] { } block with token overrides  */
+/*    2. That's it. All element rules below use var(--token).           */
+/* ------------------------------------------------------------------ */
+
+/* Goblin theme is the default (:root). No block needed. */
+
+/* Dark theme (VSCode Dark+ inspired) */
+[data-theme="dark"] {
+  --bg: #1e1e1e;
+  --bg-section: #252526;
+  --bg-input: #2d2d2d;
+  --bg-deep: #181818;
+  --bg-hover: rgba(255, 255, 255, 0.07);
+  --border: #3c3c3c;
+  --border-focus: #007acc;
+  --text: #d4d4d4;
+  --text-muted: #858585;
+  --text-heading: #ffffff;
+  --text-subtle: #9cdcfe;
+  --accent: #007acc;
+  --accent-hover: #1a8ad4;
+  --success: #4ec9b0;
+  --warning: #dcdcaa;
+  --error: #f44747;
+
+  /* scrollbar WebKit gradient */
+  --scrollbar-thumb: linear-gradient(180deg, rgba(0, 122, 204, 0.75), rgba(0, 100, 180, 0.7));
+  --scrollbar-thumb-hover: linear-gradient(180deg, rgba(26, 138, 212, 0.9), rgba(0, 122, 204, 0.85));
+  --scrollbar-track: rgba(24, 24, 24, 0.6);
+
+  /* scrollbar Firefox plain colours */
+  --scrollbar-thumb-color: rgba(0, 122, 204, 0.5);
+  --scrollbar-track-color: rgba(24, 24, 24, 0.6);
+
+  /* canvas / editor */
+  --canvas-stage-bg: linear-gradient(180deg, #1a1a1a, #1e1e1e);
+  --floating-chip-border: rgba(0, 122, 204, 0.4);
+  --floating-chip-bg: rgba(30, 30, 30, 0.92);
+  --floating-chip-color: var(--text-subtle);
+  --overlay-toolbar-bg: rgba(30, 30, 30, 0.92);
+  --checker-color: rgba(255, 255, 255, 0.06);
+
+  /* design-system override tokens */
+  --body-bg-override: var(--bg);
+  --tab-active-bg: linear-gradient(180deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 8%, transparent)), var(--bg-input);
+  --tab-active-border: color-mix(in srgb, var(--accent) 58%, transparent);
+  --tab-inactive-bg: var(--bg-input);
+  --doc-tab-inactive-bg: var(--bg-input);
+  --status-bar-bg: var(--bg-deep);
+  --status-bar-border: var(--border);
+  --stat-card-bg: var(--bg-input);
+  --stat-card-border: var(--border);
+  --selection-bg: rgba(0, 122, 204, 0.35);
+}
+
+/* Light theme (VSCode Light+ inspired) */
+[data-theme="light"] {
+  --bg: #f3f3f3;
+  --bg-section: #ffffff;
+  --bg-input: #ececec;
+  --bg-deep: #e8e8e8;
+  --bg-hover: rgba(0, 0, 0, 0.06);
+  --border: #cecece;
+  --border-focus: #0078d4;
+  --text: #3b3b3b;
+  --text-muted: #717171;
+  --text-heading: #1e1e1e;
+  --text-subtle: #0451a5;
+  --accent: #0078d4;
+  --accent-hover: #006cbf;
+  --success: #008000;
+  --warning: #8a6800;
+  --error: #cd3131;
+
+  /* scrollbar WebKit gradient */
+  --scrollbar-thumb: linear-gradient(180deg, rgba(0, 120, 212, 0.55), rgba(0, 100, 190, 0.5));
+  --scrollbar-thumb-hover: linear-gradient(180deg, rgba(0, 120, 212, 0.8), rgba(0, 100, 190, 0.75));
+  --scrollbar-track: rgba(200, 200, 200, 0.5);
+
+  /* scrollbar Firefox plain colours */
+  --scrollbar-thumb-color: rgba(0, 120, 212, 0.5);
+  --scrollbar-track-color: rgba(200, 200, 200, 0.5);
+
+  /* canvas / editor */
+  --canvas-stage-bg: linear-gradient(180deg, #d0d0d0, #c8c8c8);
+  --floating-chip-border: rgba(0, 120, 212, 0.4);
+  --floating-chip-bg: rgba(255, 255, 255, 0.92);
+  --floating-chip-color: var(--text-subtle);
+  --overlay-toolbar-bg: rgba(243, 243, 243, 0.92);
+  --checker-color: rgba(0, 0, 0, 0.06);
+
+  /* design-system override tokens */
+  --body-bg-override: var(--bg);
+  --tab-active-bg: color-mix(in srgb, var(--accent) 10%, var(--bg-section));
+  --tab-active-border: color-mix(in srgb, var(--accent) 55%, transparent);
+  --tab-inactive-bg: var(--bg-input);
+  --doc-tab-inactive-bg: var(--bg-input);
+  --status-bar-bg: var(--bg-deep);
+  --status-bar-border: var(--border);
+  --stat-card-bg: var(--bg-input);
+  --stat-card-border: var(--border);
+  --selection-bg: rgba(0, 120, 212, 0.25);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Design-system overrides — single selector set, token-driven        */
+/*  These rules beat the design system's hardcoded values.             */
+/*  They work for ALL themes because they reference var(--token).      */
+/* ------------------------------------------------------------------ */
+
+/* 1. Body background — remove Goblin radial glow on non-Goblin themes */
+[data-theme] body {
+  background: var(--body-bg-override);
+}
+
+/* 2a. Active tab */
+[data-theme] .top-tab.is-active,
+[data-theme] .document-tab.is-active {
+  background: var(--tab-active-bg);
+  border-color: var(--tab-active-border);
+  color: var(--text-heading);
+}
+
+/* 2b. Inactive tab */
+[data-theme] .top-tab {
+  background: var(--tab-inactive-bg);
+  color: var(--text-muted);
+}
+
+[data-theme] .document-tab {
+  background: var(--doc-tab-inactive-bg);
+  color: var(--text-muted);
+}
+
+/* 3. editor-status-bar */
+[data-theme] .editor-status-bar {
+  background: var(--status-bar-bg);
+  border-color: var(--status-bar-border);
+}
+
+/* 4. stat-card */
+[data-theme] .stat-card {
+  background: var(--stat-card-bg);
+  border-color: var(--stat-card-border);
+}
+
+/* 5. Scrollbar — WebKit pseudo-elements + Firefox scrollbar-color */
+[data-theme] * {
+  scrollbar-color: var(--scrollbar-thumb-color) var(--scrollbar-track-color);
+}
+
+[data-theme] *::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-color: var(--scrollbar-track-color);
+}
+
+[data-theme] *::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+[data-theme] *::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* 6. pane-resizer */
+[data-theme] .pane-resizer {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 24%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+  border-color: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+[data-theme] .pane-resizer:hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 40%, transparent), color-mix(in srgb, var(--accent) 15%, transparent));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* 7. nav-option + search-suggestion hover */
+[data-theme] .nav-option:hover,
+[data-theme] .nav-option--has-sub:hover,
+[data-theme] .nav-option--has-sub.is-sub-open,
+[data-theme] .search-suggestion:hover,
+[data-theme] .search-suggestion.is-active {
+  background: var(--bg-hover);
+  color: var(--text-heading);
+}
+
+/* 8. radio-label + checkbox-label hover */
+[data-theme] .radio-label:hover,
+[data-theme] .checkbox-label:hover {
+  background: var(--bg-hover);
+}
+
+/* 9. ::selection highlight */
+[data-theme] ::selection {
+  background: var(--selection-bg);
+  color: var(--text-heading);
+}
+
+/* 10. badge.default */
+[data-theme] .badge.default {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: color-mix(in srgb, var(--accent) 90%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* 11. empty-state-card */
+[data-theme] .empty-state-card {
+  background: var(--bg-input);
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+/* 12. range-thumb focus / drag ring */
+[data-theme] .range-thumb:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+[data-theme] .range-thumb.is-dragging,
+[data-theme] .range-thumb:active {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+

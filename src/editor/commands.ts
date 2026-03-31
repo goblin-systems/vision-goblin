@@ -8,7 +8,7 @@ export interface CommandDefinition {
   id: string;
   label: string;
   shortcut?: string;
-  category: "file" | "edit" | "canvas" | "select" | "adjust" | "layer" | "window" | "tool" | "ai";
+  category: "file" | "edit" | "canvas" | "select" | "adjust" | "layer" | "window" | "tool" | "ai" | "view";
   enabled: () => boolean;
   execute: () => void | Promise<void>;
 }

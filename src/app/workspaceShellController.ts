@@ -7,6 +7,7 @@ import { DEFAULT_KEYBINDINGS, getDefaultSettings, type AppTab, type VisionSettin
 import type { ActiveTool, DocumentState, Layer, ShapeKind } from "../editor/types";
 import { SHAPE_NAMES, type SelectionMode } from "../editor/selection";
 import type { TransformMode } from "../editor/transformController";
+import type { UiTheme } from "./theme";
 
 const TOOL_COPY: Record<ActiveTool, string> = {
   move: "Move tool active. Drag the current layer to reposition it on the canvas.",
@@ -324,6 +325,7 @@ export interface WorkspaceShellControllerDeps {
   getDebugLogPath: () => string;
   showToast: (message: string, variant?: "success" | "error" | "info") => void;
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
+  setTheme: (theme: UiTheme) => Promise<void>;
 }
 
 export interface WorkspaceShellController {
@@ -354,6 +356,16 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
     const iconEl = byId<HTMLElement>(id).querySelector("[data-lucide]");
     if (iconEl) {
       iconEl.setAttribute("data-lucide", icon);
+    }
+  }
+
+  function syncThemeMenuIcons(theme: UiTheme) {
+    const themes: UiTheme[] = ["goblin", "dark", "light"];
+    for (const t of themes) {
+      const el = document.querySelector<HTMLElement>(`[data-nav-id="set-theme-${t}"] [data-lucide]`);
+      if (el) {
+        el.setAttribute("data-lucide", t === theme ? "circle-dot" : "circle");
+      }
     }
   }
 
@@ -572,6 +584,7 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
         quickMaskActive: deps.isQuickMaskActive(),
         activeShapeKind: deps.getActiveShapeKind(),
       }));
+      syncThemeMenuIcons(settings.uiTheme);
       applyIcons();
       return;
     }
@@ -606,6 +619,7 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
       quickMaskActive: deps.isQuickMaskActive(),
       activeShapeKind: deps.getActiveShapeKind(),
     }));
+    syncThemeMenuIcons(settings.uiTheme);
     applyIcons();
   }
 

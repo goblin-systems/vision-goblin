@@ -145,6 +145,7 @@ function applyTransformedCanvas(
     nextCtx.imageSmoothingEnabled = true;
     nextCtx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, -minX, -minY);
     nextCtx.drawImage(source, -anchorSourceX, -anchorSourceY);
+    nextCtx.setTransform(1, 0, 0, 1, 0, 0);
   }
   layer.canvas = nextCanvas;
   layer.x = Math.round(anchorWorldX + minX);
@@ -567,6 +568,7 @@ interface CanvasPointerDeps {
   getActiveDocument: () => DocumentState | null;
   getActiveLayer: (doc: DocumentState) => Layer | null;
   getActiveTool: () => string;
+  commitTransformDraft: () => void;
   getSelectionMode: () => "replace" | "add" | "subtract" | "intersect";
   getMarqueeShape: () => number;
   getTransformMode: () => TransformMode;
@@ -594,13 +596,31 @@ interface CanvasPointerDeps {
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
 }
 
+function shouldCommitPendingTransformBeforePointerAction(tool: string) {
+  return [
+    "move",
+    "crop",
+    "marquee",
+    "lasso",
+    "polygon-lasso",
+    "magic-wand",
+    "brush",
+    "eraser",
+    "smudge",
+    "clone-stamp",
+    "healing-brush",
+    "text",
+    "shape",
+  ].includes(tool);
+}
+
 export function createCanvasPointerController(deps: CanvasPointerDeps) {
   let polygonLastClickTime = 0;
 
   function handlePointerDown(event: PointerEvent) {
     const doc = deps.getActiveDocument();
     if (!doc) return;
-    const layer = deps.getActiveLayer(doc);
+    const activeTool = deps.getActiveTool();
     const { x, y } = getDocCoordinates(event.clientX, event.clientY, doc, deps.editorCanvas.getBoundingClientRect());
     deps.pointerState.lastDocX = x;
     deps.pointerState.lastDocY = y;
@@ -610,10 +630,6 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     deps.pointerState.startClientY = event.clientY;
     deps.pointerState.startPanX = doc.panX;
     deps.pointerState.startPanY = doc.panY;
-    deps.pointerState.startLayerX = layer?.x ?? 0;
-    deps.pointerState.startLayerY = layer?.y ?? 0;
-    deps.pointerState.startSelectionRect = doc.selectionRect ? { ...doc.selectionRect } : null;
-    deps.pointerState.startSelectionInverted = doc.selectionInverted;
 
     if (deps.getSpacePressed() || event.button === 1) {
       deps.pointerState.mode = "pan";
@@ -622,7 +638,17 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getActiveTool() === "marquee") {
+    if (deps.getTransformDraft() && activeTool !== "transform" && shouldCommitPendingTransformBeforePointerAction(activeTool)) {
+      deps.commitTransformDraft();
+    }
+
+    const layer = deps.getActiveLayer(doc);
+    deps.pointerState.startLayerX = layer?.x ?? 0;
+    deps.pointerState.startLayerY = layer?.y ?? 0;
+    deps.pointerState.startSelectionRect = doc.selectionRect ? { ...doc.selectionRect } : null;
+    deps.pointerState.startSelectionInverted = doc.selectionInverted;
+
+    if (activeTool === "marquee") {
       deps.pointerState.mode = "marquee";
       doc.selectionRect = buildCropRect(x, y, x, y, doc);
       deps.log(`Selection started at ${Math.round(x)},${Math.round(y)} (sides=${deps.getMarqueeShape()})`, "INFO");
@@ -630,7 +656,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getActiveTool() === "lasso") {
+    if (activeTool === "lasso") {
       deps.pointerState.mode = "lasso";
       doc.selectionPath = { points: [{ x, y }], closed: false };
       deps.log(`Lasso started at ${Math.round(x)},${Math.round(y)}`, "INFO");
@@ -638,7 +664,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getActiveTool() === "polygon-lasso") {
+    if (activeTool === "polygon-lasso") {
       if (!doc.selectionPath || doc.selectionPath.closed) {
         doc.selectionPath = { points: [{ x, y }], closed: false };
         polygonLastClickTime = performance.now();
@@ -657,12 +683,12 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getActiveTool() === "magic-wand") {
+    if (activeTool === "magic-wand") {
       deps.onLassoComplete();
       return;
     }
 
-    if (deps.getActiveTool() === "text") {
+    if (activeTool === "text") {
       beginDocumentOperation(snapshotDocument(doc));
       const created = deps.onCreateTextLayer(x, y);
       if (created) {
@@ -678,7 +704,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getActiveTool() === "shape") {
+    if (activeTool === "shape") {
       beginDocumentOperation(snapshotDocument(doc));
       const created = deps.onCreateShapeLayer(x, y);
       if (created) {
@@ -695,7 +721,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     }
 
     if (!layer || layer.locked) {
-      if (deps.getActiveTool() === "crop") {
+      if (activeTool === "crop") {
         deps.pointerState.mode = "crop";
         doc.cropRect = buildCropRect(x, y, x, y, doc);
         deps.log(`Crop gesture started at ${Math.round(x)},${Math.round(y)}`, "INFO");
@@ -704,7 +730,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getActiveTool() === "crop") {
+    if (activeTool === "crop") {
       deps.pointerState.mode = "crop";
       doc.cropRect = buildCropRect(x, y, x, y, doc);
       deps.log(`Crop gesture started at ${Math.round(x)},${Math.round(y)}`, "INFO");
@@ -712,7 +738,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getActiveTool() === "move") {
+    if (activeTool === "move") {
       beginDocumentOperation(snapshotDocument(doc));
       deps.pointerState.mode = "move-layer";
       deps.canvasWrap.classList.add("is-dragging");
@@ -720,7 +746,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getActiveTool() === "transform") {
+    if (activeTool === "transform") {
       const draft = deps.ensureTransformDraft(doc, layer);
       if (!draft) {
         return;
@@ -754,14 +780,14 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getActiveTool() === "brush" || deps.getActiveTool() === "eraser") {
+    if (activeTool === "brush" || activeTool === "eraser") {
       // Quick mask painting: redirect brush/eraser to the quick mask canvas
       const qmCanvas = deps.getQuickMaskCanvas();
       if (qmCanvas) {
         beginDocumentOperation(snapshotDocument(doc));
         deps.pointerState.mode = "paint";
         const brush = deps.getBrushState();
-        const maskMode = deps.getActiveTool() === "brush" ? "reveal" : "hide";
+        const maskMode = activeTool === "brush" ? "reveal" : "hide";
         drawMaskStroke(qmCanvas, x, y, x, y, brush.brushSize, brush.brushOpacity, maskMode);
         markDocumentOperationChanged();
         deps.log(`Quick mask ${maskMode} stroke started`, "INFO");
@@ -774,7 +800,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         beginDocumentOperation(snapshotDocument(doc));
         deps.pointerState.mode = "paint";
         const brush = deps.getBrushState();
-        const maskMode = deps.getActiveTool() === "brush" ? "reveal" : "hide";
+        const maskMode = activeTool === "brush" ? "reveal" : "hide";
         drawMaskStroke(layer.mask, x, y, x, y, brush.brushSize, brush.brushOpacity, maskMode);
         markDocumentOperationChanged();
         deps.log(`Mask ${maskMode} stroke started on layer '${layer.name}'`, "INFO");
@@ -790,15 +816,15 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         beginDocumentOperation(snapshotDocument(doc));
         deps.pointerState.mode = "paint";
         const brush = deps.getBrushState();
-         drawStroke(layer, x, y, x, y, deps.getActiveTool() === "brush" ? "brush" : "eraser", brush.brushSize, brush.brushOpacity, brush.activeColour, doc.selectionRect, doc.selectionInverted, doc.selectionShape, doc.selectionPath, doc.selectionMask);
+         drawStroke(layer, x, y, x, y, activeTool === "brush" ? "brush" : "eraser", brush.brushSize, brush.brushOpacity, brush.activeColour, doc.selectionRect, doc.selectionInverted, doc.selectionShape, doc.selectionPath, doc.selectionMask);
         markDocumentOperationChanged();
-        deps.log(`${deps.getActiveTool()} stroke started on layer '${layer.name}'`, "INFO");
+        deps.log(`${activeTool} stroke started on layer '${layer.name}'`, "INFO");
         deps.renderEditorState();
         return;
       }
     }
 
-    if (deps.getActiveTool() === "smudge") {
+    if (activeTool === "smudge") {
       if (layer.type === "smart-object" || layer.type === "text" || layer.type === "shape") {
         deps.log(`Cannot smudge on ${layer.type} layer \u2014 rasterize first`, "WARN");
         return;
@@ -812,7 +838,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       }
     }
 
-    if (deps.getActiveTool() === "clone-stamp") {
+    if (activeTool === "clone-stamp") {
       if (layer.type === "smart-object" || layer.type === "text" || layer.type === "shape") {
         deps.log(`Cannot clone-stamp on ${layer.type} layer \u2014 rasterize first`, "WARN");
         return;
@@ -843,7 +869,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       }
     }
 
-    if (deps.getActiveTool() === "healing-brush") {
+    if (activeTool === "healing-brush") {
       if (layer.type === "smart-object" || layer.type === "text" || layer.type === "shape") {
         deps.log(`Cannot heal on ${layer.type} layer \u2014 rasterize first`, "WARN");
         return;
@@ -860,7 +886,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       }
     }
 
-    if (deps.getActiveTool() === "eyedropper") {
+    if (activeTool === "eyedropper") {
       const colour = pickColourAt(doc, x, y);
       if (colour) {
         deps.log(`Sampled colour ${colour} at ${Math.round(x)},${Math.round(y)}`, "INFO");

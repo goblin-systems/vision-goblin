@@ -210,6 +210,21 @@ describe("keydown handler — input field guard", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("commits a pending transform before delete-selection from the keyboard", () => {
+    (deps.getActiveDocument as ReturnType<typeof vi.fn>).mockReturnValue({
+      selectionRect: { x: 0, y: 0, width: 10, height: 10 },
+    });
+    (deps.getTransformDraft as ReturnType<typeof vi.fn>).mockReturnValue({ scale: 1 });
+
+    const div = document.createElement("div");
+    document.body.appendChild(div);
+    fireKeydown(div, "Delete");
+    div.remove();
+
+    expect(deps.commitTransformDraft).toHaveBeenCalledOnce();
+    expect(deps.deleteSelectedArea).toHaveBeenCalledOnce();
+  });
+
   // --- Enter ---
 
   it("does NOT commit transform draft when Enter is pressed inside an input", () => {

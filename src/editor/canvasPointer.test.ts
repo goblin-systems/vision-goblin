@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeNewDocument } from "./actions/documentActions";
-import { createCanvasPointerController } from "./canvasPointer";
+import * as canvasPointerModule from "./canvasPointer";
 import { combineMasks, createMaskCanvas, defaultPolygonRotation, maskBoundingRect, maskContainsRect, rasterizeRectToMask } from "./selection";
 import type { PointerState } from "./types";
 
@@ -78,12 +78,13 @@ function createMarqueeController(options?: {
     toJSON: () => ({}),
   } as DOMRect);
 
-  const controller = createCanvasPointerController({
+  const controller = canvasPointerModule.createCanvasPointerController({
     editorCanvas,
     canvasWrap,
     getActiveDocument: () => doc,
     getActiveLayer: (activeDoc) => activeDoc.layers[0],
     getActiveTool: () => "marquee",
+    commitTransformDraft: vi.fn(),
     getSelectionMode: () => options?.selectionMode ?? "replace",
     getMarqueeShape: () => options?.marqueeShape ?? 4,
     getTransformMode: () => "scale",
@@ -112,10 +113,85 @@ function createMarqueeController(options?: {
   return { controller, doc, renderEditorState };
 }
 
+function createPointerControllerFixture(options?: {
+  activeTool?: string;
+  hasTransformDraft?: boolean;
+}) {
+  const doc = makeNewDocument("Doc", 100, 100, 100, "transparent");
+  const editorCanvas = document.createElement("canvas");
+  const canvasWrap = document.createElement("div");
+  const renderEditorState = vi.fn();
+  const renderCanvas = vi.fn();
+  const pointerState = createPointerState();
+  const commitTransformDraft = vi.fn();
+  const activeTool = options?.activeTool ?? "brush";
+  const editableLayer = doc.layers[1]!;
+  const transformDraft = options?.hasTransformDraft ? {
+    layerId: editableLayer.id,
+    scaleX: 1,
+    scaleY: 1,
+    rotateDeg: 0,
+    skewXDeg: 0,
+    skewYDeg: 0,
+    centerX: 0,
+    centerY: 0,
+    pivotX: 0,
+    pivotY: 0,
+    sourceCanvas: document.createElement("canvas"),
+  } : null;
+
+  vi.spyOn(editorCanvas, "getBoundingClientRect").mockReturnValue({
+    left: 0,
+    top: 0,
+    width: 100,
+    height: 100,
+    right: 100,
+    bottom: 100,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  } as DOMRect);
+
+  const controller = canvasPointerModule.createCanvasPointerController({
+    editorCanvas,
+    canvasWrap,
+    getActiveDocument: () => doc,
+    getActiveLayer: (activeDoc) => activeDoc.layers[1],
+    getActiveTool: () => activeTool,
+    commitTransformDraft,
+    getSelectionMode: () => "replace",
+    getMarqueeShape: () => 4,
+    getTransformMode: () => "scale",
+    ensureTransformDraft: vi.fn(() => null),
+    getTransformDraft: vi.fn(() => transformDraft),
+    syncTransformInputs: vi.fn(),
+    getBrushState: () => ({ brushSize: 1, brushOpacity: 1, activeColour: "#000000" }),
+    getSpacePressed: () => false,
+    getMarqueeModifiers: () => ({ rotate: false, perfect: false }),
+    snapLayerPosition: (_layer, x, y) => ({ x, y }),
+    pointerState,
+    renderCanvas,
+    renderEditorState,
+    onColourPicked: vi.fn(),
+    getCloneSource: () => null,
+    setCloneSource: vi.fn(),
+    onLassoPoint: vi.fn(),
+    onLassoComplete: vi.fn(),
+    onCreateTextLayer: vi.fn(() => null),
+    onCreateShapeLayer: vi.fn(() => null),
+    getMaskEditTarget: () => null,
+    getQuickMaskCanvas: () => null,
+    log: vi.fn(),
+  });
+
+  return { controller, doc, pointerState, commitTransformDraft, renderEditorState, renderCanvas };
+}
+
 describe("canvasPointer marquee drag", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     vi.restoreAllMocks();
+    vi.clearAllMocks();
     vi.mocked(createMaskCanvas).mockImplementation((width: number, height: number) => {
       const canvas = document.createElement("canvas");
       canvas.width = width;
@@ -246,5 +322,25 @@ describe("canvasPointer marquee drag", () => {
 
     expect(combineMasks).toHaveBeenCalledTimes(1);
     expect(doc.selectionRect).toEqual({ x: 5, y: 7, width: 40, height: 44 });
+  });
+
+  it("commits a pending transform before starting a brush stroke", () => {
+    const { controller, pointerState, commitTransformDraft, renderEditorState } = createPointerControllerFixture({ activeTool: "brush", hasTransformDraft: true });
+
+    controller.handlePointerDown({ clientX: 12, clientY: 18, button: 0 } as PointerEvent);
+
+    expect(commitTransformDraft).toHaveBeenCalledOnce();
+    expect(pointerState.mode).toBe("paint");
+    expect(renderEditorState).toHaveBeenCalledOnce();
+  });
+
+  it("commits a pending transform before starting a marquee drag", () => {
+    const { controller, doc, pointerState, commitTransformDraft } = createPointerControllerFixture({ activeTool: "marquee", hasTransformDraft: true });
+
+    controller.handlePointerDown({ clientX: 10, clientY: 20, button: 0 } as PointerEvent);
+
+    expect(commitTransformDraft).toHaveBeenCalledOnce();
+    expect(pointerState.mode).toBe("marquee");
+    expect(doc.selectionRect).toEqual({ x: 10, y: 20, width: 1, height: 1 });
   });
 });

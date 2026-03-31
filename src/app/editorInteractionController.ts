@@ -173,6 +173,9 @@ export function createEditorInteractionController(deps: EditorInteractionControl
         const activeDoc = deps.getActiveDocument();
         if (activeDoc?.selectionRect) {
           event.preventDefault();
+          if (deps.getTransformDraft()) {
+            deps.commitTransformDraft();
+          }
           deps.deleteSelectedArea();
           return;
         }

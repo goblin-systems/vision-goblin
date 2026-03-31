@@ -9,6 +9,13 @@
 
 import type { Rect, SelectionPath } from "./types";
 
+export interface SelectionTransformMatrix {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+}
+
 // ---------------------------------------------------------------------------
 // Mask creation
 // ---------------------------------------------------------------------------
@@ -18,6 +25,63 @@ export function createMaskCanvas(width: number, height: number): HTMLCanvasEleme
   c.width = width;
   c.height = height;
   return c;
+}
+
+export function cloneMaskCanvas(mask: HTMLCanvasElement): HTMLCanvasElement {
+  const clone = createMaskCanvas(mask.width, mask.height);
+  clone.getContext("2d")?.drawImage(mask, 0, 0);
+  return clone;
+}
+
+export function normalizeSelectionToMask(
+  width: number,
+  height: number,
+  selectionRect: Rect | null,
+  selectionShape: "rect" | "ellipse",
+  selectionPath: SelectionPath | null,
+  selectionMask: HTMLCanvasElement | null,
+): HTMLCanvasElement | null {
+  if (selectionMask) {
+    return cloneMaskCanvas(selectionMask);
+  }
+  if (selectionPath?.closed && selectionPath.points.length >= 3) {
+    const mask = createMaskCanvas(width, height);
+    rasterizePathToMask(mask, selectionPath);
+    return mask;
+  }
+  if (!selectionRect || selectionRect.width <= 0 || selectionRect.height <= 0) {
+    return null;
+  }
+  const mask = createMaskCanvas(width, height);
+  rasterizeRectToMask(mask, selectionRect, selectionShape === "ellipse" ? 11 : 4);
+  return mask;
+}
+
+export function transformMaskInDocumentSpace(
+  mask: HTMLCanvasElement,
+  width: number,
+  height: number,
+  matrix: SelectionTransformMatrix,
+  pivotX: number,
+  pivotY: number,
+): HTMLCanvasElement {
+  const transformed = createMaskCanvas(width, height);
+  const ctx = transformed.getContext("2d");
+  if (!ctx) {
+    return transformed;
+  }
+  ctx.imageSmoothingEnabled = true;
+  ctx.setTransform(
+    matrix.a,
+    matrix.b,
+    matrix.c,
+    matrix.d,
+    pivotX - matrix.a * pivotX - matrix.c * pivotY,
+    pivotY - matrix.b * pivotX - matrix.d * pivotY,
+  );
+  ctx.drawImage(mask, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  return transformed;
 }
 
 // ---------------------------------------------------------------------------

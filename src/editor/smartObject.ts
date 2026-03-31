@@ -111,6 +111,7 @@ export function renderSmartObjectLayer(layer: SmartObjectLayer): void {
     ctx.imageSmoothingEnabled = true;
     ctx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, outW / 2, outH / 2);
     ctx.drawImage(source, -halfW, -halfH);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   layer.canvas = canvas;

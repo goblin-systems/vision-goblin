@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { canDeleteLayer } from "./layers";
-import { cloneDocument, createBlankDocument, createLayerCanvas, createLayerThumb, resizeCanvasDocument, serializeDocument } from "./documents";
+import { buildTransformPreview, cloneDocument, createBlankDocument, createLayerCanvas, createLayerThumb, resizeCanvasDocument, serializeDocument } from "./documents";
 import { getResizeOffset } from "./geometry";
+import type { TransformDraft } from "./types";
 
 describe("editor documents", () => {
   it("creates blank documents with a background layer and editable layer", () => {
@@ -77,5 +78,41 @@ describe("editor documents", () => {
 
     expect(serialized.layers[1].aiProvenance?.operation).toBe("upscale");
     expect(serialized.layers[1].aiProvenance?.warnings).toEqual(["offline"]);
+  });
+
+  it("buildTransformPreview resets context transform to identity after drawing", () => {
+    const source = createLayerCanvas(100, 80);
+    const draft: TransformDraft = {
+      layerId: "layer-1",
+      sourceCanvas: source,
+      centerX: 50,
+      centerY: 40,
+      pivotX: 50,
+      pivotY: 40,
+      scaleX: 1.5,
+      scaleY: 1.5,
+      rotateDeg: 45,
+      skewXDeg: 0,
+      skewYDeg: 0,
+      snapshot: "data:image/png;base64,AAA",
+    };
+
+    const setTransformMock = vi.mocked(source.getContext("2d")!.setTransform);
+    setTransformMock.mockClear();
+
+    const result = buildTransformPreview(draft);
+
+    // The canvas context's setTransform must be called at least twice:
+    // once with the transform matrix, and once to reset to identity
+    expect(setTransformMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // The last setTransform call must reset to identity matrix
+    const lastCall = setTransformMock.mock.calls[setTransformMock.mock.calls.length - 1];
+    expect(lastCall).toEqual([1, 0, 0, 1, 0, 0]);
+
+    // Verify the preview canvas was created
+    expect(result.canvas).toBeDefined();
+    expect(result.canvas.width).toBeGreaterThan(0);
+    expect(result.canvas.height).toBeGreaterThan(0);
   });
 });

@@ -28,6 +28,8 @@ import { createLayerPanelController } from "./app/layerPanelController";
 import { buildEditorCommands } from "./app/registerEditorCommands";
 import { createSelectionToolsController } from "./app/selectionToolsController";
 import { createWorkspaceShellController, type WorkspaceShellController } from "./app/workspaceShellController";
+import { applyTheme } from "./app/theme";
+import type { UiTheme } from "./app/theme";
 import { createAiController } from "./app/ai/controller";
 import { createAiEditingController } from "./app/ai/editingController";
 import { configureDebugLogging, debugLog, getDebugLogPath, openDebugLogFolder, saveAiDebugImage } from "./logger";
@@ -309,6 +311,7 @@ const canvasPointer = createCanvasPointerController({
   getActiveDocument,
   getActiveLayer,
   getActiveTool: () => settings.activeTool,
+  commitTransformDraft,
   getBrushState: () => editorInteractionController.getBrushState(),
   getSelectionMode: () => getCapturedOrEffectiveMode(),
   getMarqueeShape: () => selectionController.getMarqueeSides(),
@@ -495,6 +498,7 @@ workspaceShellController = createWorkspaceShellController({
   getDebugLogPath,
   showToast,
   log: debugLog,
+  setTheme,
 });
 
 function resetDocumentsToStarters() {
@@ -649,6 +653,13 @@ async function persistSettings(next: VisionSettings, message?: string) {
   }
 }
 
+async function setTheme(theme: UiTheme): Promise<void> {
+  applyTheme(theme);
+  settings = { ...settings, uiTheme: theme };
+  await saveSettings(settings);
+  renderEditorState();
+}
+
 async function handleUndo() {
   if (transformController.getDraft()) {
     cancelTransformDraft(false);
@@ -699,6 +710,9 @@ async function handleRedo() {
 }
 
 function deleteSelectedArea() {
+  if (transformController.getDraft()) {
+    commitTransformDraft();
+  }
   const doc = getActiveDocument();
   if (!doc?.selectionRect) {
     return;
@@ -886,6 +900,7 @@ function registerEditorCommands() {
     openAiRestoreModal: () => aiEditingController.openRestoreModal(),
     runAiThumbnail: () => aiEditingController.generateThumbnail(),
     runAiFreeform: () => aiEditingController.freeformAi(),
+    setTheme,
   }));
   applyKeybindings(settings.keybindings);
 }
@@ -945,6 +960,7 @@ async function init() {
     leftPanelCollapsed: false,
     leftPanelWidth: Math.max(220, settings.leftPanelWidth),
   };
+  applyTheme(settings.uiTheme);
   await configureDebugLogging(settings.debugLoggingEnabled);
   resetDocumentsToStarters();
   debugLog("Vision Goblin initialized", "INFO");

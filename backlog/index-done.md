@@ -21,6 +21,7 @@ These epics are shipped at MVP or baseline level.
 - `D15` -> `backlog/done/epic-d015-ai-photo-repair-and-restoration.md`
 - `D16` -> `backlog/done/epic-d016-ai-thumbnail-generation.md`
 - `D17` -> `backlog/done/epic-d017-freeform-ai.md`
+- `D18` -> `backlog/done/epic-d018-ui-themes.md`
 
 ## Related indexes
 

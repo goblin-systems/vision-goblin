@@ -1,5 +1,6 @@
 import { load, type Store } from "@tauri-apps/plugin-store";
 import { DEFAULT_AI_SETTINGS, cloneAiSettings, normalizeAiSettings, type AiSettings } from "./app/ai/config";
+import { isUiTheme, type UiTheme } from "./app/theme";
 
 export type AppTab = "editor" | "tools" | "settings";
 export type ToolName = "move" | "marquee" | "transform" | "crop" | "brush" | "eraser" | "eyedropper" | "smudge" | "clone-stamp" | "healing-brush" | "text" | "shape" | "lasso" | "polygon-lasso" | "magic-wand";
@@ -33,6 +34,7 @@ export interface VisionSettings {
   confirmLayerDeletion: boolean;
   keybindings: Record<string, string>;
   ai: AiSettings;
+  uiTheme: UiTheme;
 }
 
 export const DEFAULT_KEYBINDINGS: Record<string, string> = {
@@ -95,6 +97,7 @@ const DEFAULTS: VisionSettings = {
   confirmLayerDeletion: false,
   keybindings: { ...DEFAULT_KEYBINDINGS },
   ai: cloneAiSettings(DEFAULT_AI_SETTINGS),
+  uiTheme: "goblin" as UiTheme,
 };
 
 let store: Store | null = null;
@@ -241,6 +244,9 @@ export async function loadSettings(): Promise<VisionSettings> {
 
   next.ai = normalizeAiSettings(await s.get<unknown>("ai"));
 
+  const uiTheme = await s.get<unknown>("uiTheme");
+  if (isUiTheme(uiTheme)) next.uiTheme = uiTheme;
+
   return next;
 }
 
@@ -271,5 +277,6 @@ export async function saveSettings(settings: VisionSettings): Promise<void> {
   await s.set("confirmLayerDeletion", settings.confirmLayerDeletion);
   await s.set("keybindings", settings.keybindings);
   await s.set("ai", settings.ai);
+  await s.set("uiTheme", settings.uiTheme);
   await s.save();
 }

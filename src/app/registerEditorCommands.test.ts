@@ -75,6 +75,7 @@ function createDeps(overrides: Partial<RegisterEditorCommandsDeps> = {}): Regist
     openAiRestoreModal: overrides.openAiRestoreModal ?? vi.fn(),
     runAiThumbnail: overrides.runAiThumbnail ?? vi.fn(),
     runAiFreeform: overrides.runAiFreeform ?? vi.fn(),
+    setTheme: overrides.setTheme ?? vi.fn(),
   };
 }
 

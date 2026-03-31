@@ -407,6 +407,7 @@ export function buildTransformPreview(draft: TransformDraft) {
     ctx.imageSmoothingEnabled = true;
     ctx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, -minX, -minY);
     ctx.drawImage(source, -anchorSourceX, -anchorSourceY);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
   return { canvas, x: draft.pivotX + minX, y: draft.pivotY + minY, width: canvas.width, height: canvas.height };
 }
