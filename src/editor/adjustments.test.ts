@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyAddNoise, applyBrightnessContrast, applyColorBalance, applyCurves, applyGaussianBlur, applyGradientMap, applyHueSaturation, applyLevels, applyLUT, applyMotionBlur, applyReduceNoise, applySharpen, buildCurveLUT, computeHistogram, GRADIENT_PRESETS, parseCubeLUT } from "./adjustments";
+import { applyAddNoise, applyBrightnessContrast, applyColorBalance, applyCurves, applyGaussianBlur, applyGradientMap, applyHueSaturation, applyLevels, applyLUT, applyMotionBlur, applyReduceNoise, applySharpen, buildCurveLUT, computeHistogram, gaussianBlurRadiusToSigma, GRADIENT_PRESETS, parseCubeLUT } from "./adjustments";
 
 function makeImageData(r: number, g: number, b: number, a = 255, count = 4): ImageData {
   const data = new Uint8ClampedArray(count * 4);
@@ -82,6 +82,19 @@ describe("hue/saturation", () => {
 });
 
 describe("gaussian blur", () => {
+  function makeImpulseImageData(size: number): ImageData {
+    const data = new Uint8ClampedArray(size * size * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i + 3] = 255;
+    }
+    const center = Math.floor(size / 2);
+    const index = (center * size + center) * 4;
+    data[index] = 255;
+    data[index + 1] = 255;
+    data[index + 2] = 255;
+    return new ImageData(data, size, size);
+  }
+
   it("returns unchanged at radius 0", () => {
     const src = makeImageData(100, 150, 200, 255, 16);
     const result = applyGaussianBlur(src, { radius: 0 });
@@ -108,6 +121,33 @@ describe("gaussian blur", () => {
     const result = applyGaussianBlur(src, { radius: 3 });
     expect(result.width).toBe(9);
     expect(result.height).toBe(1);
+  });
+
+  it("starts blurring before the slider reaches double digits", () => {
+    const src = makeImpulseImageData(9);
+
+    const result = applyGaussianBlur(src, { radius: 10 });
+    const center = (4 * 9 + 4) * 4;
+
+    expect(result.data[center]).toBeLessThan(255);
+  });
+
+  it("preserves opaque white instead of darkening it during blur", () => {
+    const src = new ImageData(new Uint8ClampedArray([
+      255, 255, 255, 255,
+      255, 255, 255, 255,
+      255, 255, 255, 255,
+    ]), 3, 1);
+
+    const result = applyGaussianBlur(src, { radius: 25 });
+
+    expect(Array.from(result.data)).toEqual(Array.from(src.data));
+  });
+
+  it("increases blur strength smoothly as radius grows", () => {
+    expect(gaussianBlurRadiusToSigma(10)).toBeGreaterThan(0.3);
+    expect(gaussianBlurRadiusToSigma(50)).toBeGreaterThan(gaussianBlurRadiusToSigma(10));
+    expect(gaussianBlurRadiusToSigma(100)).toBeGreaterThan(gaussianBlurRadiusToSigma(50));
   });
 });
 

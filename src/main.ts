@@ -22,6 +22,7 @@ import { createDistortModalController } from "./app/distortModalController";
 import { createDocumentWorkflowController } from "./app/documentWorkflowController";
 import { createDocumentSession } from "./app/documentSession";
 import { createEditorInteractionController } from "./app/editorInteractionController";
+import { createGradientToolController } from "./app/gradientToolController";
 import { createInspectorController } from "./app/inspectorController";
 import { createIoController } from "./app/io";
 import { createLayerPanelController } from "./app/layerPanelController";
@@ -386,6 +387,7 @@ const canvasPointer = createCanvasPointerController({
     goblinPersonalityController.signal({ type: "layer-created" });
     return layer;
   },
+  showToast,
   log: debugLog,
 });
 
@@ -415,6 +417,14 @@ const selectionToolsController = createSelectionToolsController({
 const distortModalController = createDistortModalController({
   getActiveDocument,
   getActiveLayer,
+  renderEditorState,
+  showToast,
+});
+
+const gradientToolController = createGradientToolController({
+  getActiveDocument,
+  getActiveLayer,
+  getActiveColour: () => editorInteractionController.getBrushState().activeColour,
   renderEditorState,
   showToast,
 });
@@ -460,6 +470,7 @@ canvasWorkspaceController = createCanvasWorkspaceController({
   updateMarqueeModeFromModifiers,
   captureSelectionMode: () => selectionController.captureSelectionMode(),
   canvasPointer,
+  resetView: resetCanvasView,
   showToast,
   log: debugLog,
 });
@@ -498,7 +509,12 @@ workspaceShellController = createWorkspaceShellController({
   onCloseDocument: async (documentId) => {
     await documentWorkflowController.closeDocument(documentId);
   },
-  onToolChanged: (tool) => emitWorkspaceEvent("tool-changed", { tool }),
+  onToolChanged: (tool) => {
+    emitWorkspaceEvent("tool-changed", { tool });
+    if (tool === "gradient") {
+      gradientToolController.openGradientToolModal();
+    }
+  },
   emitWorkspaceEvent,
   onAppNavSelect: async (id) => {
     const handled = await documentWorkflowController.handleRecentNavSelection(id);
@@ -526,6 +542,9 @@ async function switchTool(tool: ToolName) {
   }
   await persistSettings({ ...settings, activeTool: tool, lastTab: "editor" });
   renderEditorState();
+  if (tool === "gradient") {
+    gradientToolController.openGradientToolModal();
+  }
 }
 
 async function renameCanvas() {
@@ -933,9 +952,6 @@ function bindDocumentActions() {
   });
   byId<HTMLButtonElement>("redo-btn").addEventListener("click", () => {
     void handleRedo();
-  });
-  byId<HTMLButtonElement>("reset-view-btn").addEventListener("click", () => {
-    resetCanvasView();
   });
   fileOpenInput.addEventListener("change", () => {
     const file = fileOpenInput.files?.[0];

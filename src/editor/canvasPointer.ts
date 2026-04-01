@@ -5,6 +5,7 @@ import { applyCropToDocument, buildTransformPreview, snapshotDocument, createLay
 import { clamp } from "./utils";
 import { applySelectionClip, combineMasks, createMaskCanvas, defaultPolygonRotation, drawThroughMask, isAxisAlignedRectMarquee, maskBoundingRect, maskContainsRect, rasterizeRectToMask, type SelectionMode } from "./selection";
 import { drawMaskStroke } from "./layerMask";
+import { applyFillToSelection } from "./fill";
 
 type TransformMode = "scale" | "rotate";
 type TransformDraftState = {
@@ -593,6 +594,7 @@ interface CanvasPointerDeps {
   getMaskEditTarget: () => string | null;
   /** Returns the quick mask canvas when quick mask mode is active, or null. */
   getQuickMaskCanvas: () => HTMLCanvasElement | null;
+  showToast: (message: string, variant?: "success" | "error" | "info") => void;
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
 }
 
@@ -606,6 +608,8 @@ function shouldCommitPendingTransformBeforePointerAction(tool: string) {
     "magic-wand",
     "brush",
     "eraser",
+    "fill",
+    "gradient",
     "smudge",
     "clone-stamp",
     "healing-brush",
@@ -717,6 +721,41 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         markDocumentOperationChanged();
         deps.renderEditorState();
       }
+      return;
+    }
+
+    if (activeTool === "fill") {
+      if (!layer) {
+        deps.showToast("Select a raster layer to fill", "error");
+        deps.log("Fill aborted because there was no active layer", "WARN");
+        return;
+      }
+      if (layer.locked) {
+        deps.showToast("Unlock the active layer before filling", "error");
+        deps.log(`Fill aborted because layer '${layer.name}' is locked`, "WARN");
+        return;
+      }
+      if (layer.type !== "raster") {
+        deps.showToast("Select a raster layer to fill", "error");
+        deps.log(`Fill aborted because layer '${layer.name}' is ${layer.type}`, "WARN");
+        return;
+      }
+
+      beginDocumentOperation(snapshotDocument(doc));
+      const brush = deps.getBrushState();
+      const result = applyFillToSelection(doc, layer, brush.activeColour);
+      if (!result.ok) {
+        cancelDocumentOperation();
+        deps.showToast(result.message, result.variant);
+        deps.log(`Fill aborted: ${result.message}`, "WARN");
+        return;
+      }
+
+      markDocumentOperationChanged();
+      commitDocumentOperation(doc, "Filled selection");
+      deps.showToast(result.message, "success");
+      deps.log(`Filled selection on layer '${layer.name}'`, "INFO");
+      deps.renderEditorState();
       return;
     }
 

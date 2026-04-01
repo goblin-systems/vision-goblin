@@ -85,6 +85,8 @@ const TOOL_LABELS: Record<ToolName, string> = {
   crop: "Crop",
   brush: "Brush",
   eraser: "Eraser",
+  fill: "Fill",
+  gradient: "Gradient",
   eyedropper: "Eyedropper",
   smudge: "Smudge",
   "clone-stamp": "Clone stamp",

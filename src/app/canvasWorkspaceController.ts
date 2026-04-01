@@ -141,6 +141,7 @@ export interface CanvasWorkspaceControllerDeps {
   updateMarqueeModeFromModifiers: (ctrlKey: boolean, shiftKey: boolean, altKey: boolean) => void;
   captureSelectionMode: () => void;
   canvasPointer: CanvasPointerBindings;
+  resetView: () => void;
   showToast: (message: string, variant?: "success" | "error" | "info") => void;
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
 }
@@ -241,6 +242,40 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
       deps.log(`Wheel zoom changed to ${doc.zoom}% for '${doc.name}'`, "INFO");
       deps.renderEditorState();
     }, { passive: false });
+
+    // Zoom readout: click to reset view, drag left/right to scrub zoom
+    const readout = document.getElementById("zoom-readout") as HTMLButtonElement;
+    let dragStartX = 0;
+    let dragStartZoom = 0;
+    let didDrag = false;
+
+    readout.addEventListener("pointerdown", (e) => {
+      const doc = deps.getActiveDocument();
+      if (!doc) return;
+      dragStartX = e.clientX;
+      dragStartZoom = doc.zoom;
+      didDrag = false;
+      readout.setPointerCapture(e.pointerId);
+    });
+
+    readout.addEventListener("pointermove", (e) => {
+      if (!readout.hasPointerCapture(e.pointerId)) return;
+      const doc = deps.getActiveDocument();
+      if (!doc) return;
+      const dx = e.clientX - dragStartX;
+      if (!didDrag && Math.abs(dx) < 4) return;
+      didDrag = true;
+      doc.zoom = clamp(dragStartZoom + Math.round(dx * 2), 10, 800);
+      deps.renderEditorState();
+    });
+
+    readout.addEventListener("pointerup", (e) => {
+      if (!readout.hasPointerCapture(e.pointerId)) return;
+      readout.releasePointerCapture(e.pointerId);
+      if (!didDrag) {
+        deps.resetView();
+      }
+    });
   }
 
   function addGuide(doc: DocumentState, orientation: "horizontal" | "vertical", position: number) {

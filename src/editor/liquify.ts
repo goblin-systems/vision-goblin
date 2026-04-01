@@ -23,7 +23,7 @@ export function hasLiquifyDisplacement(dispX: Float32Array, dispY: Float32Array,
   return false;
 }
 
-export function applyLiquifyBrush(params: LiquifyBrushParams) {
+function applyLiquifyBrushStamp(params: LiquifyBrushParams) {
   const {
     dispX,
     dispY,
@@ -98,6 +98,36 @@ export function applyLiquifyBrush(params: LiquifyBrushParams) {
       dispX[index] += (avgX - dispX[index]) * factor;
       dispY[index] += (avgY - dispY[index]) * factor;
     }
+  }
+}
+
+export function applyLiquifyBrush(params: LiquifyBrushParams) {
+  const { brushSize, strength, centerX, centerY, moveX, moveY } = params;
+  if (brushSize <= 0 || strength <= 0) {
+    return;
+  }
+
+  const moveDistance = Math.hypot(moveX, moveY);
+  if (moveDistance < 0.01) {
+    return;
+  }
+
+  const spacing = Math.max(1, brushSize * 0.25);
+  const steps = Math.max(1, Math.ceil(moveDistance / spacing));
+  const startX = centerX - moveX;
+  const startY = centerY - moveY;
+  const stepMoveX = moveX / steps;
+  const stepMoveY = moveY / steps;
+
+  for (let step = 1; step <= steps; step += 1) {
+    const t = step / steps;
+    applyLiquifyBrushStamp({
+      ...params,
+      centerX: startX + moveX * t,
+      centerY: startY + moveY * t,
+      moveX: stepMoveX,
+      moveY: stepMoveY,
+    });
   }
 }
 

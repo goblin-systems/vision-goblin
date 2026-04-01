@@ -34,6 +34,28 @@ describe("liquify helpers", () => {
     expect(dispY[0]).toBe(0);
   });
 
+  it("fills the dragged path instead of stamping only the end point", () => {
+    const dispX = new Float32Array(81);
+    const dispY = new Float32Array(81);
+
+    applyLiquifyBrush({
+      dispX,
+      dispY,
+      width: 9,
+      height: 9,
+      centerX: 7,
+      centerY: 4,
+      brushSize: 1.5,
+      strength: 1,
+      moveX: 6,
+      moveY: 0,
+      mode: "push",
+    });
+
+    expect(dispX[4 + 4 * 9]).toBeGreaterThan(0);
+    expect(dispX[7 + 4 * 9]).toBeGreaterThan(0);
+  });
+
   it("samples source pixels through the displacement map", () => {
     const source = new ImageData(new Uint8ClampedArray([
       255, 0, 0, 255,

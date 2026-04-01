@@ -18,6 +18,11 @@ export interface GaussianBlurParams {
   radius: number; // 0 to 100
 }
 
+export function gaussianBlurRadiusToSigma(radius: number): number {
+  const normalized = Math.max(0, Math.min(100, radius)) / 100;
+  return normalized <= 0 ? 0 : normalized * 8 + normalized * normalized * 4;
+}
+
 export interface SharpenParams {
   amount: number; // 0 to 200 (percentage)
   radius: number; // 0.1 to 10
@@ -115,8 +120,7 @@ export function applyHueSaturation(source: ImageData, params: HueSaturationParam
 }
 
 /**
- * Box blur approximation of Gaussian blur (3-pass for quality).
- * Much faster than true Gaussian and visually indistinguishable for most use cases.
+ * Stable separable Gaussian blur with premultiplied alpha handling.
  * @internal Takes a raw sigma value directly — use `applyGaussianBlur` for the UI entry point.
  */
 function applyGaussianBlurSigma(source: ImageData, sigma: number): ImageData {
@@ -124,146 +128,105 @@ function applyGaussianBlurSigma(source: ImageData, sigma: number): ImageData {
 
   const w = source.width;
   const h = source.height;
-  const src = new Uint8ClampedArray(source.data);
-  const dst = new Uint8ClampedArray(src.length);
+  const src = source.data;
+  const kernel = buildGaussianKernel(sigma);
+  const radius = Math.floor(kernel.length / 2);
+  const horizontal = new Float32Array(src.length);
+  const vertical = new Float32Array(src.length);
+  const output = new Uint8ClampedArray(src.length);
 
-  // Compute box sizes for 3-pass approximation
-  const boxes = boxesForGauss(sigma, 3);
-
-  let input = src;
-  let output = dst;
-  for (let pass = 0; pass < 3; pass++) {
-    const r = Math.floor((boxes[pass] - 1) / 2);
-    boxBlur(input, output, w, h, r);
-    // swap
-    const tmp = input;
-    input = output;
-    output = tmp;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      let accR = 0;
+      let accG = 0;
+      let accB = 0;
+      let accA = 0;
+      for (let offset = -radius; offset <= radius; offset += 1) {
+        const sampleX = Math.max(0, Math.min(w - 1, x + offset));
+        const weight = kernel[offset + radius];
+        const index = (y * w + sampleX) * 4;
+        const alpha = src[index + 3] / 255;
+        accR += src[index] * alpha * weight;
+        accG += src[index + 1] * alpha * weight;
+        accB += src[index + 2] * alpha * weight;
+        accA += src[index + 3] * weight;
+      }
+      const outIndex = (y * w + x) * 4;
+      horizontal[outIndex] = accR;
+      horizontal[outIndex + 1] = accG;
+      horizontal[outIndex + 2] = accB;
+      horizontal[outIndex + 3] = accA;
+    }
   }
 
-  return new ImageData(input, w, h);
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      let accR = 0;
+      let accG = 0;
+      let accB = 0;
+      let accA = 0;
+      for (let offset = -radius; offset <= radius; offset += 1) {
+        const sampleY = Math.max(0, Math.min(h - 1, y + offset));
+        const weight = kernel[offset + radius];
+        const index = (sampleY * w + x) * 4;
+        accR += horizontal[index] * weight;
+        accG += horizontal[index + 1] * weight;
+        accB += horizontal[index + 2] * weight;
+        accA += horizontal[index + 3] * weight;
+      }
+      const outIndex = (y * w + x) * 4;
+      const alpha = Math.max(0, Math.min(255, accA));
+      if (alpha <= 0.001) {
+        output[outIndex] = 0;
+        output[outIndex + 1] = 0;
+        output[outIndex + 2] = 0;
+        output[outIndex + 3] = 0;
+        continue;
+      }
+      const alphaScale = 255 / alpha;
+      output[outIndex] = clampByte(accR * alphaScale);
+      output[outIndex + 1] = clampByte(accG * alphaScale);
+      output[outIndex + 2] = clampByte(accB * alphaScale);
+      output[outIndex + 3] = clampByte(alpha);
+    }
+  }
+
+  return new ImageData(output, w, h);
 }
 
 /**
  * Applies Gaussian blur using a UI-friendly radius parameter (0–100).
- * Maps the slider value through a quadratic curve so low values produce
- * a barely-visible blur and the full range spans a useful perceptual spread:
+ * Uses a gentle power curve so lower settings start working sooner and
+ * higher settings ramp up without the old sharp jump in intensity:
  *   radius 0   → sigma 0    (no blur)
- *   radius 1   → sigma 0.0025 (below threshold, unchanged)
- *   radius 10  → sigma ~0.25 (very soft)
- *   radius 50  → sigma ~6.25 (strong)
- *   radius 100 → sigma 25   (very strong)
+ *   radius 10  → sigma ~0.8 (soft but visible)
+ *   radius 50  → sigma 5    (moderate)
+ *   radius 100 → sigma 12   (strong)
  */
 export function applyGaussianBlur(source: ImageData, params: GaussianBlurParams): ImageData {
   const { radius } = params;
-  // Map UI radius (0–100) to sigma with a soft quadratic curve
-  const sigma = (radius / 100) * (radius / 100) * 25;
+  const sigma = gaussianBlurRadiusToSigma(radius);
   return applyGaussianBlurSigma(source, sigma);
 }
 
-function boxesForGauss(sigma: number, n: number): number[] {
-  const wIdeal = Math.sqrt((12 * sigma * sigma / n) + 1);
-  let wl = Math.floor(wIdeal);
-  if (wl % 2 === 0) wl--;
-  const wu = wl + 2;
-  const mIdeal = (12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4);
-  const m = Math.round(mIdeal);
-  const sizes: number[] = [];
-  for (let i = 0; i < n; i++) {
-    sizes.push(i < m ? wl : wu);
+function buildGaussianKernel(sigma: number): Float32Array {
+  const radius = Math.max(1, Math.ceil(sigma * 3));
+  const size = radius * 2 + 1;
+  const kernel = new Float32Array(size);
+  const twoSigmaSq = 2 * sigma * sigma;
+  let total = 0;
+
+  for (let i = -radius; i <= radius; i += 1) {
+    const weight = Math.exp(-(i * i) / twoSigmaSq);
+    kernel[i + radius] = weight;
+    total += weight;
   }
-  return sizes;
-}
 
-function boxBlur(src: Uint8ClampedArray, dst: Uint8ClampedArray, w: number, h: number, r: number) {
-  // Copy src to dst for horizontal pass
-  dst.set(src);
-  boxBlurH(dst, src, w, h, r);
-  boxBlurV(src, dst, w, h, r);
-}
-
-function boxBlurH(src: Uint8ClampedArray, dst: Uint8ClampedArray, w: number, h: number, r: number) {
-  const iarr = 1 / (r + r + 1);
-  for (let row = 0; row < h; row++) {
-    let ti = row * w * 4;
-    let li = ti;
-    let ri = ti + r * 4;
-    const fv = [src[ti], src[ti + 1], src[ti + 2], src[ti + 3]];
-    const lv = [src[ti + (w - 1) * 4], src[ti + (w - 1) * 4 + 1], src[ti + (w - 1) * 4 + 2], src[ti + (w - 1) * 4 + 3]];
-    let valR = (r + 1) * fv[0];
-    let valG = (r + 1) * fv[1];
-    let valB = (r + 1) * fv[2];
-    let valA = (r + 1) * fv[3];
-
-    for (let j = 0; j < r; j++) {
-      const idx = ti + Math.min(j, w - 1) * 4;
-      valR += src[idx];
-      valG += src[idx + 1];
-      valB += src[idx + 2];
-      valA += src[idx + 3];
-    }
-
-    for (let j = 0; j <= r; j++) {
-      const riIdx = ti + Math.min(j + r, w - 1) * 4;
-      valR += src[riIdx] - fv[0]; valG += src[riIdx + 1] - fv[1]; valB += src[riIdx + 2] - fv[2]; valA += src[riIdx + 3] - fv[3];
-      dst[ti] = Math.round(valR * iarr); dst[ti + 1] = Math.round(valG * iarr); dst[ti + 2] = Math.round(valB * iarr); dst[ti + 3] = Math.round(valA * iarr);
-      ti += 4;
-    }
-
-    for (let j = r + 1; j < w - r; j++) {
-      valR += src[ri] - src[li]; valG += src[ri + 1] - src[li + 1]; valB += src[ri + 2] - src[li + 2]; valA += src[ri + 3] - src[li + 3];
-      dst[ti] = Math.round(valR * iarr); dst[ti + 1] = Math.round(valG * iarr); dst[ti + 2] = Math.round(valB * iarr); dst[ti + 3] = Math.round(valA * iarr);
-      ri += 4; li += 4; ti += 4;
-    }
-
-    for (let j = w - r; j < w; j++) {
-      valR += lv[0] - src[li]; valG += lv[1] - src[li + 1]; valB += lv[2] - src[li + 2]; valA += lv[3] - src[li + 3];
-      dst[ti] = Math.round(valR * iarr); dst[ti + 1] = Math.round(valG * iarr); dst[ti + 2] = Math.round(valB * iarr); dst[ti + 3] = Math.round(valA * iarr);
-      li += 4; ti += 4;
-    }
+  for (let i = 0; i < size; i += 1) {
+    kernel[i] /= total;
   }
-}
 
-function boxBlurV(src: Uint8ClampedArray, dst: Uint8ClampedArray, w: number, h: number, r: number) {
-  const iarr = 1 / (r + r + 1);
-  for (let col = 0; col < w; col++) {
-    let ti = col * 4;
-    let li = ti;
-    let ri = ti + r * w * 4;
-    const fv = [src[ti], src[ti + 1], src[ti + 2], src[ti + 3]];
-    const lv = [src[ti + (h - 1) * w * 4], src[ti + (h - 1) * w * 4 + 1], src[ti + (h - 1) * w * 4 + 2], src[ti + (h - 1) * w * 4 + 3]];
-    let valR = (r + 1) * fv[0];
-    let valG = (r + 1) * fv[1];
-    let valB = (r + 1) * fv[2];
-    let valA = (r + 1) * fv[3];
-
-    for (let j = 0; j < r; j++) {
-      const idx = ti + Math.min(j, h - 1) * w * 4;
-      valR += src[idx];
-      valG += src[idx + 1];
-      valB += src[idx + 2];
-      valA += src[idx + 3];
-    }
-
-    for (let j = 0; j <= r; j++) {
-      const riIdx = ti + Math.min(j + r, h - 1) * w * 4;
-      valR += src[riIdx] - fv[0]; valG += src[riIdx + 1] - fv[1]; valB += src[riIdx + 2] - fv[2]; valA += src[riIdx + 3] - fv[3];
-      dst[ti] = Math.round(valR * iarr); dst[ti + 1] = Math.round(valG * iarr); dst[ti + 2] = Math.round(valB * iarr); dst[ti + 3] = Math.round(valA * iarr);
-      ti += w * 4;
-    }
-
-    for (let j = r + 1; j < h - r; j++) {
-      valR += src[ri] - src[li]; valG += src[ri + 1] - src[li + 1]; valB += src[ri + 2] - src[li + 2]; valA += src[ri + 3] - src[li + 3];
-      dst[ti] = Math.round(valR * iarr); dst[ti + 1] = Math.round(valG * iarr); dst[ti + 2] = Math.round(valB * iarr); dst[ti + 3] = Math.round(valA * iarr);
-      ri += w * 4; li += w * 4; ti += w * 4;
-    }
-
-    for (let j = h - r; j < h; j++) {
-      valR += lv[0] - src[li]; valG += lv[1] - src[li + 1]; valB += lv[2] - src[li + 2]; valA += lv[3] - src[li + 3];
-      dst[ti] = Math.round(valR * iarr); dst[ti + 1] = Math.round(valG * iarr); dst[ti + 2] = Math.round(valB * iarr); dst[ti + 3] = Math.round(valA * iarr);
-      li += w * 4; ti += w * 4;
-    }
-  }
+  return kernel;
 }
 
 /**

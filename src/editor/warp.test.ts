@@ -6,8 +6,10 @@ import {
   getOriginalPoint,
   findNearestControlPoint,
   resetMesh,
+  smoothMesh,
   applyPerspectiveDistort,
   renderWarp,
+  WARP_PRESETS,
   type WarpMesh,
   type Point,
 } from "./warp";
@@ -178,6 +180,298 @@ describe("warp", () => {
       setMeshPoint(mesh, 1, 1, { x: 5, y: 5 });
       // Should not throw
       renderWarp(source, target, mesh);
+    });
+  });
+
+  describe("warp presets", () => {
+    const W = 200;
+    const H = 150;
+    const GRID = 4;
+
+    function freshMesh(): WarpMesh {
+      return createWarpMesh(W, H, GRID, GRID);
+    }
+
+    function meshPointsMatchOriginal(mesh: WarpMesh): boolean {
+      for (let i = 0; i < mesh.points.length; i++) {
+        if (
+          Math.abs(mesh.points[i].x - mesh.original[i].x) > 1e-9 ||
+          Math.abs(mesh.points[i].y - mesh.original[i].y) > 1e-9
+        ) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function distFromCentre(p: Point): number {
+      const cx = W / 2;
+      const cy = H / 2;
+      return Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2);
+    }
+
+    function angleFromCentre(p: Point): number {
+      return Math.atan2(p.y - H / 2, p.x - W / 2);
+    }
+
+    describe("WARP_PRESETS array", () => {
+      it("has 6 presets", () => {
+        expect(WARP_PRESETS.length).toBe(6);
+      });
+
+      it("each preset has id, label, and apply function", () => {
+        for (const preset of WARP_PRESETS) {
+          expect(typeof preset.id).toBe("string");
+          expect(preset.id.length).toBeGreaterThan(0);
+          expect(typeof preset.label).toBe("string");
+          expect(preset.label.length).toBeGreaterThan(0);
+          expect(typeof preset.apply).toBe("function");
+        }
+      });
+
+      it("each preset has a unique id", () => {
+        const ids = WARP_PRESETS.map((p) => p.id);
+        expect(new Set(ids).size).toBe(ids.length);
+      });
+    });
+
+    describe("strength 0 leaves mesh unchanged", () => {
+      for (const preset of WARP_PRESETS) {
+        it(`${preset.id} at strength 0`, () => {
+          const mesh = freshMesh();
+          preset.apply(mesh, 0);
+          expect(meshPointsMatchOriginal(mesh)).toBe(true);
+        });
+      }
+    });
+
+    describe("strength 50 modifies interior points", () => {
+      for (const preset of WARP_PRESETS) {
+        it(`${preset.id} at strength 50`, () => {
+          const mesh = freshMesh();
+          preset.apply(mesh, 50);
+          expect(meshPointsMatchOriginal(mesh)).toBe(false);
+        });
+      }
+    });
+
+    describe("fisheye", () => {
+      it("displaces interior points outward from centre", () => {
+        const mesh = freshMesh();
+        const preset = WARP_PRESETS.find((p) => p.id === "fisheye")!;
+        // Record original distances for interior points (excluding exact centre)
+        const interiorIndices: number[] = [];
+        for (let r = 1; r < GRID; r++) {
+          for (let c = 1; c < GRID; c++) {
+            const idx = r * (GRID + 1) + c;
+            if (distFromCentre(mesh.original[idx]) > 1e-6) {
+              interiorIndices.push(idx);
+            }
+          }
+        }
+        expect(interiorIndices.length).toBeGreaterThan(0);
+        const origDists = interiorIndices.map((i) => distFromCentre(mesh.original[i]));
+        preset.apply(mesh, 50);
+        const newDists = interiorIndices.map((i) => distFromCentre(mesh.points[i]));
+        for (let i = 0; i < interiorIndices.length; i++) {
+          expect(newDists[i]).toBeGreaterThan(origDists[i]);
+        }
+      });
+    });
+
+    describe("pinch", () => {
+      it("displaces interior points inward toward centre", () => {
+        const mesh = freshMesh();
+        const preset = WARP_PRESETS.find((p) => p.id === "pinch")!;
+        const interiorIndices: number[] = [];
+        for (let r = 1; r < GRID; r++) {
+          for (let c = 1; c < GRID; c++) {
+            const idx = r * (GRID + 1) + c;
+            if (distFromCentre(mesh.original[idx]) > 1e-6) {
+              interiorIndices.push(idx);
+            }
+          }
+        }
+        expect(interiorIndices.length).toBeGreaterThan(0);
+        const origDists = interiorIndices.map((i) => distFromCentre(mesh.original[i]));
+        preset.apply(mesh, 50);
+        const newDists = interiorIndices.map((i) => distFromCentre(mesh.points[i]));
+        for (let i = 0; i < interiorIndices.length; i++) {
+          expect(newDists[i]).toBeLessThan(origDists[i]);
+        }
+      });
+    });
+
+    describe("twist", () => {
+      it("rotates points (angle changes, distance similar)", () => {
+        const mesh = freshMesh();
+        const preset = WARP_PRESETS.find((p) => p.id === "twist")!;
+        // Pick an interior point that is not at the centre
+        const idx = 2 * (GRID + 1) + 1; // row 2, col 1
+        const origAngle = angleFromCentre(mesh.original[idx]);
+        const origDist = distFromCentre(mesh.original[idx]);
+        preset.apply(mesh, 50);
+        const newAngle = angleFromCentre(mesh.points[idx]);
+        const newDist = distFromCentre(mesh.points[idx]);
+        expect(newAngle).not.toBeCloseTo(origAngle, 2);
+        // Distance should remain similar (within 20% for moderate twist)
+        expect(Math.abs(newDist - origDist) / origDist).toBeLessThan(0.01);
+      });
+    });
+
+    describe("flag", () => {
+      it("displaces points vertically only (x unchanged)", () => {
+        const mesh = freshMesh();
+        const preset = WARP_PRESETS.find((p) => p.id === "flag")!;
+        preset.apply(mesh, 50);
+        let anyYChanged = false;
+        for (let i = 0; i < mesh.points.length; i++) {
+          expect(mesh.points[i].x).toBeCloseTo(mesh.original[i].x, 9);
+          if (Math.abs(mesh.points[i].y - mesh.original[i].y) > 1e-9) {
+            anyYChanged = true;
+          }
+        }
+        expect(anyYChanged).toBe(true);
+      });
+    });
+
+    describe("wave", () => {
+      it("displaces points horizontally only (y unchanged)", () => {
+        const mesh = freshMesh();
+        const preset = WARP_PRESETS.find((p) => p.id === "wave")!;
+        preset.apply(mesh, 50);
+        let anyXChanged = false;
+        for (let i = 0; i < mesh.points.length; i++) {
+          expect(mesh.points[i].y).toBeCloseTo(mesh.original[i].y, 9);
+          if (Math.abs(mesh.points[i].x - mesh.original[i].x) > 1e-9) {
+            anyXChanged = true;
+          }
+        }
+        expect(anyXChanged).toBe(true);
+      });
+    });
+
+    describe("bulge", () => {
+      it("displaces centre-adjacent points outward with falloff", () => {
+        const mesh = freshMesh();
+        const preset = WARP_PRESETS.find((p) => p.id === "bulge")!;
+        // Pick a near-centre point that is NOT exactly at centre
+        // row 2, col 1 on a 4-grid 200x150 mesh = (50, 75) — not at centre (100, 75)
+        const nearIdx = 2 * (GRID + 1) + 1;
+        const farIdx = 0 * (GRID + 1) + 0;  // row 0, col 0 — top-left corner
+        const nearOrigDist = distFromCentre(mesh.original[nearIdx]);
+        const farOrigDist = distFromCentre(mesh.original[farIdx]);
+        expect(nearOrigDist).toBeGreaterThan(0);
+        expect(farOrigDist).toBeGreaterThan(0);
+        preset.apply(mesh, 50);
+        const nearNewDist = distFromCentre(mesh.points[nearIdx]);
+        const farNewDist = distFromCentre(mesh.points[farIdx]);
+        const nearDisplacement = nearNewDist - nearOrigDist;
+        const farDisplacement = farNewDist - farOrigDist;
+        // Near-centre points should be displaced outward more than far points
+        expect(nearDisplacement).toBeGreaterThan(0);
+        // Gaussian falloff means centre-adjacent displacement > corner displacement ratio
+        // (the corner is at maxR so its Gaussian weight is smallest)
+        expect(nearDisplacement).toBeGreaterThan(farDisplacement);
+      });
+    });
+  });
+
+  describe("smoothMesh", () => {
+    const W = 200;
+    const H = 150;
+    const GRID = 4;
+
+    function freshMesh(): WarpMesh {
+      return createWarpMesh(W, H, GRID, GRID);
+    }
+
+    it("smoothness 0 leaves mesh unchanged", () => {
+      const mesh = freshMesh();
+      // Displace an interior point
+      const idx = 2 * (GRID + 1) + 2; // row 2, col 2 — interior
+      mesh.points[idx] = { x: mesh.points[idx].x + 20, y: mesh.points[idx].y + 15 };
+      const before = mesh.points.map((p) => ({ ...p }));
+      smoothMesh(mesh, 0);
+      for (let i = 0; i < mesh.points.length; i++) {
+        expect(mesh.points[i].x).toBe(before[i].x);
+        expect(mesh.points[i].y).toBe(before[i].y);
+      }
+    });
+
+    it("smoothness > 0 smooths interior point displacements", () => {
+      const mesh = freshMesh();
+      // Displace a single interior point
+      const idx = 2 * (GRID + 1) + 2; // row 2, col 2
+      const origX = mesh.original[idx].x;
+      const origY = mesh.original[idx].y;
+      mesh.points[idx] = { x: origX + 40, y: origY + 30 };
+      smoothMesh(mesh, 50); // 5 iterations
+      // The displacement should be reduced (pulled back toward neighbours which have 0 displacement)
+      const newDx = Math.abs(mesh.points[idx].x - origX);
+      const newDy = Math.abs(mesh.points[idx].y - origY);
+      expect(newDx).toBeLessThan(40);
+      expect(newDy).toBeLessThan(30);
+    });
+
+    it("boundary points are never modified", () => {
+      const mesh = freshMesh();
+      // Displace ALL points
+      for (let i = 0; i < mesh.points.length; i++) {
+        mesh.points[i] = { x: mesh.points[i].x + 10, y: mesh.points[i].y + 5 };
+      }
+      // Snapshot boundary points before smoothing
+      const boundaryBefore: { idx: number; x: number; y: number }[] = [];
+      for (let r = 0; r <= GRID; r++) {
+        for (let c = 0; c <= GRID; c++) {
+          if (r === 0 || r === GRID || c === 0 || c === GRID) {
+            const idx = r * (GRID + 1) + c;
+            boundaryBefore.push({ idx, x: mesh.points[idx].x, y: mesh.points[idx].y });
+          }
+        }
+      }
+      smoothMesh(mesh, 100); // 10 iterations — maximum smoothing
+      for (const bp of boundaryBefore) {
+        expect(mesh.points[bp.idx].x).toBe(bp.x);
+        expect(mesh.points[bp.idx].y).toBe(bp.y);
+      }
+    });
+
+    it("higher smoothness produces more averaging", () => {
+      // Test with smoothness 20 vs 80
+      const meshLow = freshMesh();
+      const meshHigh = freshMesh();
+      const idx = 2 * (GRID + 1) + 2; // interior point
+      const origX = meshLow.original[idx].x;
+      const origY = meshLow.original[idx].y;
+      meshLow.points[idx] = { x: origX + 40, y: origY + 30 };
+      meshHigh.points[idx] = { x: origX + 40, y: origY + 30 };
+
+      smoothMesh(meshLow, 20);  // 2 iterations
+      smoothMesh(meshHigh, 80); // 8 iterations
+
+      const lowDx = Math.abs(meshLow.points[idx].x - origX);
+      const highDx = Math.abs(meshHigh.points[idx].x - origX);
+      const lowDy = Math.abs(meshLow.points[idx].y - origY);
+      const highDy = Math.abs(meshHigh.points[idx].y - origY);
+
+      // Higher smoothness means the displacement is averaged more, so closer to 0
+      expect(highDx).toBeLessThan(lowDx);
+      expect(highDy).toBeLessThan(lowDy);
+    });
+
+    it("smoothing preserves mesh structure", () => {
+      const mesh = freshMesh();
+      const origLength = mesh.points.length;
+      const origRows = mesh.rows;
+      const origCols = mesh.cols;
+      // Displace some points
+      mesh.points[6] = { x: mesh.points[6].x + 15, y: mesh.points[6].y - 10 };
+      mesh.points[8] = { x: mesh.points[8].x - 5, y: mesh.points[8].y + 20 };
+      smoothMesh(mesh, 60);
+      expect(mesh.rows).toBe(origRows);
+      expect(mesh.cols).toBe(origCols);
+      expect(mesh.points.length).toBe(origLength);
     });
   });
 });

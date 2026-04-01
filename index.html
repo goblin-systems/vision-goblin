@@ -491,6 +491,12 @@
                 <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="eraser" aria-label="Eraser tool" title="Eraser tool">
                   <i data-lucide="eraser"></i>
                 </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="fill" aria-label="Fill tool" title="Fill tool">
+                  <i data-lucide="paint-bucket"></i>
+                </button>
+                <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="gradient" aria-label="Gradient tool" title="Gradient tool">
+                  <i data-lucide="blend"></i>
+                </button>
                 <button class="icon-btn icon-btn-lg tool-btn" type="button" data-tool="smudge" aria-label="Smudge tool" title="Smudge tool">
                   <i data-lucide="hand"></i>
                 </button>
@@ -614,6 +620,7 @@
                   </div>
                 </div>
                 <p id="crop-tool-hint" class="hint" hidden>Drag on the canvas to define a crop area. The crop applies when you release.</p>
+                <p id="gradient-tool-hint" class="hint" hidden>Open the gradient editor to build a multi-node colour curve, then apply it destructively to the active raster target.</p>
                 <label id="brush-size-field" class="field-block">
                   <span>Brush size</span>
                   <input id="brush-size-range" type="range" min="1" max="96" step="1" value="24" />
@@ -792,15 +799,6 @@
                   <button id="effects-clear-btn" type="button" class="btn btn-sm" style="flex:1">Clear All</button>
                 </div>
               </div>
-              <div class="mini-panel">
-                <h4>MVP status</h4>
-                <ul class="compact-list">
-                  <li>Open local images into tabs</li>
-                  <li>Paste clipboard images</li>
-                  <li>Move, brush, erase, sample</li>
-                  <li>Export PNG, JPG, WebP</li>
-                </ul>
-              </div>
             </aside>
 
             <div class="pane-resizer" id="left-pane-resizer" aria-hidden="true"></div>
@@ -878,9 +876,8 @@
             <div class="editor-status-actions">
               <span id="status-right">RGB - Snap off - Grid on</span>
               <button id="ai-jobs-status-btn" class="secondary-btn slim-btn" type="button"><i data-lucide="bot"></i><span>AI idle</span></button>
-              <button id="reset-view-btn" class="secondary-btn slim-btn" type="button"><i data-lucide="locate-fixed"></i><span>Reset view</span></button>
               <button class="icon-btn icon-btn-sm" type="button" data-zoom-step="out" aria-label="Zoom out" title="Zoom out"><i data-lucide="minus"></i></button>
-              <span id="zoom-readout" class="zoom-pill">100%</span>
+              <button id="zoom-readout" class="zoom-pill" type="button" title="Click to reset view. Drag left/right to zoom.">100%</button>
               <button class="icon-btn icon-btn-sm" type="button" data-zoom-step="in" aria-label="Zoom in" title="Zoom in"><i data-lucide="plus"></i></button>
             </div>
           </div>
@@ -1769,6 +1766,26 @@
           <p class="modal-body-text">Drag control points to deform the layer. Use the grid size selector to change mesh density.</p>
           <div class="field-row">
             <label class="field-block" style="flex:0 0 auto">
+              <span>Preset</span>
+              <select id="warp-preset-select">
+                <option value="">Custom</option>
+              </select>
+            </label>
+            <label class="field-block" style="flex:1">
+              <span>Strength</span>
+              <div class="range-with-value">
+                <input id="warp-preset-strength" type="range" min="0" max="100" step="1" value="50" />
+                <output id="warp-preset-strength-value">50</output>
+              </div>
+            </label>
+            <label class="field-block" style="flex:1">
+              <span>Smoothness</span>
+              <div class="range-with-value">
+                <input id="warp-smoothness" type="range" min="0" max="100" step="1" value="0" />
+                <output id="warp-smoothness-value">0</output>
+              </div>
+            </label>
+            <label class="field-block" style="flex:0 0 auto">
               <span>Grid</span>
               <select id="warp-grid-select">
                 <option value="2">2 × 2</option>
@@ -1841,6 +1858,35 @@
           </div>
           <div class="modal-footer">
             <button class="secondary-btn modal-btn-reject" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="gradient-tool-modal" class="modal-backdrop" hidden>
+        <div class="modal-card modal-card--wide gradient-tool-modal-card" role="dialog" aria-modal="true" aria-labelledby="gradient-tool-title">
+          <div class="modal-header">
+            <h3 id="gradient-tool-title">Gradient</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <p class="modal-body-text">Build a multi-node curve, preview the blend, then apply a left-to-right gradient to the active raster target.</p>
+          <div class="modal-form-grid">
+            <div class="gradient-tool-curve-wrap">
+              <canvas id="gradient-curve-canvas" width="560" height="220"></canvas>
+            </div>
+            <div class="gradient-tool-preview-wrap">
+              <canvas id="gradient-preview-canvas" width="560" height="48"></canvas>
+            </div>
+            <div class="gradient-tool-actions">
+              <button id="gradient-add-node-btn" class="secondary-btn" type="button"><i data-lucide="plus"></i><span>Add node</span></button>
+              <button id="gradient-reset-btn" class="secondary-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset</span></button>
+            </div>
+            <div id="gradient-node-list" class="gradient-node-list"></div>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
+            <button id="gradient-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
           </div>
         </div>
       </div>

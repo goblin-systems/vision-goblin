@@ -16,6 +16,8 @@ const TOOL_COPY: Record<ActiveTool, string> = {
   crop: "Crop tool active. Drag a region and it applies automatically when you release.",
   brush: "Brush tool active. Paint directly onto the active raster layer.",
   eraser: "Eraser tool active. Destructively erase pixels from the active raster layer.",
+  fill: "Fill tool active. Click to fill the current selection on the active raster layer.",
+  gradient: "Gradient tool active. Open the gradient editor to apply a destructive left-to-right gradient.",
   eyedropper: "Eyedropper active. Click the canvas to sample a colour into the paint swatch.",
   smudge: "Smudge tool active. Drag to smudge pixels on the active layer.",
   "clone-stamp": "Clone stamp active. Alt-click to set source, then paint to clone pixels.",
@@ -34,6 +36,8 @@ export const KEYBINDING_LABELS: Record<string, string> = {
   "tool-crop": "Crop tool",
   "tool-brush": "Brush tool",
   "tool-eraser": "Eraser tool",
+  "tool-fill": "Fill tool",
+  "tool-gradient": "Gradient tool",
   "tool-eyedropper": "Eyedropper tool",
   "tool-smudge": "Smudge tool",
   "tool-clone-stamp": "Clone stamp tool",
@@ -172,6 +176,10 @@ export function getCanvasFloatingChipText(params: {
       return "Paint on the active layer. Adjust size and opacity in the tools column.";
     case "eraser":
       return "Erase pixels from the active layer.";
+    case "fill":
+      return "Click to fill the current selection on the active raster layer.";
+    case "gradient":
+      return "Open the gradient editor to apply a left-to-right gradient to the active target area.";
     case "eyedropper":
       return "Click the canvas to sample a colour.";
     case "smudge":
@@ -442,6 +450,7 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
       brushOpacityField: byId<HTMLElement>("brush-opacity-field"),
       brushColourField: byId<HTMLElement>("brush-colour-field"),
       healingToolHint: byId<HTMLElement>("healing-tool-hint"),
+      gradientToolHint: byId<HTMLElement>("gradient-tool-hint"),
       textToolHint: byId<HTMLElement>("text-tool-hint"),
       shapeToolHint: byId<HTMLElement>("shape-tool-hint"),
       shapeKindField: byId<HTMLElement>("shape-kind-field"),

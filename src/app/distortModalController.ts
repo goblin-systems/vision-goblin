@@ -3,7 +3,7 @@ import { cloneCanvas, snapshotDocument, syncLayerSource } from "../editor/docume
 import { pushHistory } from "../editor/history";
 import { applyDisplacementMapToImageData, applyLiquifyBrush, hasLiquifyDisplacement, type LiquifyBrushMode } from "../editor/liquify";
 import type { Layer, DocumentState } from "../editor/types";
-import { createWarpMesh, drawMeshOverlay, findNearestControlPoint, renderWarp, resetMesh, type WarpMesh } from "../editor/warp";
+import { createWarpMesh, drawMeshOverlay, findNearestControlPoint, renderWarp, resetMesh, smoothMesh, WARP_PRESETS, type WarpMesh } from "../editor/warp";
 import { byId } from "./dom";
 
 type ToastVariant = "success" | "error" | "info";
@@ -72,12 +72,31 @@ export function createDistortModalController(deps: DistortModalControllerDeps): 
     const backdrop = byId<HTMLElement>("warp-modal");
     const previewCanvas = byId<HTMLCanvasElement>("warp-preview-canvas");
     const gridSelect = byId<HTMLSelectElement>("warp-grid-select");
+    const presetSelect = byId<HTMLSelectElement>("warp-preset-select");
+    const strengthRange = byId<HTMLInputElement>("warp-preset-strength");
+    const strengthValue = byId<HTMLElement>("warp-preset-strength-value");
+    const smoothnessRange = byId<HTMLInputElement>("warp-smoothness");
+    const smoothnessValue = byId<HTMLElement>("warp-smoothness-value");
     const resetBtn = byId<HTMLButtonElement>("warp-reset-btn");
     const applyBtn = byId<HTMLButtonElement>("warp-apply-btn");
     const previewContext = previewCanvas.getContext("2d");
     if (!previewContext) {
       return;
     }
+
+    // Populate preset select options
+    presetSelect.innerHTML = '<option value="">Custom</option>';
+    for (const preset of WARP_PRESETS) {
+      const opt = document.createElement("option");
+      opt.value = preset.id;
+      opt.textContent = preset.label;
+      presetSelect.appendChild(opt);
+    }
+    presetSelect.value = "";
+    strengthRange.value = "50";
+    strengthValue.textContent = "50";
+    smoothnessRange.value = "0";
+    smoothnessValue.textContent = "0";
 
     const sourceCanvas = cloneCanvas(activeLayer.canvas);
     const scale = Math.min(400 / sourceCanvas.width, 300 / sourceCanvas.height, 1);
@@ -89,6 +108,18 @@ export function createDistortModalController(deps: DistortModalControllerDeps): 
     let gridSize = Number(gridSelect.value) || 3;
     let mesh = createWarpMesh(sourceCanvas.width, sourceCanvas.height, gridSize, gridSize);
     let dragIndex = -1;
+    let preSmoothPoints = mesh.points.map((p) => ({ ...p }));
+
+    const applyCurrentPreset = () => {
+      const presetId = presetSelect.value;
+      if (!presetId) return;
+      const preset = WARP_PRESETS.find((p) => p.id === presetId);
+      if (!preset) return;
+      resetMesh(mesh);
+      preset.apply(mesh, Number(strengthRange.value));
+      preSmoothPoints = mesh.points.map((p) => ({ ...p }));
+      smoothMesh(mesh, Number(smoothnessRange.value));
+    };
 
     const redrawPreview = () => {
       const temp = document.createElement("canvas");
@@ -123,6 +154,7 @@ export function createDistortModalController(deps: DistortModalControllerDeps): 
       const point = canvasToSource(event.clientX, event.clientY);
       dragIndex = findNearestControlPoint(mesh, point.x, point.y, 12 / scale);
       if (dragIndex >= 0) {
+        presetSelect.value = "";
         previewCanvas.setPointerCapture(event.pointerId);
       }
       redrawPreview();
@@ -135,6 +167,10 @@ export function createDistortModalController(deps: DistortModalControllerDeps): 
     };
 
     const onPointerUp = () => {
+      if (dragIndex >= 0) {
+        preSmoothPoints = mesh.points.map((p) => ({ ...p }));
+        smoothMesh(mesh, Number(smoothnessRange.value));
+      }
       dragIndex = -1;
       redrawPreview();
     };
@@ -143,12 +179,46 @@ export function createDistortModalController(deps: DistortModalControllerDeps): 
       gridSize = Number(gridSelect.value) || 3;
       mesh = createWarpMesh(sourceCanvas.width, sourceCanvas.height, gridSize, gridSize);
       dragIndex = -1;
+      presetSelect.value = "";
+      smoothnessRange.value = "0";
+      smoothnessValue.textContent = "0";
+      preSmoothPoints = mesh.points.map((p) => ({ ...p }));
       redrawPreview();
     };
 
     const onReset = () => {
       resetMesh(mesh);
       dragIndex = -1;
+      presetSelect.value = "";
+      strengthRange.value = "50";
+      strengthValue.textContent = "50";
+      smoothnessRange.value = "0";
+      smoothnessValue.textContent = "0";
+      preSmoothPoints = mesh.original.map((p) => ({ ...p }));
+      redrawPreview();
+    };
+
+    const onPresetChange = () => {
+      applyCurrentPreset();
+      dragIndex = -1;
+      redrawPreview();
+    };
+
+    const onStrengthInput = () => {
+      strengthValue.textContent = strengthRange.value;
+      if (presetSelect.value) {
+        applyCurrentPreset();
+        redrawPreview();
+      }
+    };
+
+    const onSmoothnessInput = () => {
+      smoothnessValue.textContent = smoothnessRange.value;
+      // Restore from pre-smooth snapshot then re-apply smoothing
+      for (let i = 0; i < mesh.points.length; i++) {
+        mesh.points[i] = { ...preSmoothPoints[i] };
+      }
+      smoothMesh(mesh, Number(smoothnessRange.value));
       redrawPreview();
     };
 
@@ -160,6 +230,9 @@ export function createDistortModalController(deps: DistortModalControllerDeps): 
       previewCanvas.removeEventListener("pointermove", onPointerMove);
       previewCanvas.removeEventListener("pointerup", onPointerUp);
       gridSelect.removeEventListener("change", onGridChange);
+      presetSelect.removeEventListener("change", onPresetChange);
+      strengthRange.removeEventListener("input", onStrengthInput);
+      smoothnessRange.removeEventListener("input", onSmoothnessInput);
       resetBtn.removeEventListener("click", onReset);
       applyBtn.removeEventListener("click", onApply);
     };
@@ -187,6 +260,9 @@ export function createDistortModalController(deps: DistortModalControllerDeps): 
     previewCanvas.addEventListener("pointermove", onPointerMove);
     previewCanvas.addEventListener("pointerup", onPointerUp);
     gridSelect.addEventListener("change", onGridChange);
+    presetSelect.addEventListener("change", onPresetChange);
+    strengthRange.addEventListener("input", onStrengthInput);
+    smoothnessRange.addEventListener("input", onSmoothnessInput);
     resetBtn.addEventListener("click", onReset);
     applyBtn.addEventListener("click", onApply);
     openModal({

@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeNewDocument } from "./actions/documentActions";
 import * as canvasPointerModule from "./canvasPointer";
+import { applyFillToSelection } from "./fill";
 import { combineMasks, createMaskCanvas, defaultPolygonRotation, maskBoundingRect, maskContainsRect, rasterizeRectToMask } from "./selection";
 import type { PointerState } from "./types";
+
+vi.mock("./fill", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./fill")>();
+  return {
+    ...actual,
+    applyFillToSelection: vi.fn(actual.applyFillToSelection),
+  };
+});
 
 vi.mock("./selection", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./selection")>();
@@ -107,6 +116,7 @@ function createMarqueeController(options?: {
     onCreateShapeLayer: vi.fn(() => null),
     getMaskEditTarget: () => null,
     getQuickMaskCanvas: () => null,
+    showToast: vi.fn(),
     log: vi.fn(),
   });
 
@@ -122,6 +132,7 @@ function createPointerControllerFixture(options?: {
   const canvasWrap = document.createElement("div");
   const renderEditorState = vi.fn();
   const renderCanvas = vi.fn();
+  const showToast = vi.fn();
   const pointerState = createPointerState();
   const commitTransformDraft = vi.fn();
   const activeTool = options?.activeTool ?? "brush";
@@ -181,10 +192,11 @@ function createPointerControllerFixture(options?: {
     onCreateShapeLayer: vi.fn(() => null),
     getMaskEditTarget: () => null,
     getQuickMaskCanvas: () => null,
+    showToast,
     log: vi.fn(),
   });
 
-  return { controller, doc, pointerState, commitTransformDraft, renderEditorState, renderCanvas };
+  return { controller, doc, pointerState, commitTransformDraft, renderEditorState, renderCanvas, showToast };
 }
 
 describe("canvasPointer marquee drag", () => {
@@ -202,6 +214,7 @@ describe("canvasPointer marquee drag", () => {
     vi.mocked(combineMasks).mockImplementation(() => undefined);
     vi.mocked(maskBoundingRect).mockReturnValue(null);
     vi.mocked(maskContainsRect).mockReturnValue(false);
+    vi.mocked(applyFillToSelection).mockReset();
   });
 
   it("supports down-right marquee drag without shifting away from the cursor", () => {
@@ -369,5 +382,52 @@ describe("canvasPointer marquee drag", () => {
     expect(doc.selectionRect).toBeNull();
     expect(doc.undoStack.length).toBe(undoCountBefore + 1);
     expect(doc.history[0]).toBe("Deselected");
+  });
+
+  it("commits fill as a single undoable history step", () => {
+    const { controller, doc, pointerState, showToast, renderEditorState } = createPointerControllerFixture({ activeTool: "fill" });
+    doc.selectionRect = { x: 2, y: 3, width: 10, height: 8 };
+    doc.redoStack = ["redo-snapshot"];
+    vi.mocked(applyFillToSelection).mockReturnValue({ ok: true, message: "Filled selection" });
+
+    controller.handlePointerDown({ clientX: 12, clientY: 18, button: 0 } as PointerEvent);
+
+    expect(pointerState.mode).toBe("none");
+    expect(doc.undoStack).toHaveLength(1);
+    expect(doc.redoStack).toHaveLength(0);
+    expect(doc.history[0]).toBe("Filled selection");
+    expect(showToast).toHaveBeenCalledWith("Filled selection", "success");
+    expect(renderEditorState).toHaveBeenCalledOnce();
+  });
+
+  it("does not commit fill when there is no effective selection", () => {
+    const { controller, doc, showToast, renderEditorState } = createPointerControllerFixture({ activeTool: "fill" });
+    vi.mocked(applyFillToSelection).mockReturnValue({ ok: false, message: "Create a selection before using Fill", variant: "info" });
+
+    controller.handlePointerDown({ clientX: 12, clientY: 18, button: 0 } as PointerEvent);
+
+    expect(doc.undoStack).toHaveLength(0);
+    expect(doc.history).toEqual(["Created blank canvas"]);
+    expect(showToast).toHaveBeenCalledWith("Create a selection before using Fill", "info");
+    expect(renderEditorState).not.toHaveBeenCalled();
+  });
+
+  it("shows a message instead of filling a locked layer", () => {
+    const { controller, doc, showToast } = createPointerControllerFixture({ activeTool: "fill" });
+    doc.layers[1].locked = true;
+
+    controller.handlePointerDown({ clientX: 12, clientY: 18, button: 0 } as PointerEvent);
+
+    expect(applyFillToSelection).not.toHaveBeenCalled();
+    expect(doc.undoStack).toHaveLength(0);
+    expect(showToast).toHaveBeenCalledWith("Unlock the active layer before filling", "error");
+  });
+
+  it("commits a pending transform before switching to gradient workflows", () => {
+    const { controller, commitTransformDraft } = createPointerControllerFixture({ activeTool: "gradient", hasTransformDraft: true });
+
+    controller.handlePointerDown({ clientX: 12, clientY: 18, button: 0 } as PointerEvent);
+
+    expect(commitTransformDraft).toHaveBeenCalledOnce();
   });
 });

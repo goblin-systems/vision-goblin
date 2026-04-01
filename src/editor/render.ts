@@ -608,6 +608,7 @@ export function renderToolState(params: {
   brushOpacityField: HTMLElement;
   brushColourField: HTMLElement;
   healingToolHint: HTMLElement;
+  gradientToolHint: HTMLElement;
   textToolHint: HTMLElement;
   shapeToolHint: HTMLElement;
   shapeKindField: HTMLElement;
@@ -632,8 +633,9 @@ export function renderToolState(params: {
   });
   params.activeToolCopy.textContent = params.toolCopy[params.activeTool];
   const showBrushControls = params.activeTool === "brush" || params.activeTool === "eraser" || params.activeTool === "healing-brush";
-  const showBrushColour = params.activeTool === "brush" || params.activeTool === "eyedropper" || params.activeTool === "text" || params.activeTool === "shape";
+  const showBrushColour = params.activeTool === "brush" || params.activeTool === "fill" || params.activeTool === "gradient" || params.activeTool === "eyedropper" || params.activeTool === "text" || params.activeTool === "shape";
   const showHealing = params.activeTool === "healing-brush";
+  const showGradient = params.activeTool === "gradient";
   const showText = params.activeTool === "text";
   const showShape = params.activeTool === "shape";
   const showMarquee = params.activeTool === "marquee";
@@ -647,6 +649,7 @@ export function renderToolState(params: {
   params.brushOpacityField.toggleAttribute("hidden", !showBrushControls);
   params.brushColourField.toggleAttribute("hidden", !showBrushColour);
   params.healingToolHint.toggleAttribute("hidden", !showHealing);
+  params.gradientToolHint.toggleAttribute("hidden", !showGradient);
   params.textToolHint.toggleAttribute("hidden", !showText);
   params.shapeToolHint.toggleAttribute("hidden", !showShape);
   params.shapeKindField.toggleAttribute("hidden", !showShape);
@@ -664,7 +667,7 @@ export function renderToolState(params: {
   params.magicWandToolHint.toggleAttribute("hidden", !showMagicWand);
   params.magicWandModeField.toggleAttribute("hidden", !showMagicWand);
   params.magicWandSettings.toggleAttribute("hidden", !showMagicWand);
-  const hasAnySettings = showBrushControls || showBrushColour || showHealing || showText || showShape || showCrop || showMarquee || showTransform || showLasso || showPolygonLasso || showMagicWand;
+  const hasAnySettings = showBrushControls || showBrushColour || showHealing || showGradient || showText || showShape || showCrop || showMarquee || showTransform || showLasso || showPolygonLasso || showMagicWand;
   params.toolSettingsEmpty.toggleAttribute("hidden", hasAnySettings);
   params.canvasWrap.dataset.tool = params.activeTool;
 }

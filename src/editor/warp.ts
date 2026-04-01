@@ -104,6 +104,233 @@ export function resetMesh(mesh: WarpMesh): void {
 }
 
 // ---------------------------------------------------------------------------
+// Presets — one-click mesh deformation functions
+// ---------------------------------------------------------------------------
+
+export interface WarpPreset {
+  id: string;
+  label: string;
+  apply: (mesh: WarpMesh, strength: number) => void;
+}
+
+/**
+ * Barrel distortion — each point is displaced radially outward from centre.
+ * Uses r_new = r * (1 + k * r²) where k scales with strength.
+ */
+function applyFisheye(mesh: WarpMesh, strength: number): void {
+  if (strength === 0) return;
+  const { rows, cols } = mesh;
+  const w = mesh.original[(rows) * (cols + 1) + cols].x;
+  const h = mesh.original[(rows) * (cols + 1) + cols].y;
+  const cx = w / 2;
+  const cy = h / 2;
+  const maxR = Math.sqrt(cx * cx + cy * cy);
+  const k = (strength / 100) * 0.8;
+
+  for (let i = 0; i < mesh.points.length; i++) {
+    const ox = mesh.original[i].x - cx;
+    const oy = mesh.original[i].y - cy;
+    const r = Math.sqrt(ox * ox + oy * oy);
+    if (r < 1e-6) continue;
+    const rNorm = r / maxR;
+    const scale = 1 + k * rNorm * rNorm;
+    mesh.points[i] = {
+      x: cx + ox * scale,
+      y: cy + oy * scale,
+    };
+  }
+}
+
+/**
+ * Inverse of fisheye — points are pulled inward toward centre.
+ */
+function applyPinch(mesh: WarpMesh, strength: number): void {
+  if (strength === 0) return;
+  const { rows, cols } = mesh;
+  const w = mesh.original[(rows) * (cols + 1) + cols].x;
+  const h = mesh.original[(rows) * (cols + 1) + cols].y;
+  const cx = w / 2;
+  const cy = h / 2;
+  const maxR = Math.sqrt(cx * cx + cy * cy);
+  const k = (strength / 100) * 0.8;
+
+  for (let i = 0; i < mesh.points.length; i++) {
+    const ox = mesh.original[i].x - cx;
+    const oy = mesh.original[i].y - cy;
+    const r = Math.sqrt(ox * ox + oy * oy);
+    if (r < 1e-6) continue;
+    const rNorm = r / maxR;
+    const scale = 1 - k * rNorm * rNorm;
+    mesh.points[i] = {
+      x: cx + ox * scale,
+      y: cy + oy * scale,
+    };
+  }
+}
+
+/**
+ * Twist — points are rotated around centre by an angle proportional to
+ * their distance from centre. Max angle ~90° at full strength for edge points.
+ */
+function applyTwist(mesh: WarpMesh, strength: number): void {
+  if (strength === 0) return;
+  const { rows, cols } = mesh;
+  const w = mesh.original[(rows) * (cols + 1) + cols].x;
+  const h = mesh.original[(rows) * (cols + 1) + cols].y;
+  const cx = w / 2;
+  const cy = h / 2;
+  const maxR = Math.sqrt(cx * cx + cy * cy);
+  const maxAngle = (strength / 100) * (Math.PI / 2);
+
+  for (let i = 0; i < mesh.points.length; i++) {
+    const ox = mesh.original[i].x - cx;
+    const oy = mesh.original[i].y - cy;
+    const r = Math.sqrt(ox * ox + oy * oy);
+    if (r < 1e-6) continue;
+    const angle = maxAngle * (r / maxR);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    mesh.points[i] = {
+      x: cx + ox * cos - oy * sin,
+      y: cy + ox * sin + oy * cos,
+    };
+  }
+}
+
+/**
+ * Flag — horizontal sinusoidal wave. Points are displaced vertically
+ * by A * sin(freq * u) where u is the normalized x position.
+ */
+function applyFlag(mesh: WarpMesh, strength: number): void {
+  if (strength === 0) return;
+  const { rows, cols } = mesh;
+  const w = mesh.original[(rows) * (cols + 1) + cols].x;
+  const h = mesh.original[(rows) * (cols + 1) + cols].y;
+  const amplitude = (strength / 100) * h * 0.15;
+  const freq = 2 * Math.PI * 1.5;
+
+  for (let i = 0; i < mesh.points.length; i++) {
+    const u = w > 0 ? mesh.original[i].x / w : 0;
+    mesh.points[i] = {
+      x: mesh.original[i].x,
+      y: mesh.original[i].y + amplitude * Math.sin(freq * u),
+    };
+  }
+}
+
+/**
+ * Wave — vertical sinusoidal wave. Points are displaced horizontally
+ * by A * sin(freq * v) where v is the normalized y position.
+ */
+function applyWave(mesh: WarpMesh, strength: number): void {
+  if (strength === 0) return;
+  const { rows, cols } = mesh;
+  const w = mesh.original[(rows) * (cols + 1) + cols].x;
+  const h = mesh.original[(rows) * (cols + 1) + cols].y;
+  const amplitude = (strength / 100) * w * 0.15;
+  const freq = 2 * Math.PI * 1.5;
+
+  for (let i = 0; i < mesh.points.length; i++) {
+    const v = h > 0 ? mesh.original[i].y / h : 0;
+    mesh.points[i] = {
+      x: mesh.original[i].x + amplitude * Math.sin(freq * v),
+      y: mesh.original[i].y,
+    };
+  }
+}
+
+/**
+ * Bulge — centre points pushed outward more than edge points using
+ * a Gaussian falloff from centre. Similar to fisheye but with smooth rolloff.
+ */
+function applyBulge(mesh: WarpMesh, strength: number): void {
+  if (strength === 0) return;
+  const { rows, cols } = mesh;
+  const w = mesh.original[(rows) * (cols + 1) + cols].x;
+  const h = mesh.original[(rows) * (cols + 1) + cols].y;
+  const cx = w / 2;
+  const cy = h / 2;
+  const maxR = Math.sqrt(cx * cx + cy * cy);
+  const k = (strength / 100) * 0.8;
+  // Gaussian sigma — controls how quickly the bulge falls off from centre
+  const sigma = 0.4;
+
+  for (let i = 0; i < mesh.points.length; i++) {
+    const ox = mesh.original[i].x - cx;
+    const oy = mesh.original[i].y - cy;
+    const r = Math.sqrt(ox * ox + oy * oy);
+    if (r < 1e-6) continue;
+    const rNorm = r / maxR;
+    const falloff = Math.exp(-(rNorm * rNorm) / (2 * sigma * sigma));
+    const scale = 1 + k * falloff;
+    mesh.points[i] = {
+      x: cx + ox * scale,
+      y: cy + oy * scale,
+    };
+  }
+}
+
+/** All built-in warp presets, enumerable by the UI. */
+export const WARP_PRESETS: WarpPreset[] = [
+  { id: "fisheye", label: "Fisheye", apply: applyFisheye },
+  { id: "pinch", label: "Pinch", apply: applyPinch },
+  { id: "twist", label: "Twist", apply: applyTwist },
+  { id: "flag", label: "Flag", apply: applyFlag },
+  { id: "wave", label: "Wave", apply: applyWave },
+  { id: "bulge", label: "Bulge", apply: applyBulge },
+];
+
+// ---------------------------------------------------------------------------
+// Smoothing — Laplacian smoothing of mesh displacement vectors
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply iterative Laplacian smoothing to the mesh displacement vectors.
+ * Smooths non-boundary interior points by averaging each point's displacement
+ * with its 4 direct grid neighbours (up/down/left/right).
+ *
+ * @param mesh       The warp mesh to smooth in-place.
+ * @param smoothness 0–100. 0 = no change. Converted to iteration count (0–10).
+ */
+export function smoothMesh(mesh: WarpMesh, smoothness: number): void {
+  const iterations = Math.round(smoothness / 10);
+  if (iterations <= 0) return;
+
+  const { rows, cols } = mesh;
+  const stride = cols + 1;
+  const blend = 0.5;
+
+  for (let iter = 0; iter < iterations; iter++) {
+    // Compute displacements (delta from original) for the current state
+    const dx = new Float64Array(mesh.points.length);
+    const dy = new Float64Array(mesh.points.length);
+    for (let i = 0; i < mesh.points.length; i++) {
+      dx[i] = mesh.points[i].x - mesh.original[i].x;
+      dy[i] = mesh.points[i].y - mesh.original[i].y;
+    }
+
+    // Smooth interior (non-boundary) points only
+    for (let r = 1; r < rows; r++) {
+      for (let c = 1; c < cols; c++) {
+        const idx = r * stride + c;
+        const up = (r - 1) * stride + c;
+        const down = (r + 1) * stride + c;
+        const left = r * stride + (c - 1);
+        const right = r * stride + (c + 1);
+
+        const avgDx = (dx[up] + dx[down] + dx[left] + dx[right]) / 4;
+        const avgDy = (dy[up] + dy[down] + dy[left] + dy[right]) / 4;
+
+        mesh.points[idx] = {
+          x: mesh.original[idx].x + dx[idx] * (1 - blend) + avgDx * blend,
+          y: mesh.original[idx].y + dy[idx] * (1 - blend) + avgDy * blend,
+        };
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Perspective / 4-corner distort
 // ---------------------------------------------------------------------------
 
@@ -264,7 +491,36 @@ function rasterizeTriangle(
 // ---------------------------------------------------------------------------
 
 /**
+ * Draw a Catmull-Rom spline through an ordered sequence of points using
+ * cubic Bezier curves. For endpoint segments, the adjacent point is
+ * duplicated as a phantom knot so the curve passes through all points.
+ */
+function drawCatmullRomSpline(ctx: CanvasRenderingContext2D, knots: Point[]): void {
+  if (knots.length < 2) return;
+  const tension = 0.5;
+
+  ctx.moveTo(knots[0].x, knots[0].y);
+
+  for (let i = 0; i < knots.length - 1; i++) {
+    // Four Catmull-Rom control points: p0, p1, p2, p3
+    const p0 = i === 0 ? knots[0] : knots[i - 1];
+    const p1 = knots[i];
+    const p2 = knots[i + 1];
+    const p3 = i + 2 < knots.length ? knots[i + 2] : knots[knots.length - 1];
+
+    // Convert to cubic Bezier control points
+    const cp1x = p1.x + (p2.x - p0.x) * tension / 3;
+    const cp1y = p1.y + (p2.y - p0.y) * tension / 3;
+    const cp2x = p2.x - (p3.x - p1.x) * tension / 3;
+    const cp2y = p2.y - (p3.y - p1.y) * tension / 3;
+
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+  }
+}
+
+/**
  * Draw the warp mesh grid lines and control point handles onto a canvas context.
+ * Grid lines are drawn as smooth Catmull-Rom splines through the control points.
  * @param ctx    The rendering context to draw on (already positioned).
  * @param mesh   The warp mesh.
  * @param scale  Display scale factor (for consistent handle sizes).
@@ -282,25 +538,25 @@ export function drawMeshOverlay(
   ctx.strokeStyle = "rgba(0, 180, 255, 0.7)";
   ctx.lineWidth = 1 / scale;
 
-  // Horizontal lines
+  // Horizontal lines (Catmull-Rom splines along each row)
   for (let r = 0; r <= rows; r++) {
-    ctx.beginPath();
+    const knots: Point[] = [];
     for (let c = 0; c <= cols; c++) {
-      const p = getMeshPoint(mesh, r, c);
-      if (c === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
+      knots.push(getMeshPoint(mesh, r, c));
     }
+    ctx.beginPath();
+    drawCatmullRomSpline(ctx, knots);
     ctx.stroke();
   }
 
-  // Vertical lines
+  // Vertical lines (Catmull-Rom splines along each column)
   for (let c = 0; c <= cols; c++) {
-    ctx.beginPath();
+    const knots: Point[] = [];
     for (let r = 0; r <= rows; r++) {
-      const p = getMeshPoint(mesh, r, c);
-      if (r === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
+      knots.push(getMeshPoint(mesh, r, c));
     }
+    ctx.beginPath();
+    drawCatmullRomSpline(ctx, knots);
     ctx.stroke();
   }
 

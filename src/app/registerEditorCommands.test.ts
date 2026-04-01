@@ -103,12 +103,22 @@ describe("buildEditorCommands", () => {
 
   it("includes tool commands with shortcuts from settings", () => {
     const settings = getDefaultSettings();
-    settings.keybindings["tool-brush"] = "B";
+    settings.keybindings["tool-fill"] = "F";
     const commands = buildEditorCommands(createDeps({ getSettings: () => settings }));
-    const brush = commands.find((command) => command.id === "tool-brush");
+    const fill = commands.find((command) => command.id === "tool-fill");
 
-    expect(brush?.shortcut).toBe("B");
-    expect(brush?.category).toBe("tool");
+    expect(fill?.shortcut).toBe("F");
+    expect(fill?.label).toBe("Fill");
+    expect(fill?.category).toBe("tool");
+  });
+
+  it("registers the gradient tool command with its shortcut", () => {
+    const settings = getDefaultSettings();
+    const commands = buildEditorCommands(createDeps({ getSettings: () => settings }));
+    const gradient = commands.find((command) => command.id === "tool-gradient");
+
+    expect(gradient?.shortcut).toBe("G");
+    expect(gradient?.label).toBe("Gradient");
   });
 
   it("registers AI window commands", () => {

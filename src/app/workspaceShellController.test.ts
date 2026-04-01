@@ -83,6 +83,16 @@ describe("workspaceShellController helpers", () => {
     })).toContain("Quick Mask");
     expect(getCanvasFloatingChipText({
       quickMaskActive: false,
+      activeTool: "fill",
+      activeShapeKind: "ellipse",
+    })).toBe("Click to fill the current selection on the active raster layer.");
+    expect(getCanvasFloatingChipText({
+      quickMaskActive: false,
+      activeTool: "gradient",
+      activeShapeKind: "ellipse",
+    })).toBe("Open the gradient editor to apply a left-to-right gradient to the active target area.");
+    expect(getCanvasFloatingChipText({
+      quickMaskActive: false,
       activeTool: "shape",
       activeShapeKind: "ellipse",
     })).toBe("Click or drag to create a ellipse.");

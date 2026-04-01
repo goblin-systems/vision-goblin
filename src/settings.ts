@@ -3,7 +3,7 @@ import { DEFAULT_AI_SETTINGS, cloneAiSettings, normalizeAiSettings, type AiSetti
 import { isUiTheme, type UiTheme } from "./app/theme";
 
 export type AppTab = "editor" | "settings";
-export type ToolName = "move" | "marquee" | "transform" | "crop" | "brush" | "eraser" | "eyedropper" | "smudge" | "clone-stamp" | "healing-brush" | "text" | "shape" | "lasso" | "polygon-lasso" | "magic-wand";
+export type ToolName = "move" | "marquee" | "transform" | "crop" | "brush" | "eraser" | "fill" | "gradient" | "eyedropper" | "smudge" | "clone-stamp" | "healing-brush" | "text" | "shape" | "lasso" | "polygon-lasso" | "magic-wand";
 export type ColourFormat = "hex" | "rgb" | "hsl";
 export type ExportFormat = "png" | "jpg" | "webp";
 export type CaptureDestination = "new-canvas" | "add-layer" | "clipboard";
@@ -121,6 +121,8 @@ export const DEFAULT_KEYBINDINGS: Record<string, string> = {
   "tool-crop": "C",
   "tool-brush": "B",
   "tool-eraser": "E",
+  "tool-fill": "F",
+  "tool-gradient": "G",
   "tool-eyedropper": "I",
   "tool-smudge": "S",
   "tool-clone-stamp": "K",
@@ -216,6 +218,8 @@ export async function loadSettings(): Promise<VisionSettings> {
     activeTool === "crop" ||
     activeTool === "brush" ||
     activeTool === "eraser" ||
+    activeTool === "fill" ||
+    activeTool === "gradient" ||
     activeTool === "eyedropper" ||
     activeTool === "smudge" ||
     activeTool === "clone-stamp" ||

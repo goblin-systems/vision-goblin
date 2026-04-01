@@ -729,6 +729,9 @@ button svg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  cursor: ew-resize;
+  user-select: none;
+  touch-action: none;
 }
 
 .empty-state[hidden] {
@@ -798,6 +801,9 @@ button svg {
   color: var(--text-heading);
   text-align: center;
   font-family: var(--font-mono);
+  cursor: ew-resize;
+  user-select: none;
+  touch-action: none;
 }
 
 .inline-control-grid {
@@ -1073,6 +1079,52 @@ button svg {
 
 .modal-inline-grid {
   margin-top: var(--space-2);
+}
+
+.gradient-tool-modal-card {
+  max-width: 760px;
+}
+
+.gradient-tool-curve-wrap,
+.gradient-tool-preview-wrap {
+  border: 1px solid var(--border);
+  background: var(--bg-section);
+  overflow: hidden;
+}
+
+.gradient-tool-curve-wrap canvas,
+.gradient-tool-preview-wrap canvas {
+  display: block;
+  width: 100%;
+}
+
+.gradient-tool-curve-wrap canvas {
+  cursor: crosshair;
+}
+
+.gradient-tool-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.gradient-node-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.gradient-node-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 120px) minmax(90px, 1fr) auto auto;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.gradient-node-meta,
+.gradient-node-position {
+  color: var(--text-subtle);
+  font-size: var(--font-size-sm);
 }
 
 @media (max-width: 1180px) {
