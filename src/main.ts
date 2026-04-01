@@ -49,6 +49,7 @@ import { registerCommands, executeCommand, applyKeybindings } from "./editor/com
 import { createSelectionController } from "./editor/selectionController";
 import { createTransformController } from "./editor/transformController";
 import { createGoblinPersonalityController } from "./app/goblin/personalityController";
+import { createPaletteController } from "./app/paletteController";
 
 const documentSession = createDocumentSession();
 const documents = documentSession.documents;
@@ -289,8 +290,21 @@ const editorInteractionController = createEditorInteractionController({
   renderEditorState,
   renderToolState,
   renderBrushUI: updateBrushUI,
+  swapPaletteColours: () => paletteController.swapPrimarySecondary(),
   showToast,
   log: debugLog,
+});
+
+const paletteController = createPaletteController({
+  getSettings: () => settings,
+  persistSettings: async (next, message) => {
+    settings = next;
+    await saveSettings(settings);
+    if (message) debugLog(message, "INFO");
+  },
+  setActiveColour: (colour) => editorInteractionController.setActiveColour(colour),
+  getActiveColour: () => editorInteractionController.getBrushState().activeColour,
+  showToast,
 });
 
 const captureController = createCaptureController({
@@ -679,7 +693,7 @@ async function handleUndo() {
 
   doc.redoStack.push(current);
   await restoreDocumentFromSnapshot(doc, previous);
-  doc.history = ["Undo", ...doc.history].slice(0, 20);
+  doc.historyIndex = Math.min(doc.historyIndex + 1, doc.history.length);
   debugLog(`Undo applied for document '${doc.name}'`, "INFO");
   renderEditorState();
   goblinPersonalityController.signal({ type: "undo-succeeded" });
@@ -704,7 +718,7 @@ async function handleRedo() {
 
   doc.undoStack.push(current);
   await restoreDocumentFromSnapshot(doc, next);
-  doc.history = ["Redo", ...doc.history].slice(0, 20);
+  doc.historyIndex = Math.max(doc.historyIndex - 1, 0);
   debugLog(`Redo applied for document '${doc.name}'`, "INFO");
   renderEditorState();
 }
@@ -881,6 +895,7 @@ function registerEditorCommands() {
     beginRegionSnip: () => captureController.beginRegionSnip(),
     chooseWindowCapture: () => captureController.chooseWindowCapture(),
     captureFullscreen: () => captureController.captureFullscreen(),
+    openManagePalettes: () => paletteController.openManageModal(),
     beginGlobalColourPick: () => captureController.beginGlobalColourPick(),
     clearRecent: documentWorkflowController.clearRecent,
     switchTool,
@@ -979,6 +994,7 @@ async function init() {
   canvasWorkspaceController.bindZoomControls();
   bindDocumentActions();
   editorInteractionController.bind();
+  paletteController.bind();
   inspectorController.bind();
   captureController.bindOverlay();
   canvasWorkspaceController.bindCanvasInteractions();

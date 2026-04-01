@@ -56,6 +56,7 @@ function createDeps(overrides: Partial<RegisterEditorCommandsDeps> = {}): Regist
     beginRegionSnip: overrides.beginRegionSnip ?? vi.fn(),
     chooseWindowCapture: overrides.chooseWindowCapture ?? vi.fn(),
     captureFullscreen: overrides.captureFullscreen ?? vi.fn(),
+    openManagePalettes: overrides.openManagePalettes ?? vi.fn(),
     beginGlobalColourPick: overrides.beginGlobalColourPick ?? vi.fn(),
     clearRecent: overrides.clearRecent ?? vi.fn(),
     switchTool: overrides.switchTool ?? vi.fn(),

@@ -476,6 +476,7 @@ export function createBlankDocument(name: string, width: number, height: number,
     activeLayerId: baseLayer.id,
     selectedLayerIds: [],
     history: ["Created blank canvas"],
+    historyIndex: 0,
     sourcePath: null,
     projectPath: null,
     background,
@@ -540,6 +541,7 @@ export function cloneDocument(doc: DocumentState): DocumentState {
     layers: doc.layers.map(cloneLayer),
     activeLayerId: doc.activeLayerId,
     history: ["Duplicated document", ...doc.history].slice(0, 20),
+    historyIndex: 0,
     sourcePath: null,
     projectPath: null,
     undoStack: [],
@@ -703,6 +705,7 @@ export async function deserializeDocument(payload: SerializedDocument, projectPa
     activeLayerId: payload.activeLayerId,
     selectedLayerIds: payload.selectedLayerIds ? [...payload.selectedLayerIds] : [],
     history: [...payload.history],
+    historyIndex: 0,
     sourcePath: payload.sourcePath,
     projectPath,
     background: payload.background,
@@ -731,13 +734,11 @@ export async function restoreDocumentFromSnapshot(doc: DocumentState, snapshot: 
   doc.name = restored.name;
   doc.width = restored.width;
   doc.height = restored.height;
-  doc.zoom = restored.zoom;
-  doc.panX = restored.panX;
-  doc.panY = restored.panY;
+  // zoom and pan are view state — not restored by undo/redo
   doc.layers = restored.layers;
   doc.activeLayerId = restored.activeLayerId;
   doc.selectedLayerIds = restored.selectedLayerIds ?? [];
-  doc.history = restored.history;
+  // doc.history and doc.historyIndex are managed separately by undo/redo logic
   doc.sourcePath = restored.sourcePath;
   doc.background = restored.background;
   doc.dirty = true;

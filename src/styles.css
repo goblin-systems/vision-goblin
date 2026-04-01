@@ -607,6 +607,10 @@ button svg {
   gap: var(--space-2);
 }
 
+.history-row--undone {
+  opacity: 0.38;
+}
+
 .layer-row {
   cursor: pointer;
 }
@@ -836,6 +840,229 @@ button svg {
 
 .compact-colour-row {
   align-items: center;
+}
+
+/* ── Palette colour field ─────────────────────────────────── */
+
+.palette-colour-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.palette-colour-pair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  position: relative;
+}
+
+.palette-swatch {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  padding: 0;
+}
+
+.palette-swatch.is-active {
+  border-color: var(--text-heading);
+  box-shadow: 0 0 0 2px rgba(108, 99, 255, 0.45);
+}
+
+.palette-swatch--secondary {
+  margin-left: -8px;
+  margin-top: 8px;
+  z-index: 0;
+}
+
+.palette-swatch--primary {
+  z-index: 1;
+}
+
+.palette-swap-btn {
+  margin-left: var(--space-2);
+}
+
+.palette-swap-btn i,
+.palette-swap-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.palette-swatch-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.palette-swatch-strip .swatch-chip {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.palette-swatch-strip .swatch-chip:hover {
+  transform: scale(1.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  z-index: 2;
+  position: relative;
+}
+
+.palette-strip-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.palette-select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Palette modal ────────────────────────────────────────── */
+
+.palette-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 460px;
+  overflow-y: auto;
+  padding: var(--space-3) 0;
+}
+
+.palette-modal-card {
+  border: 1px solid var(--border);
+  background: var(--bg-section);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.palette-modal-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.palette-modal-row-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-modal-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.palette-modal-chip-preview {
+  width: 28px;
+  height: 28px;
+}
+
+.palette-modal-chip-wrap {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+
+.palette-modal-chip-input {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.palette-modal-chip-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.palette-modal-chip-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 0;
+}
+
+.palette-modal-chip-input::-moz-color-swatch {
+  border: none;
+  border-radius: 0;
+}
+
+.palette-modal-chip-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-section);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  padding: 0;
+}
+
+.palette-modal-chip-remove i,
+.palette-modal-chip-remove svg {
+  width: 10px;
+  height: 10px;
+}
+
+.palette-modal-chip-wrap:hover .palette-modal-chip-remove {
+  opacity: 1;
+}
+
+.palette-modal-chip-add {
+  width: 28px;
+  height: 28px;
+  border: 1px dashed var(--border);
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease;
+  padding: 0;
+}
+
+.palette-modal-chip-add:hover {
+  border-color: var(--text-heading);
+}
+
+.palette-modal-chip-add i,
+.palette-modal-chip-add svg {
+  width: 14px;
+  height: 14px;
+}
+
+.palette-modal-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+
+.palette-modal-new .input {
+  flex: 1;
 }
 
 .modal-form-grid {

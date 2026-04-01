@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { artifactToCanvas, buildEnhancementTask, buildGenerationTask, buildSegmentationTask, buildAiProvenance, buildScopedCompositeImageAsset, buildSelectedLayersImageAsset, buildSelectionMaskAsset } from "./editingSupport";
+import { artifactToCanvas, buildEnhancementTask, buildGenerationTask, buildSegmentationTask, buildAiProvenance, buildScopedCompositeImageAsset, buildSelectedLayersImageAsset, buildSelectionMaskAsset, convertAiMaskToAlphaMask } from "./editingSupport";
 import * as documents from "../../editor/documents";
 import type { DocumentState, RasterLayer } from "../../editor/types";
 
@@ -35,6 +35,7 @@ function makeDocument(layers: RasterLayer[]): DocumentState {
     activeLayerId: layers[0]?.id ?? "",
     selectedLayerIds: [],
     history: [],
+    historyIndex: 0,
     sourcePath: null,
     projectPath: null,
     background: "white",
@@ -360,5 +361,218 @@ describe("ai editing support", () => {
     expect(result.debugLabel).toBe("selected-layers");
     expect(result.asset.width).toBe(200);
     expect(selectedSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("convertAiMaskToAlphaMask", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("converts white AI pixels to alpha=255 (selected)", () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = 2;
+    sourceCanvas.height = 1;
+
+    const sourcePixels = new Uint8ClampedArray([
+      255, 255, 255, 255,
+      255, 255, 255, 255,
+    ]);
+
+    const sourceContext = createMockCanvasContext(new ImageData(sourcePixels, 2, 1));
+    const outputCanvas = document.createElement("canvas");
+    const outputContext = createMockCanvasContext(new ImageData(2, 1));
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    getContextSpy.mockImplementation(function (this: HTMLCanvasElement) {
+      if (this === sourceCanvas) {
+        return sourceContext as unknown as CanvasRenderingContext2D;
+      }
+      if (this === outputCanvas) {
+        return outputContext as unknown as CanvasRenderingContext2D;
+      }
+      return null;
+    });
+
+    vi.spyOn(document, "createElement").mockImplementation(((tagName: string) => {
+      if (tagName === "canvas") {
+        return outputCanvas;
+      }
+      return originalCreateElement(tagName);
+    }) as typeof document.createElement);
+
+    const result = convertAiMaskToAlphaMask(sourceCanvas);
+
+    expect(result).toBe(outputCanvas);
+    expect(outputContext.putImageData).toHaveBeenCalledTimes(1);
+    const converted = outputContext.putImageData.mock.calls[0][0] as ImageData;
+    expect(Array.from(converted.data)).toEqual([
+      255, 255, 255, 255,
+      255, 255, 255, 255,
+    ]);
+  });
+
+  it("converts black AI pixels to alpha=0 (not selected)", () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = 2;
+    sourceCanvas.height = 1;
+
+    const sourcePixels = new Uint8ClampedArray([
+      0, 0, 0, 255,
+      0, 0, 0, 255,
+    ]);
+
+    const sourceContext = createMockCanvasContext(new ImageData(sourcePixels, 2, 1));
+    const outputCanvas = document.createElement("canvas");
+    const outputContext = createMockCanvasContext(new ImageData(2, 1));
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    getContextSpy.mockImplementation(function (this: HTMLCanvasElement) {
+      if (this === sourceCanvas) {
+        return sourceContext as unknown as CanvasRenderingContext2D;
+      }
+      if (this === outputCanvas) {
+        return outputContext as unknown as CanvasRenderingContext2D;
+      }
+      return null;
+    });
+
+    vi.spyOn(document, "createElement").mockImplementation(((tagName: string) => {
+      if (tagName === "canvas") {
+        return outputCanvas;
+      }
+      return originalCreateElement(tagName);
+    }) as typeof document.createElement);
+
+    const result = convertAiMaskToAlphaMask(sourceCanvas);
+
+    expect(result).toBe(outputCanvas);
+    expect(outputContext.putImageData).toHaveBeenCalledTimes(1);
+    const converted = outputContext.putImageData.mock.calls[0][0] as ImageData;
+    expect(Array.from(converted.data)).toEqual([
+      0, 0, 0, 0,
+      0, 0, 0, 0,
+    ]);
+  });
+
+  it("correctly converts a mixed mask with white and black pixels", () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = 2;
+    sourceCanvas.height = 2;
+
+    const sourcePixels = new Uint8ClampedArray([
+      255, 255, 255, 255,
+      0, 0, 0, 255,
+      0, 0, 0, 255,
+      255, 255, 255, 255,
+    ]);
+
+    const sourceContext = createMockCanvasContext(new ImageData(sourcePixels, 2, 2));
+    const outputCanvas = document.createElement("canvas");
+    const outputContext = createMockCanvasContext(new ImageData(2, 2));
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    getContextSpy.mockImplementation(function (this: HTMLCanvasElement) {
+      if (this === sourceCanvas) {
+        return sourceContext as unknown as CanvasRenderingContext2D;
+      }
+      if (this === outputCanvas) {
+        return outputContext as unknown as CanvasRenderingContext2D;
+      }
+      return null;
+    });
+
+    vi.spyOn(document, "createElement").mockImplementation(((tagName: string) => {
+      if (tagName === "canvas") {
+        return outputCanvas;
+      }
+      return originalCreateElement(tagName);
+    }) as typeof document.createElement);
+
+    const result = convertAiMaskToAlphaMask(sourceCanvas);
+
+    expect(result).toBe(outputCanvas);
+    expect(outputContext.putImageData).toHaveBeenCalledTimes(1);
+    const converted = outputContext.putImageData.mock.calls[0][0] as ImageData;
+    expect(Array.from(converted.data)).toEqual([
+      255, 255, 255, 255,
+      0, 0, 0, 0,
+      0, 0, 0, 0,
+      255, 255, 255, 255,
+    ]);
+  });
+
+  it("treats gray pixel R=128 as selected (R > 127)", () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = 1;
+    sourceCanvas.height = 1;
+
+    const sourcePixels = new Uint8ClampedArray([128, 128, 128, 255]);
+
+    const sourceContext = createMockCanvasContext(new ImageData(sourcePixels, 1, 1));
+    const outputCanvas = document.createElement("canvas");
+    const outputContext = createMockCanvasContext(new ImageData(1, 1));
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    getContextSpy.mockImplementation(function (this: HTMLCanvasElement) {
+      if (this === sourceCanvas) {
+        return sourceContext as unknown as CanvasRenderingContext2D;
+      }
+      if (this === outputCanvas) {
+        return outputContext as unknown as CanvasRenderingContext2D;
+      }
+      return null;
+    });
+
+    vi.spyOn(document, "createElement").mockImplementation(((tagName: string) => {
+      if (tagName === "canvas") {
+        return outputCanvas;
+      }
+      return originalCreateElement(tagName);
+    }) as typeof document.createElement);
+
+    const result = convertAiMaskToAlphaMask(sourceCanvas);
+
+    expect(result).toBe(outputCanvas);
+    expect(outputContext.putImageData).toHaveBeenCalledTimes(1);
+    const converted = outputContext.putImageData.mock.calls[0][0] as ImageData;
+    expect(Array.from(converted.data)).toEqual([255, 255, 255, 255]);
+  });
+
+  it("treats dark gray pixel R=127 as not selected (R <= 127)", () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = 1;
+    sourceCanvas.height = 1;
+
+    const sourcePixels = new Uint8ClampedArray([127, 127, 127, 255]);
+
+    const sourceContext = createMockCanvasContext(new ImageData(sourcePixels, 1, 1));
+    const outputCanvas = document.createElement("canvas");
+    const outputContext = createMockCanvasContext(new ImageData(1, 1));
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    getContextSpy.mockImplementation(function (this: HTMLCanvasElement) {
+      if (this === sourceCanvas) {
+        return sourceContext as unknown as CanvasRenderingContext2D;
+      }
+      if (this === outputCanvas) {
+        return outputContext as unknown as CanvasRenderingContext2D;
+      }
+      return null;
+    });
+
+    vi.spyOn(document, "createElement").mockImplementation(((tagName: string) => {
+      if (tagName === "canvas") {
+        return outputCanvas;
+      }
+      return originalCreateElement(tagName);
+    }) as typeof document.createElement);
+
+    const result = convertAiMaskToAlphaMask(sourceCanvas);
+
+    expect(result).toBe(outputCanvas);
+    expect(outputContext.putImageData).toHaveBeenCalledTimes(1);
+    const converted = outputContext.putImageData.mock.calls[0][0] as ImageData;
+    expect(Array.from(converted.data)).toEqual([0, 0, 0, 0]);
   });
 });

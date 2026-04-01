@@ -404,10 +404,8 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
       activeColour: brushUiState.activeColour,
       brushSizeInput: byId<HTMLInputElement>("brush-size-range"),
       brushOpacityInput: byId<HTMLInputElement>("brush-opacity-range"),
-      brushColourPreview: byId<HTMLElement>("brush-colour-preview"),
       brushColourValue: byId<HTMLElement>("brush-colour-value"),
-      colourPreview: byId<HTMLElement>("colour-preview"),
-      colourValue: byId<HTMLElement>("colour-value"),
+      primarySwatch: byId<HTMLElement>("palette-primary-swatch"),
     });
   }
 

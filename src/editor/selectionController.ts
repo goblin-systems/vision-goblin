@@ -117,10 +117,13 @@ export function createSelectionController(deps: SelectionControllerDeps) {
     if (!doc?.selectionRect && !doc?.selectionMask) {
       return;
     }
+    doc.undoStack.push(deps.snapshotDocument(doc));
+    doc.redoStack = [];
     doc.selectionRect = null;
     doc.selectionInverted = false;
     doc.selectionPath = null;
     doc.selectionMask = null;
+    pushHistory(doc, "Deselected");
     deps.log(`Cleared selection for '${doc.name}'`, "INFO");
     deps.renderEditorState();
     if (showMessage) {
@@ -134,6 +137,8 @@ export function createSelectionController(deps: SelectionControllerDeps) {
       deps.showToast("No document to select", "error");
       return;
     }
+    doc.undoStack.push(deps.snapshotDocument(doc));
+    doc.redoStack = [];
     doc.selectionRect = { x: 0, y: 0, width: doc.width, height: doc.height };
     doc.selectionShape = "rect";
     doc.selectionInverted = false;
@@ -141,6 +146,7 @@ export function createSelectionController(deps: SelectionControllerDeps) {
     const mask = createMaskCanvas(doc.width, doc.height);
     fillMask(mask);
     doc.selectionMask = mask;
+    pushHistory(doc, "Selected all");
     deps.log(`Selected entire canvas for '${doc.name}'`, "INFO");
     deps.renderEditorState();
     deps.showToast("Selected full canvas", "info");
@@ -152,6 +158,8 @@ export function createSelectionController(deps: SelectionControllerDeps) {
       deps.showToast("No document to invert", "error");
       return;
     }
+    doc.undoStack.push(deps.snapshotDocument(doc));
+    doc.redoStack = [];
     if (doc.selectionMask) {
       invertMask(doc.selectionMask);
       doc.selectionInverted = false;
@@ -169,6 +177,7 @@ export function createSelectionController(deps: SelectionControllerDeps) {
     deps.log(`Inverted selection for '${doc.name}'`, "INFO");
     deps.renderEditorState();
     deps.showToast("Selection inverted", "info");
+    pushHistory(doc, "Inverted selection");
   }
 
   function magicWandSelect(docX: number, docY: number) {
@@ -222,6 +231,8 @@ export function createSelectionController(deps: SelectionControllerDeps) {
     const tmpMask = createMaskCanvas(doc.width, doc.height);
     rasterizeFloodFillToMask(tmpMask, mask, width, height, layer.x, layer.y);
 
+    const snapshot = deps.snapshotDocument(doc);
+
     if (mode === "replace" || !doc.selectionMask) {
       doc.selectionMask = tmpMask;
     } else {
@@ -236,12 +247,15 @@ export function createSelectionController(deps: SelectionControllerDeps) {
       return;
     }
 
+    doc.undoStack.push(snapshot);
+    doc.redoStack = [];
     doc.selectionRect = bounds;
     doc.selectionShape = "rect";
     doc.selectionInverted = false;
     doc.selectionPath = null;
     doc.dirty = true;
     clearCapturedSelectionMode();
+    pushHistory(doc, "Magic wand selection");
     deps.log(`Magic wand selected ${bounds.width}x${bounds.height} at tolerance ${tol}`, "INFO");
     deps.showToast(`Selected ${bounds.width}x${bounds.height}`, "info");
     deps.renderEditorState();
@@ -270,6 +284,7 @@ export function createSelectionController(deps: SelectionControllerDeps) {
       return;
     }
     const mode = getCapturedOrEffectiveMode();
+    const snapshot = deps.snapshotDocument(doc);
     const tmpMask = createMaskCanvas(doc.width, doc.height);
     rasterizePathToMask(tmpMask, doc.selectionPath);
     if (mode === "replace" || !doc.selectionMask) {
@@ -285,6 +300,11 @@ export function createSelectionController(deps: SelectionControllerDeps) {
       doc.selectionMask = null;
     }
     clearCapturedSelectionMode();
+    if (maskBounds) {
+      doc.undoStack.push(snapshot);
+      doc.redoStack = [];
+      pushHistory(doc, "Lasso selection");
+    }
     deps.log("Lasso selection committed", "INFO");
     deps.showToast(`Lasso selection ${maskBounds?.width ?? 0}x${maskBounds?.height ?? 0}`, "info");
     deps.renderEditorState();

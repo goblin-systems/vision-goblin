@@ -55,6 +55,7 @@ export interface RegisterEditorCommandsDeps {
   beginRegionSnip: () => void | Promise<void>;
   chooseWindowCapture: () => void | Promise<void>;
   captureFullscreen: () => void | Promise<void>;
+  openManagePalettes: () => void;
   beginGlobalColourPick: () => void | Promise<void>;
   clearRecent: () => void | Promise<void>;
   switchTool: (tool: ToolName) => void | Promise<void>;
@@ -216,6 +217,7 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
     { id: "open-ai-jobs", label: "AI: Open Jobs", category: "ai", enabled: () => true, execute: () => void deps.openAiJobs() },
     { id: "open-ai-settings", label: "AI: Open Settings", category: "ai", enabled: () => true, execute: () => void deps.openAiSettings() },
 
+    { id: "manage-palettes", label: "Manage Palettes", category: "tool", enabled: () => true, execute: () => deps.openManagePalettes() },
     { id: "capture-region", label: "Capture region", category: "tool", enabled: () => true, execute: () => void deps.beginRegionSnip() },
     { id: "capture-window", label: "Capture window", category: "tool", enabled: () => true, execute: () => void deps.chooseWindowCapture() },
     { id: "capture-fullscreen", label: "Capture full screen", category: "tool", enabled: () => true, execute: () => void deps.captureFullscreen() },

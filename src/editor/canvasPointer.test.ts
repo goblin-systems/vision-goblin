@@ -343,4 +343,31 @@ describe("canvasPointer marquee drag", () => {
     expect(pointerState.mode).toBe("marquee");
     expect(doc.selectionRect).toEqual({ x: 10, y: 20, width: 1, height: 1 });
   });
+
+  it("pushes 'Marquee selection' to undo history after a valid drag", () => {
+    const { controller, doc } = createMarqueeController({ modifiers: { rotate: false, perfect: false } });
+
+    controller.handlePointerDown({ clientX: 10, clientY: 20, button: 0 } as PointerEvent);
+    controller.handlePointerMove({ clientX: 40, clientY: 50 } as PointerEvent);
+    controller.handlePointerUp();
+
+    expect(doc.undoStack.length).toBeGreaterThan(0);
+    expect(doc.history[0]).toBe("Marquee selection");
+  });
+
+  it("pushes 'Deselected' to undo history when clicking to clear an active selection", () => {
+    const { controller, doc } = createMarqueeController({ selectionMode: "replace" });
+
+    // Seed an active selection so there is something to clear
+    doc.selectionRect = { x: 5, y: 5, width: 30, height: 30 };
+    const undoCountBefore = doc.undoStack.length;
+
+    // Click without dragging — produces a 1×1 rect which is < 2, triggering the clear path
+    controller.handlePointerDown({ clientX: 60, clientY: 60, button: 0 } as PointerEvent);
+    controller.handlePointerUp();
+
+    expect(doc.selectionRect).toBeNull();
+    expect(doc.undoStack.length).toBe(undoCountBefore + 1);
+    expect(doc.history[0]).toBe("Deselected");
+  });
 });

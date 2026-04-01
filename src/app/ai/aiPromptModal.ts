@@ -833,6 +833,51 @@ export function aiPromptEnhancement(
   });
 }
 
+/* ---------- aiPromptInputScope ---------- */
+
+export function aiPromptInputScope(
+  title: string,
+  message: string,
+): Promise<AiInputScope | null> {
+  const id = `ai-prompt-input-scope-${++modalCounter}`;
+  const inputScopeId = `${id}-scope`;
+
+  const backdrop = createBackdrop(
+    id,
+    `<div class="modal-card">
+      <div class="modal-header">
+        <h3>${escapeHtml(title)}</h3>
+        <button class="icon-btn modal-close-btn modal-btn-reject" aria-label="Close">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <p class="modal-body-text">${escapeHtml(message)}</p>
+      <div class="modal-body">
+        ${createInputScopeField(inputScopeId)}
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-btn modal-btn-reject">Cancel</button>
+        <button class="modal-btn-accept">Confirm</button>
+      </div>
+    </div>`,
+  );
+
+  return new Promise<AiInputScope | null>((resolve) => {
+    const settle = (value: AiInputScope | null) => {
+      removeBackdrop(backdrop);
+      resolve(value);
+    };
+
+    openModal({
+      backdrop,
+      onAccept: () => {
+        settle(readInputScope(backdrop, inputScopeId));
+      },
+      onReject: () => settle(null),
+    });
+  });
+}
+
 /* ---------- escaping ---------- */
 
 function escapeHtml(text: string): string {

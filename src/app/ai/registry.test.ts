@@ -52,9 +52,12 @@ describe("AI provider registry", () => {
       "https://example.test/v1/images/generations",
       expect.objectContaining({
         method: "POST",
+        signal: undefined,
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "gpt-image-1",
-          prompt: "A goblin sketching thumbnails",
+          prompt:
+            "A goblin sketching thumbnails\n\nLayout requirements: Output image must be exactly 512x512px.",
           n: 1,
           size: "1024x1024",
           output_format: "png",

@@ -240,6 +240,17 @@ export function createDistortModalController(deps: DistortModalControllerDeps): 
     let lastPoint = { x: 0, y: 0 };
     let dragMode: LiquifyBrushMode = "push";
 
+    // Scale brush size to image dimensions for consistent feel across image sizes.
+    // A slider value of 50 on a 1000px image covers the same visual proportion
+    // as 50 on a 200px image without this scale.
+    const brushSizeScale = Math.max(sourceWidth, sourceHeight) / 500;
+
+    currentBrushSize = Number(sizeRange.value) * brushSizeScale;
+    // Scale strength up so max setting (100) gives clearly visible warping.
+    // Raw value/100 = max 1.0 produces ~1px displacement at center per event,
+    // which is imperceptible. Multiplying by 8 gives up to 8px per event at center.
+    currentStrength = (Number(strengthRange.value) / 100) * 8;
+
     const redrawPreview = () => {
       const temp = document.createElement("canvas");
       temp.width = sourceWidth;
@@ -303,12 +314,12 @@ export function createDistortModalController(deps: DistortModalControllerDeps): 
     };
 
     const onSizeInput = () => {
-      currentBrushSize = Number(sizeRange.value);
-      sizeValue.textContent = String(currentBrushSize);
+      currentBrushSize = Number(sizeRange.value) * brushSizeScale;
+      sizeValue.textContent = String(Number(sizeRange.value));
     };
 
     const onStrengthInput = () => {
-      currentStrength = Number(strengthRange.value) / 100;
+      currentStrength = (Number(strengthRange.value) / 100) * 8;
       strengthValue.textContent = strengthRange.value;
     };
 

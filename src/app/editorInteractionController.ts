@@ -32,6 +32,7 @@ export interface EditorInteractionControllerDeps {
   getActiveDocument: () => DocumentState | null;
   getActiveTool: () => ToolName;
   getPointerState: () => PointerState;
+  swapPaletteColours?: () => void;
   getTransformDraft: () => object | null;
   ensureTransformDraftForActiveLayer: () => object | null;
   updateTransformDraftInputs: () => void;
@@ -179,6 +180,12 @@ export function createEditorInteractionController(deps: EditorInteractionControl
           deps.deleteSelectedArea();
           return;
         }
+      }
+
+      if (event.key === "x" && !event.ctrlKey && !event.metaKey && !event.altKey && shouldDispatchEditorShortcut(event.target, event)) {
+        event.preventDefault();
+        deps.swapPaletteColours?.();
+        return;
       }
 
       if (shouldDispatchEditorShortcut(event.target, event)) {

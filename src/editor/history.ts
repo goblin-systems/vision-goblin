@@ -4,6 +4,11 @@ let activeOperationSnapshot: string | null = null;
 let activeOperationChanged = false;
 
 export function pushHistory(doc: DocumentState, entry: string) {
+  if (doc.historyIndex > 0) {
+    // discard undone future entries before adding new action
+    doc.history = doc.history.slice(doc.historyIndex);
+    doc.historyIndex = 0;
+  }
   doc.history = [entry, ...doc.history].slice(0, 20);
   doc.dirty = true;
 }

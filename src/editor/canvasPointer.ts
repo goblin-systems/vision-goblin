@@ -1,4 +1,4 @@
-import { beginDocumentOperation, cancelDocumentOperation, commitDocumentOperation, markDocumentOperationChanged } from "./history";
+import { beginDocumentOperation, cancelDocumentOperation, commitDocumentOperation, markDocumentOperationChanged, pushHistory } from "./history";
 import { buildCropRect, getDocCoordinates } from "./geometry";
 import type { DocumentState, Layer, PointerState, RasterLayer, Rect, SelectionPath, TransformDraft, TransformHandle } from "./types";
 import { applyCropToDocument, buildTransformPreview, snapshotDocument, createLayerCanvas, compositeDocumentOnto, getLayerContext, refreshLayerCanvas, syncLayerSource } from "./documents";
@@ -1173,6 +1173,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         const nextCrop = { ...doc.cropRect };
         applyCropToDocument(doc, nextCrop);
         doc.dirty = true;
+        pushHistory(doc, `Cropped canvas to ${Math.round(nextCrop.width)}×${Math.round(nextCrop.height)}`);
         deps.log(`Crop applied ${nextCrop.width}x${nextCrop.height}`, "INFO");
       }
       cancelDocumentOperation();
@@ -1184,11 +1185,19 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         const mode = deps.getSelectionMode();
         if (mode === "replace") {
           // Click without drag in replace mode clears the selection
+          const hadSelection = !!(doc.selectionRect || doc.selectionMask);
+          if (hadSelection) {
+            doc.undoStack.push(snapshotDocument(doc));
+            doc.redoStack = [];
+          }
           doc.selectionRect = null;
           doc.selectionMask = null;
           doc.selectionPath = null;
           doc.selectionInverted = false;
           deps.log("Selection cleared (click)", "INFO");
+          if (hadSelection) {
+            pushHistory(doc, "Deselected");
+          }
         } else if (doc.selectionMask) {
           // Non-replace mode: restore bounding rect, ignore the tiny marquee
           doc.selectionRect = maskBoundingRect(doc.selectionMask);
@@ -1210,7 +1219,11 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
           const dy = deps.pointerState.lastDocY - deps.pointerState.startDocY;
           rotation = Math.atan2(dy, dx);
         }
-        
+
+        // Snapshot before mutating selection state
+        doc.undoStack.push(snapshotDocument(doc));
+        doc.redoStack = [];
+
         // Rasterize the new marquee shape into a temp mask
         const tmpMask = createMaskCanvas(doc.width, doc.height);
         rasterizeRectToMask(tmpMask, newRect, sides, rotation, mods.perfect, axisAlignedRect);
@@ -1240,6 +1253,9 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
           doc.selectionMask = null;
           deps.log("Selection cleared after marquee operation", "INFO");
         }
+
+        const historyLabel = mode === "replace" ? "Marquee selection" : `Marquee selection (${mode})`;
+        pushHistory(doc, historyLabel);
       }
       cancelDocumentOperation();
     } else {

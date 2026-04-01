@@ -5,6 +5,10 @@
 - Status: active
 - Summary or outcome: improve re-editing quality and reduce destructive workarounds in partially shipped core editing workflows.
 
+## Shipped Enhancements
+
+- Selection-scoped destructive adjustments: when an active selection is present, `commitDestructiveAdjustment` composites the adjusted result through the selection mask instead of replacing the full layer. Affected pixels outside the selection are preserved. Unit tests added to `src/app/adjustmentModalController.test.ts`.
+
 ## Remaining Scope
 
 - `F1.19` Healing brush: improve retouch quality on harder cases, add stronger sampling and blending controls, and reduce edge or texture artifacts.

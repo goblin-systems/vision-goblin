@@ -2,11 +2,86 @@ import { load, type Store } from "@tauri-apps/plugin-store";
 import { DEFAULT_AI_SETTINGS, cloneAiSettings, normalizeAiSettings, type AiSettings } from "./app/ai/config";
 import { isUiTheme, type UiTheme } from "./app/theme";
 
-export type AppTab = "editor" | "tools" | "settings";
+export type AppTab = "editor" | "settings";
 export type ToolName = "move" | "marquee" | "transform" | "crop" | "brush" | "eraser" | "eyedropper" | "smudge" | "clone-stamp" | "healing-brush" | "text" | "shape" | "lasso" | "polygon-lasso" | "magic-wand";
 export type ColourFormat = "hex" | "rgb" | "hsl";
 export type ExportFormat = "png" | "jpg" | "webp";
 export type CaptureDestination = "new-canvas" | "add-layer" | "clipboard";
+
+export interface ColourPalette {
+  id: string;
+  name: string;
+  colours: string[];
+}
+
+export const DEFAULT_PALETTES: ColourPalette[] = [
+  {
+    id: "goblin-neon",
+    name: "Goblin Neon",
+    colours: ["#6C63FF", "#1A1A2E", "#4ADE80", "#F59E0B", "#EF4444", "#06B6D4", "#A855F7", "#EC4899", "#14B8A6", "#F97316"],
+  },
+  {
+    id: "earth-tones",
+    name: "Earth Tones",
+    colours: ["#8B5E3C", "#F5F0EB", "#C4956A", "#D4A574", "#6B7B3A", "#A0522D", "#DEB887", "#556B2F", "#CD853F", "#8FBC8F"],
+  },
+  {
+    id: "pastel-dream",
+    name: "Pastel Dream",
+    colours: ["#B4A7D6", "#FDFCFB", "#FFB3BA", "#FFDFBA", "#FFFFBA", "#BAFFC9", "#BAE1FF", "#E8BAFF", "#FFD1DC", "#C9F0FF"],
+  },
+  {
+    id: "midnight-aurora",
+    name: "Midnight Aurora",
+    colours: ["#00E5FF", "#0A0E1A", "#00E676", "#7C4DFF", "#FF4081", "#00BFA5", "#FFD740", "#536DFE", "#FF6E40", "#B388FF"],
+  },
+  {
+    id: "sunset-coast",
+    name: "Sunset Coast",
+    colours: ["#FF6B35", "#1B1B3A", "#F7931E", "#FFCC33", "#FF3366", "#FF7BAC", "#C1440E", "#FFE0B2", "#D4145A", "#FFC107"],
+  },
+  {
+    id: "forest-moss",
+    name: "Forest Moss",
+    colours: ["#2D6A4F", "#F0F4F0", "#40916C", "#52B788", "#74C69D", "#95D5B2", "#1B4332", "#B7E4C7", "#D8F3DC", "#081C15"],
+  },
+  {
+    id: "retrowave",
+    name: "Retrowave",
+    colours: ["#FF00FF", "#0D0221", "#FF6EC7", "#8B5CF6", "#06D6A0", "#FFD166", "#EF476F", "#00F5D4", "#F72585", "#7209B7"],
+  },
+  {
+    id: "ink-wash",
+    name: "Ink Wash",
+    colours: ["#2C2C2C", "#F5F5F0", "#4A4A4A", "#6B6B6B", "#8C8C8C", "#ABABAB", "#C8C8C8", "#E0E0E0", "#1A1A1A", "#D5D5CF"],
+  },
+];
+
+function clonePalettes(palettes: ColourPalette[]): ColourPalette[] {
+  return palettes.map((p) => ({ ...p, colours: [...p.colours] }));
+}
+
+function isValidPalette(p: unknown): p is ColourPalette {
+  if (!p || typeof p !== "object") return false;
+  const obj = p as Record<string, unknown>;
+  return (
+    typeof obj.id === "string" &&
+    typeof obj.name === "string" &&
+    Array.isArray(obj.colours) &&
+    obj.colours.every((c: unknown) => typeof c === "string") &&
+    obj.colours.length >= 2 &&
+    obj.colours.length <= 10
+  );
+}
+
+/** Migrate old palettes that had separate primary/secondary fields. */
+function migratePalette(p: ColourPalette & { primary?: string; secondary?: string }): ColourPalette {
+  if (p.primary && p.secondary) {
+    const merged = [p.primary, p.secondary, ...p.colours];
+    return { id: p.id, name: p.name, colours: merged.slice(0, 10) };
+  }
+  return p;
+}
 
 export interface VisionSettings {
   lastTab: AppTab;
@@ -35,6 +110,8 @@ export interface VisionSettings {
   keybindings: Record<string, string>;
   ai: AiSettings;
   uiTheme: UiTheme;
+  palettes: ColourPalette[];
+  activePaletteId: string;
 }
 
 export const DEFAULT_KEYBINDINGS: Record<string, string> = {
@@ -98,6 +175,8 @@ const DEFAULTS: VisionSettings = {
   keybindings: { ...DEFAULT_KEYBINDINGS },
   ai: cloneAiSettings(DEFAULT_AI_SETTINGS),
   uiTheme: "goblin" as UiTheme,
+  palettes: clonePalettes(DEFAULT_PALETTES),
+  activePaletteId: "goblin-neon",
 };
 
 let store: Store | null = null;
@@ -116,6 +195,7 @@ export function getDefaultSettings(): VisionSettings {
     recentProjects: [...DEFAULTS.recentProjects],
     keybindings: { ...DEFAULTS.keybindings },
     ai: cloneAiSettings(DEFAULTS.ai),
+    palettes: clonePalettes(DEFAULTS.palettes),
   };
 }
 
@@ -123,8 +203,8 @@ export async function loadSettings(): Promise<VisionSettings> {
   const next = getDefaultSettings();
   const s = await getStore();
 
-  const lastTab = await s.get<AppTab>("lastTab");
-  if (lastTab === "editor" || lastTab === "tools" || lastTab === "settings") {
+  const lastTab = await s.get<string>("lastTab");
+  if (lastTab === "editor" || lastTab === "settings") {
     next.lastTab = lastTab;
   }
 
@@ -247,6 +327,24 @@ export async function loadSettings(): Promise<VisionSettings> {
   const uiTheme = await s.get<unknown>("uiTheme");
   if (isUiTheme(uiTheme)) next.uiTheme = uiTheme;
 
+  const palettes = await s.get<unknown[]>("palettes");
+  if (Array.isArray(palettes)) {
+    const valid = palettes.filter(isValidPalette).map(migratePalette);
+    if (valid.length > 0) next.palettes = valid.map((p) => ({ ...p, colours: [...p.colours] }));
+  }
+  // Merge any new default palettes that aren't in the loaded set
+  const loadedIds = new Set(next.palettes.map((p) => p.id));
+  for (const dp of DEFAULT_PALETTES) {
+    if (!loadedIds.has(dp.id)) {
+      next.palettes.push({ ...dp, colours: [...dp.colours] });
+    }
+  }
+
+  const activePaletteId = await s.get<string>("activePaletteId");
+  if (typeof activePaletteId === "string" && next.palettes.some((p) => p.id === activePaletteId)) {
+    next.activePaletteId = activePaletteId;
+  }
+
   return next;
 }
 
@@ -278,5 +376,7 @@ export async function saveSettings(settings: VisionSettings): Promise<void> {
   await s.set("keybindings", settings.keybindings);
   await s.set("ai", settings.ai);
   await s.set("uiTheme", settings.uiTheme);
+  await s.set("palettes", settings.palettes);
+  await s.set("activePaletteId", settings.activePaletteId);
   await s.save();
 }

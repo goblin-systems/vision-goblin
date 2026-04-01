@@ -331,6 +331,11 @@
                 <span class="nav-option-label">Pick colour from screen</span>
                 <span class="nav-option-shortcut">Ctrl+Shift+C</span>
               </button>
+              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="manage-palettes">
+                <span class="nav-option-icon"><i data-lucide="palette"></i></span>
+                <span class="nav-option-label">Manage Palettes</span>
+              </button>
             </div>
           </div>
           <div class="nav-item">
@@ -442,7 +447,6 @@
 
         <section class="top-tabs" aria-label="Primary sections">
           <button class="top-tab is-active" type="button" data-tab-trigger="editor">Editor</button>
-          <button class="top-tab" type="button" data-tab-trigger="tools">Tools</button>
           <button class="top-tab" type="button" data-tab-trigger="settings">Settings</button>
         </section>
       </div>
@@ -467,7 +471,6 @@
             <aside class="editor-tools-pane">
               <div class="pane-heading-row">
                 <h3>Tools</h3>
-                <span class="badge default">phase 1</span>
               </div>
               <div id="tool-grid" class="tool-grid">
                 <button class="icon-btn icon-btn-lg tool-btn is-active" type="button" data-tool="move" aria-label="Move tool" title="Move tool">
@@ -523,7 +526,6 @@
               <div class="mini-panel">
                 <div class="pane-heading-row">
                   <h4>Tool settings</h4>
-                  <span class="badge default">live</span>
                 </div>
                 <p id="tool-settings-empty" class="hint" hidden>Select a tool to see relevant settings.</p>
                 <p id="healing-tool-hint" class="hint" hidden>Paint over dust and blemishes to blend them with nearby colour and texture.</p>
@@ -620,11 +622,21 @@
                   <span>Brush opacity</span>
                   <input id="brush-opacity-range" type="range" min="5" max="100" step="5" value="100" />
                 </label>
-                <div id="brush-colour-field" class="colour-preview-row compact-colour-row">
-                  <div id="brush-colour-preview" class="colour-preview mini-preview"></div>
-                  <div>
-                    <div id="brush-colour-value" class="colour-value compact-colour-value">#6C63FF</div>
-                    <p class="hint">Eyedropper updates the active paint colour.</p>
+                <div id="brush-colour-field" class="palette-colour-field">
+                  <div class="palette-colour-pair">
+                    <button id="palette-primary-swatch" class="palette-swatch palette-swatch--primary is-active" type="button" title="Primary colour" style="background:#6C63FF"></button>
+                    <button id="palette-secondary-swatch" class="palette-swatch palette-swatch--secondary" type="button" title="Secondary colour" style="background:#1A1A2E"></button>
+                    <button id="palette-swap-btn" class="icon-btn palette-swap-btn" type="button" title="Swap primary / secondary (X)" aria-label="Swap colours">
+                      <i data-lucide="arrow-left-right"></i>
+                    </button>
+                  </div>
+                  <div id="brush-colour-value" class="colour-value compact-colour-value">#6C63FF</div>
+                  <div id="palette-swatch-strip" class="palette-swatch-strip"></div>
+                  <div class="palette-strip-footer">
+                    <select id="palette-select" class="palette-select"></select>
+                    <button id="manage-palettes-btn" class="icon-btn" type="button" title="Manage palettes" aria-label="Manage palettes">
+                      <i data-lucide="settings-2"></i>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -758,7 +770,6 @@
               <div id="effects-inspector" class="mini-panel" hidden>
                 <div class="pane-heading-row">
                   <h4>Effects</h4>
-                  <span class="badge beta">live</span>
                 </div>
                 <div id="effects-list"></div>
                 <div class="inline-control-grid" style="gap:4px; margin-top:6px">
@@ -799,7 +810,7 @@
                 <div class="empty-state-card">
                   <span class="badge default">workspace boot</span>
                   <h3>No documents open</h3>
-                  <p class="hint">Create a new canvas or duplicate a starter tab to keep building the phase 1 editor workflow.</p>
+                  <p class="hint">Create a new canvas or open an image to get started.</p>
                   <div class="stack-actions">
                     <button id="empty-new-doc-btn" class="secondary-btn" type="button"><i data-lucide="file-plus-2"></i><span>New canvas</span></button>
                     <button id="empty-restore-docs-btn" class="secondary-btn" type="button"><i data-lucide="files"></i><span>Load starter tabs</span></button>
@@ -873,41 +884,6 @@
               <button class="icon-btn icon-btn-sm" type="button" data-zoom-step="in" aria-label="Zoom in" title="Zoom in"><i data-lucide="plus"></i></button>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section class="tab-panel" data-tab-panel="tools">
-        <div class="tools-grid">
-          <section class="settings-section">
-            <div class="section-heading-row">
-              <h2>Colour Palette</h2>
-              <span class="badge default">foundation</span>
-            </div>
-            <div class="colour-preview-row">
-              <div id="colour-preview" class="colour-preview"></div>
-              <div>
-                <div id="colour-value" class="colour-value">#6C63FF</div>
-                <p class="hint">Pick from preset swatches or use Tool &gt; Pick colour from screen.</p>
-              </div>
-            </div>
-            <div class="stack-actions compact-actions">
-              <button class="secondary-btn" type="button" data-colour-swatch="#6C63FF"><i data-lucide="swatch-book"></i><span>Primary</span></button>
-              <button class="secondary-btn" type="button" data-colour-swatch="#4ADE80"><i data-lucide="leaf"></i><span>Accent</span></button>
-              <button class="secondary-btn" type="button" data-colour-swatch="#F59E0B"><i data-lucide="sun-medium"></i><span>Warm</span></button>
-              <button class="secondary-btn" type="button" data-colour-swatch="#E5E7EB"><i data-lucide="circle"></i><span>Neutral</span></button>
-            </div>
-          </section>
-
-          <section class="settings-section tools-wide-card">
-            <h2>Phase 1 Execution Track</h2>
-            <ul class="compact-list spaced-list">
-              <li>Shell and tabbed navigation are in place.</li>
-              <li>Editor state now has document tabs, tools, layers, history, and zoom controls.</li>
-              <li>Next build steps: file IO, canvas interactions, actual raster operations, and native utilities.</li>
-            </ul>
-          </section>
-
-
         </div>
       </section>
 
@@ -1115,10 +1091,9 @@
 
           <section class="settings-section settings-wide-card">
             <div class="section-heading-row">
-              <h2>Phase 1 Notes</h2>
+              <h2>Application</h2>
               <button id="reset-defaults-btn" class="secondary-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset defaults</span></button>
             </div>
-            <p class="hint">This settings panel intentionally mirrors the existing Prompt Goblin card language while shifting the content toward editor workflow defaults.</p>
           </section>
         </div>
       </section>
@@ -1390,8 +1365,8 @@
           <p class="modal-body-text">Apply a Gaussian blur to the active layer.</p>
           <div class="modal-form-grid">
             <label class="field-block">
-              <span>Radius <output id="blur-radius-value">0</output>px</span>
-              <input id="blur-radius-range" type="range" min="0" max="50" step="1" value="0" />
+              <span>Radius <output id="blur-radius-value">0</output></span>
+              <input id="blur-radius-range" type="range" min="0" max="100" step="1" value="0" />
             </label>
           </div>
           <div class="modal-footer">
@@ -1846,6 +1821,26 @@
           <div class="modal-footer">
             <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
             <button id="liq-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="palette-modal" class="modal-backdrop" hidden>
+        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="palette-modal-title">
+          <div class="modal-header">
+            <h3 id="palette-modal-title">Manage Palettes</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div id="palette-modal-list" class="palette-modal-list"></div>
+          <div class="nav-divider"></div>
+          <div class="palette-modal-new">
+            <input id="palette-new-name" type="text" class="input" placeholder="New palette name" maxlength="32" />
+            <button id="palette-new-btn" class="secondary-btn" type="button"><i data-lucide="plus"></i><span>Create</span></button>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Close</button>
           </div>
         </div>
       </div>

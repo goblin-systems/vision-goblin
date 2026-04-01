@@ -117,10 +117,10 @@ export function applyHueSaturation(source: ImageData, params: HueSaturationParam
 /**
  * Box blur approximation of Gaussian blur (3-pass for quality).
  * Much faster than true Gaussian and visually indistinguishable for most use cases.
+ * @internal Takes a raw sigma value directly — use `applyGaussianBlur` for the UI entry point.
  */
-export function applyGaussianBlur(source: ImageData, params: GaussianBlurParams): ImageData {
-  const { radius } = params;
-  if (radius < 1) return new ImageData(new Uint8ClampedArray(source.data), source.width, source.height);
+function applyGaussianBlurSigma(source: ImageData, sigma: number): ImageData {
+  if (sigma < 0.3) return new ImageData(new Uint8ClampedArray(source.data), source.width, source.height);
 
   const w = source.width;
   const h = source.height;
@@ -128,7 +128,7 @@ export function applyGaussianBlur(source: ImageData, params: GaussianBlurParams)
   const dst = new Uint8ClampedArray(src.length);
 
   // Compute box sizes for 3-pass approximation
-  const boxes = boxesForGauss(radius, 3);
+  const boxes = boxesForGauss(sigma, 3);
 
   let input = src;
   let output = dst;
@@ -142,6 +142,23 @@ export function applyGaussianBlur(source: ImageData, params: GaussianBlurParams)
   }
 
   return new ImageData(input, w, h);
+}
+
+/**
+ * Applies Gaussian blur using a UI-friendly radius parameter (0–100).
+ * Maps the slider value through a quadratic curve so low values produce
+ * a barely-visible blur and the full range spans a useful perceptual spread:
+ *   radius 0   → sigma 0    (no blur)
+ *   radius 1   → sigma 0.0025 (below threshold, unchanged)
+ *   radius 10  → sigma ~0.25 (very soft)
+ *   radius 50  → sigma ~6.25 (strong)
+ *   radius 100 → sigma 25   (very strong)
+ */
+export function applyGaussianBlur(source: ImageData, params: GaussianBlurParams): ImageData {
+  const { radius } = params;
+  // Map UI radius (0–100) to sigma with a soft quadratic curve
+  const sigma = (radius / 100) * (radius / 100) * 25;
+  return applyGaussianBlurSigma(source, sigma);
 }
 
 function boxesForGauss(sigma: number, n: number): number[] {
@@ -256,7 +273,7 @@ export function applySharpen(source: ImageData, params: SharpenParams): ImageDat
   const { amount, radius } = params;
   if (amount <= 0 || radius < 0.1) return new ImageData(new Uint8ClampedArray(source.data), source.width, source.height);
 
-  const blurred = applyGaussianBlur(source, { radius });
+  const blurred = applyGaussianBlurSigma(source, radius);
   const result = new ImageData(new Uint8ClampedArray(source.data), source.width, source.height);
   const data = result.data;
   const blurData = blurred.data;

@@ -1,8 +1,9 @@
 import { createLayerCanvas, snapshotDocument, syncLayerSource } from "../../editor/documents";
+import { isMaskEmpty, maskBoundingRect } from "../../editor/selection";
 import type { DocumentState, Layer } from "../../editor/types";
 import type { AiController } from "./controller";
 import type { AiInputScope, AiTask } from "./types";
-import { aiPromptTextWithInputScope, aiPromptSelect, aiPromptOutpaintWithInputScope, aiPromptEnhancement, aiPromptRemoveBackgroundWithInputScope, aiPromptThumbnailWithInputScope } from "./aiPromptModal";
+import { aiPromptTextWithInputScope, aiPromptSelect, aiPromptOutpaintWithInputScope, aiPromptEnhancement, aiPromptRemoveBackgroundWithInputScope, aiPromptThumbnailWithInputScope, aiPromptInputScope } from "./aiPromptModal";
 import {
   addRasterLayerFromCanvas,
   applyMaskToLayer,
@@ -174,12 +175,31 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
       return null;
     }
     deps.saveDebugImage(artifact.data, "AI selection", "output", "mask");
+    const maskCanvas = await artifactToCanvas(artifact, {
+      expectedWidth: doc.width,
+      expectedHeight: doc.height,
+    });
+    deps.log("AI segmentation: converted AI white/black mask to alpha-channel mask");
+    deps.log(`AI segmentation mask diagnostics: rawArtifact=${artifact.width ?? "unknown"}×${artifact.height ?? "unknown"}, outputCanvas=${maskCanvas.width}×${maskCanvas.height}`);
+    const empty = isMaskEmpty(maskCanvas);
+    const boundingRect = maskBoundingRect(maskCanvas);
+    deps.log(`AI segmentation mask diagnostics: isEmpty=${empty}, boundingRect=${boundingRect ? `{x:${boundingRect.x}, y:${boundingRect.y}, w:${boundingRect.width}, h:${boundingRect.height}}` : "null"}`);
+    const maskCtx = maskCanvas.getContext("2d");
+    if (maskCtx) {
+      const maskData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+      const totalPixels = maskCanvas.width * maskCanvas.height;
+      let opaquePixels = 0;
+      for (let i = 3; i < maskData.data.length; i += 4) {
+        if (maskData.data[i] > 0) {
+          opaquePixels++;
+        }
+      }
+      const coverage = totalPixels > 0 ? ((opaquePixels / totalPixels) * 100).toFixed(2) : "0.00";
+      deps.log(`AI segmentation mask diagnostics: pixelCoverage=${coverage}% (${opaquePixels}/${totalPixels})`);
+    }
     return {
       response,
-      mask: await artifactToCanvas(artifact, {
-        expectedWidth: doc.width,
-        expectedHeight: doc.height,
-      }),
+      mask: maskCanvas,
     };
   }
 
@@ -189,7 +209,11 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
 
   async function selectSubject() {
     deps.log("AI select subject: starting");
-    const result = await runSegmentation("subject");
+    const inputScope = await aiPromptInputScope("AI: Select Subject", "Choose input scope");
+    if (!inputScope) {
+      return;
+    }
+    const result = await runSegmentation("subject", undefined, inputScope);
     if (!result) {
       return;
     }
@@ -204,7 +228,11 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
 
   async function selectBackground() {
     deps.log("AI select background: starting");
-    const result = await runSegmentation("background", "background");
+    const inputScope = await aiPromptInputScope("AI: Select Background", "Choose input scope");
+    if (!inputScope) {
+      return;
+    }
+    const result = await runSegmentation("background", "background", inputScope);
     if (!result) {
       return;
     }

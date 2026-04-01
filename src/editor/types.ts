@@ -243,6 +243,7 @@ export interface DocumentState {
   /** IDs of layers included in a multi-selection (always includes activeLayerId when non-empty). */
   selectedLayerIds: string[];
   history: string[];
+  historyIndex: number;
   sourcePath: string | null;
   projectPath: string | null;
   background: "transparent" | "white";

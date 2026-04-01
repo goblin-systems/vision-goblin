@@ -2,6 +2,7 @@ import { closeModal, openModal } from "@goblin-systems/goblin-design-system";
 import { pushHistory } from "../editor/history";
 import type { DocumentState, Layer } from "../editor/types";
 import { cloneCanvas, snapshotDocument, syncLayerSource } from "../editor/documents";
+import { normalizeSelectionToMask, invertMask } from "../editor/selection";
 import {
   applyAddNoise,
   applyBrightnessContrast,
@@ -62,6 +63,7 @@ interface AdjustmentSessionTarget {
   doc: DocumentState;
   layer: Layer;
   sourceCanvas: HTMLCanvasElement;
+  selectionMask?: HTMLCanvasElement | null;
 }
 
 interface CommitDestructiveAdjustmentOptions {
@@ -112,11 +114,7 @@ export function commitDestructiveAdjustment(options: CommitDestructiveAdjustment
   if (ctx) {
     const src = ctx.getImageData(0, 0, target.sourceCanvas.width, target.sourceCanvas.height);
     const result = applyPreview(src);
-    const layerCtx = target.layer.canvas.getContext("2d");
-    if (layerCtx) {
-      layerCtx.clearRect(0, 0, target.layer.canvas.width, target.layer.canvas.height);
-      layerCtx.putImageData(result, 0, 0);
-    }
+    applyAdjustedResultToLayer(target, result);
   }
   syncLayerSource(target.layer);
   target.doc.dirty = true;
@@ -125,16 +123,44 @@ export function commitDestructiveAdjustment(options: CommitDestructiveAdjustment
   showToast(successMessage, "success");
 }
 
+function applyAdjustedResultToLayer(target: AdjustmentSessionTarget, result: ImageData): void {
+  const selectionMask = target.selectionMask ?? null;
+  const layerCtx = target.layer.canvas.getContext("2d");
+  if (!layerCtx) return;
+
+  if (selectionMask === null) {
+    // No active selection — replace the full layer content directly.
+    layerCtx.clearRect(0, 0, target.layer.canvas.width, target.layer.canvas.height);
+    layerCtx.putImageData(result, 0, 0);
+    return;
+  }
+
+  // Selection-scoped composite:
+  // 1. Paint the adjusted result onto a temp canvas.
+  // 2. Clip it through the selection mask so only the selected area remains.
+  // 3. Restore the original pixels, then draw the masked adjusted region on top.
+  const tmp = document.createElement("canvas");
+  tmp.width = target.layer.canvas.width;
+  tmp.height = target.layer.canvas.height;
+  const tmpCtx = tmp.getContext("2d");
+  if (!tmpCtx) return;
+
+  tmpCtx.putImageData(result, 0, 0);
+  tmpCtx.globalCompositeOperation = "destination-in";
+  tmpCtx.drawImage(selectionMask, -target.layer.x, -target.layer.y);
+  tmpCtx.globalCompositeOperation = "source-over";
+
+  layerCtx.clearRect(0, 0, target.layer.canvas.width, target.layer.canvas.height);
+  layerCtx.drawImage(target.sourceCanvas, 0, 0);
+  layerCtx.drawImage(tmp, 0, 0);
+}
+
 function renderPreview(target: AdjustmentSessionTarget, renderCanvas: () => void, applyPreview: (source: ImageData) => ImageData) {
   const ctx = target.sourceCanvas.getContext("2d");
   if (!ctx) return;
   const src = ctx.getImageData(0, 0, target.sourceCanvas.width, target.sourceCanvas.height);
   const result = applyPreview(src);
-  const layerCtx = target.layer.canvas.getContext("2d");
-  if (layerCtx) {
-    layerCtx.clearRect(0, 0, target.layer.canvas.width, target.layer.canvas.height);
-    layerCtx.putImageData(result, 0, 0);
-  }
+  applyAdjustedResultToLayer(target, result);
   renderCanvas();
 }
 
@@ -148,10 +174,24 @@ function resolveAdjustmentSessionTarget(deps: Pick<AdjustmentModalControllerDeps
   }
   const doc = maybeDoc as DocumentState;
   const layer = maybeLayer as Layer;
+
+  let selectionMask = normalizeSelectionToMask(
+    doc.width,
+    doc.height,
+    doc.selectionRect,
+    doc.selectionShape,
+    doc.selectionPath,
+    doc.selectionMask,
+  );
+  if (selectionMask !== null && doc.selectionInverted === true) {
+    invertMask(selectionMask);
+  }
+
   return {
     doc,
     layer,
     sourceCanvas: cloneCanvas(layer.canvas),
+    selectionMask,
   };
 }
 

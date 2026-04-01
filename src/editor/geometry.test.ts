@@ -16,6 +16,7 @@ function makeDoc(overrides: Partial<DocumentState> = {}): DocumentState {
     activeLayerId: "layer-1",
     selectedLayerIds: [],
     history: [],
+    historyIndex: 0,
     sourcePath: null,
     projectPath: null,
     background: "white",

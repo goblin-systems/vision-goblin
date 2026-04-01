@@ -574,12 +574,14 @@ export function renderDocumentTabs(params: {
 
 export function renderHistory(historyList: HTMLElement, doc: DocumentState) {
   historyList.innerHTML = "";
-  for (const step of doc.history) {
+  doc.history.forEach((step, index) => {
     const item = document.createElement("div");
-    item.className = "history-row";
+    item.className = index < doc.historyIndex
+      ? "history-row history-row--undone"
+      : "history-row";
     item.textContent = step;
     historyList.appendChild(item);
-  }
+  });
 }
 
 export function updateBrushUI(params: {
@@ -588,17 +590,13 @@ export function updateBrushUI(params: {
   activeColour: string;
   brushSizeInput: HTMLInputElement;
   brushOpacityInput: HTMLInputElement;
-  brushColourPreview: HTMLElement;
   brushColourValue: HTMLElement;
-  colourPreview: HTMLElement;
-  colourValue: HTMLElement;
+  primarySwatch: HTMLElement;
 }) {
   params.brushSizeInput.value = String(params.brushSize);
   params.brushOpacityInput.value = String(Math.round(params.brushOpacity * 100));
-  params.brushColourPreview.style.background = params.activeColour;
+  params.primarySwatch.style.background = params.activeColour;
   params.brushColourValue.textContent = params.activeColour;
-  params.colourPreview.style.background = params.activeColour;
-  params.colourValue.textContent = params.activeColour;
 }
 
 export function renderToolState(params: {

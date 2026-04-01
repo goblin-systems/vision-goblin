@@ -44,6 +44,7 @@ function makeDocument(layer: RasterLayer): DocumentState {
     activeLayerId: layer.id,
     selectedLayerIds: [layer.id],
     history: [],
+    historyIndex: 0,
     sourcePath: null,
     projectPath: null,
     background: "white",

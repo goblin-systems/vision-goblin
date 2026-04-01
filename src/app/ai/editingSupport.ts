@@ -101,6 +101,36 @@ function buildBinaryAiMaskCanvas(selectionMask: HTMLCanvasElement): HTMLCanvasEl
   return normalizedMask;
 }
 
+/**
+ * Convert an AI-generated mask (white=selected, black=not-selected, all pixels alpha=255)
+ * to the internal alpha-channel mask format (selected=alpha 255, not-selected=alpha 0).
+ *
+ * This is the inverse of `buildBinaryAiMaskCanvas`.
+ */
+export function convertAiMaskToAlphaMask(aiMask: HTMLCanvasElement): HTMLCanvasElement {
+  const output = createMaskCanvas(aiMask.width, aiMask.height);
+  const sourceContext = aiMask.getContext("2d");
+  const targetContext = output.getContext("2d");
+
+  if (!sourceContext || !targetContext) {
+    return aiMask;
+  }
+
+  const sourceData = sourceContext.getImageData(0, 0, aiMask.width, aiMask.height);
+  const outputData = targetContext.createImageData(aiMask.width, aiMask.height);
+
+  for (let i = 0; i < sourceData.data.length; i += 4) {
+    const selected = sourceData.data[i] > 127;
+    outputData.data[i] = selected ? 255 : 0;
+    outputData.data[i + 1] = selected ? 255 : 0;
+    outputData.data[i + 2] = selected ? 255 : 0;
+    outputData.data[i + 3] = selected ? 255 : 0;
+  }
+
+  targetContext.putImageData(outputData, 0, 0);
+  return output;
+}
+
 export function canvasToImageAsset(canvas: HTMLCanvasElement): AiImageAsset {
   return {
     kind: "image",
@@ -202,14 +232,22 @@ export async function artifactToCanvas(
   );
   const ctx = canvas.getContext("2d");
   if (ctx) {
-    const widthScale = canvas.width / image.naturalWidth;
-    const heightScale = canvas.height / image.naturalHeight;
-    const scale = Math.max(widthScale, heightScale);
-    const drawWidth = image.naturalWidth * scale;
-    const drawHeight = image.naturalHeight * scale;
-    const offsetX = (canvas.width - drawWidth) / 2;
-    const offsetY = (canvas.height - drawHeight) / 2;
-    ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+    if (artifact.kind === "mask") {
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    } else {
+      const widthScale = canvas.width / image.naturalWidth;
+      const heightScale = canvas.height / image.naturalHeight;
+      const scale = Math.max(widthScale, heightScale);
+      const drawWidth = image.naturalWidth * scale;
+      const drawHeight = image.naturalHeight * scale;
+      const offsetX = (canvas.width - drawWidth) / 2;
+      const offsetY = (canvas.height - drawHeight) / 2;
+      ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+    }
+  }
+
+  if (artifact.kind === "mask") {
+    return convertAiMaskToAlphaMask(canvas);
   }
 
   if (!options.extractRegion) {
@@ -249,7 +287,9 @@ export function applyMaskToSelection(doc: DocumentState, mask: HTMLCanvasElement
   }
   doc.undoStack.push(snapshotDocument(doc));
   doc.redoStack = [];
-  doc.selectionRect = maskBoundingRect(mask);
+  const boundingRect = maskBoundingRect(mask);
+  doc.selectionRect = boundingRect;
+  console.log(`[AI] applyMaskToSelection: boundingRect=${boundingRect ? `{x:${boundingRect.x}, y:${boundingRect.y}, w:${boundingRect.width}, h:${boundingRect.height}}` : "null"}`);
   doc.selectionShape = "rect";
   doc.selectionInverted = false;
   doc.selectionPath = null;

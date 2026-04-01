@@ -36,6 +36,7 @@ const contextStub = {
   stroke: vi.fn(),
   moveTo: vi.fn(),
   lineTo: vi.fn(),
+  closePath: vi.fn(),
   roundRect: vi.fn(),
   strokeRect: vi.fn(),
   createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
