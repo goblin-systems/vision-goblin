@@ -137,6 +137,7 @@ export interface CanvasWorkspaceControllerDeps {
   getMarqueeSides: () => number;
   getMarqueeModifiers: () => { rotate: boolean; perfect: boolean };
   getQuickMaskOverlay: () => { canvas: HTMLCanvasElement; color: string } | null;
+  renderShellState: () => void;
   renderEditorState: () => void;
   updateMarqueeModeFromModifiers: (ctrlKey: boolean, shiftKey: boolean, altKey: boolean) => void;
   captureSelectionMode: () => void;
@@ -148,6 +149,7 @@ export interface CanvasWorkspaceControllerDeps {
 
 export interface CanvasWorkspaceController {
   renderCanvas: () => void;
+  scheduleCanvasRender: () => void;
   bindZoomControls: () => void;
   bindCanvasInteractions: () => void;
   snapLayerPosition: (layer: Layer, rawX: number, rawY: number) => { x: number; y: number };
@@ -157,6 +159,11 @@ export interface CanvasWorkspaceController {
 export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerDeps): CanvasWorkspaceController {
   let activeSnapLines: SnapLine[] = [];
   let draggingGuideId: string | null = null;
+  let scheduledCanvasRender = 0;
+
+  const requestRenderFrame = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+    ? window.requestAnimationFrame.bind(window)
+    : (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 16);
 
   function getCanvasBoundsForDoc(doc: DocumentState) {
     return getCanvasBounds(doc, deps.editorCanvas.getBoundingClientRect());
@@ -222,6 +229,16 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
     });
   }
 
+  function scheduleCanvasRender() {
+    if (scheduledCanvasRender) {
+      return;
+    }
+    scheduledCanvasRender = requestRenderFrame(() => {
+      scheduledCanvasRender = 0;
+      renderCanvas();
+    });
+  }
+
   function bindZoomControls() {
     document.querySelectorAll<HTMLButtonElement>("[data-zoom-step]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -240,7 +257,8 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
       event.preventDefault();
       doc.zoom = clamp(doc.zoom + (event.deltaY < 0 ? 10 : -10), 10, 800);
       deps.log(`Wheel zoom changed to ${doc.zoom}% for '${doc.name}'`, "INFO");
-      deps.renderEditorState();
+      deps.renderShellState();
+      scheduleCanvasRender();
     }, { passive: false });
 
     // Zoom readout: click to reset view, drag left/right to scrub zoom
@@ -266,7 +284,8 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
       if (!didDrag && Math.abs(dx) < 4) return;
       didDrag = true;
       doc.zoom = clamp(dragStartZoom + Math.round(dx * 2), 10, 800);
-      deps.renderEditorState();
+      deps.renderShellState();
+      scheduleCanvasRender();
     });
 
     readout.addEventListener("pointerup", (e) => {
@@ -362,7 +381,7 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
         guide.position = guide.orientation === "horizontal"
           ? (event.clientY - rect.top - bounds.originY) / bounds.scale
           : (event.clientX - rect.left - bounds.originX) / bounds.scale;
-        deps.renderEditorState();
+        scheduleCanvasRender();
         return;
       }
       deps.canvasPointer.handlePointerMove(event);
@@ -392,6 +411,7 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
 
   return {
     renderCanvas,
+    scheduleCanvasRender,
     bindZoomControls,
     bindCanvasInteractions,
     snapLayerPosition,

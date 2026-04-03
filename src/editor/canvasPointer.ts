@@ -252,12 +252,12 @@ export function drawStroke(
   selectionMask?: HTMLCanvasElement | null
 ) {
   const ctx = getLayerContext(layer);
-  const strokeFn = (c: CanvasRenderingContext2D) => {
+  const strokeFn = (c: CanvasRenderingContext2D, compositeOperation: GlobalCompositeOperation) => {
     c.lineCap = "round";
     c.lineJoin = "round";
     c.lineWidth = brushSize;
     c.globalAlpha = brushOpacity;
-    c.globalCompositeOperation = mode === "eraser" ? "destination-out" : "source-over";
+    c.globalCompositeOperation = compositeOperation;
     c.strokeStyle = activeColour;
     c.beginPath();
     c.moveTo(fromX - layer.x, fromY - layer.y);
@@ -266,15 +266,25 @@ export function drawStroke(
   };
 
   if (selectionMask) {
-    drawThroughMask(ctx, layer.canvas.width, layer.canvas.height, selectionMask, selectionInverted, layer.x, layer.y, strokeFn);
+    drawThroughMask(
+      ctx,
+      layer.canvas.width,
+      layer.canvas.height,
+      selectionMask,
+      selectionInverted,
+      layer.x,
+      layer.y,
+      (maskCtx) => strokeFn(maskCtx, "source-over"),
+      mode === "eraser" ? "destination-out" : "source-over",
+    );
   } else if (selectionRect) {
     ctx.save();
     applySelectionClip(ctx, selectionRect, selectionShape, selectionInverted, selectionPath ?? null, layer.x, layer.y, layer.canvas.width, layer.canvas.height);
-    strokeFn(ctx);
+    strokeFn(ctx, mode === "eraser" ? "destination-out" : "source-over");
     ctx.restore();
   } else {
     ctx.save();
-    strokeFn(ctx);
+    strokeFn(ctx, mode === "eraser" ? "destination-out" : "source-over");
     ctx.restore();
   }
 }
@@ -582,6 +592,7 @@ interface CanvasPointerDeps {
   snapLayerPosition: (layer: Layer, x: number, y: number) => { x: number; y: number };
   pointerState: PointerState;
   renderCanvas: () => void;
+  scheduleCanvasRender: () => void;
   renderEditorState: () => void;
   onColourPicked: (colour: string) => void;
   getCloneSource: () => { x: number; y: number } | null;
@@ -943,7 +954,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     if (deps.pointerState.mode === "pan") {
       doc.panX = deps.pointerState.startPanX + (event.clientX - deps.pointerState.startClientX);
       doc.panY = deps.pointerState.startPanY + (event.clientY - deps.pointerState.startClientY);
-      deps.renderEditorState();
+      deps.scheduleCanvasRender();
       return;
     }
 
@@ -952,7 +963,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       if (draft) {
         draft.pivotX = coords.x;
         draft.pivotY = coords.y;
-        deps.renderEditorState();
+        deps.scheduleCanvasRender();
       }
       return;
     }
@@ -1002,7 +1013,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
             draft.scaleY = scaleY;
           }
           deps.syncTransformInputs();
-          deps.renderEditorState();
+          deps.scheduleCanvasRender();
           return;
         }
         const rawX = Math.round(deps.pointerState.startLayerX + (event.clientX - deps.pointerState.startClientX) / coords.bounds.scale);
@@ -1016,7 +1027,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         draft.pivotY = deps.pointerState.startPivotY + dy;
         markDocumentOperationChanged();
         doc.dirty = true;
-        deps.renderEditorState();
+        deps.scheduleCanvasRender();
         return;
       }
       const rawX = Math.round(deps.pointerState.startLayerX + (event.clientX - deps.pointerState.startClientX) / coords.bounds.scale);
@@ -1026,7 +1037,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       layer.y = snapped.y;
       markDocumentOperationChanged();
       doc.dirty = true;
-      deps.renderEditorState();
+      deps.scheduleCanvasRender();
       return;
     }
 
@@ -1058,7 +1069,11 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         created.textData.boxWidth = draggedFarEnough ? Math.max(40, Math.round(width)) : null;
         refreshLayerCanvas(created);
       }
-      deps.renderEditorState();
+      if (created.type === "shape") {
+        deps.scheduleCanvasRender();
+      } else {
+        deps.renderEditorState();
+      }
       return;
     }
 
@@ -1072,7 +1087,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         deps.pointerState.lastDocX = coords.x;
         deps.pointerState.lastDocY = coords.y;
         markDocumentOperationChanged();
-        deps.renderCanvas();
+        deps.scheduleCanvasRender();
         return;
       }
       // Mask painting path
@@ -1084,7 +1099,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         deps.pointerState.lastDocX = coords.x;
         deps.pointerState.lastDocY = coords.y;
         markDocumentOperationChanged();
-        deps.renderCanvas();
+        deps.scheduleCanvasRender();
         return;
       }
       // Normal raster painting (smart objects blocked at pointer-down)
@@ -1105,14 +1120,14 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         deps.pointerState.lastDocX = coords.x;
         deps.pointerState.lastDocY = coords.y;
         markDocumentOperationChanged();
-        deps.renderCanvas();
+        deps.scheduleCanvasRender();
       }
       return;
     }
 
     if (deps.pointerState.mode === "crop") {
       doc.cropRect = buildCropRect(deps.pointerState.startDocX, deps.pointerState.startDocY, coords.x, coords.y, doc);
-      deps.renderEditorState();
+      deps.scheduleCanvasRender();
       return;
     }
 
@@ -1136,12 +1151,12 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
 
       deps.pointerState.lastDocX = coords.x;
       deps.pointerState.lastDocY = coords.y;
-      deps.renderEditorState();
+      deps.scheduleCanvasRender();
     }
 
     if (deps.pointerState.mode === "lasso" && doc.selectionPath && !doc.selectionPath.closed) {
       deps.onLassoPoint(coords.x, coords.y);
-      deps.renderEditorState();
+      deps.scheduleCanvasRender();
     }
   }
 

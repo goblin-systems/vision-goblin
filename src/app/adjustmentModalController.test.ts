@@ -1,10 +1,90 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const modalMocks = vi.hoisted(() => ({
+  openModal: vi.fn((options: { backdrop: HTMLElement; onReject?: () => void }) => {
+    options.backdrop.removeAttribute("hidden");
+    options.backdrop.querySelectorAll<HTMLButtonElement>(".modal-btn-reject").forEach((button) => {
+      button.onclick = () => options.onReject?.();
+    });
+  }),
+  closeModal: vi.fn(({ backdrop }: { backdrop: HTMLElement }) => {
+    backdrop.setAttribute("hidden", "");
+  }),
+}));
+
+const adjustmentMocks = vi.hoisted(() => ({
+  applyMotionBlur: vi.fn(() => new ImageData(1, 1)),
+  applyBrightnessContrast: vi.fn(() => new ImageData(1, 1)),
+}));
+
+vi.mock("@goblin-systems/goblin-design-system", async () => {
+  const actual = await vi.importActual<typeof import("@goblin-systems/goblin-design-system")>("@goblin-systems/goblin-design-system");
+  return {
+    ...actual,
+    openModal: modalMocks.openModal,
+    closeModal: modalMocks.closeModal,
+  };
+});
+
+vi.mock("../editor/adjustments", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../editor/adjustments")>();
+  return {
+    ...actual,
+    applyMotionBlur: adjustmentMocks.applyMotionBlur,
+    applyBrightnessContrast: adjustmentMocks.applyBrightnessContrast,
+  };
+});
+
 import { makeNewDocument } from "../editor/actions/documentActions";
 import {
   commitDestructiveAdjustment,
+  createAdjustmentModalController,
   getAdjustmentSessionError,
   restoreDestructiveAdjustmentPreview,
 } from "./adjustmentModalController";
+
+function installSliderModalDom() {
+  document.body.innerHTML = `
+    <div id="motion-blur-modal" hidden>
+      <button class="modal-btn-reject" type="button">Cancel</button>
+      <input id="mb-angle-range" type="range" value="0" />
+      <output id="mb-angle-value">0</output>
+      <input id="mb-distance-range" type="range" value="1" />
+      <output id="mb-distance-value">1</output>
+      <button id="mb-apply-btn" type="button">Apply</button>
+    </div>
+    <div id="brightness-contrast-modal" hidden>
+      <button class="modal-btn-reject" type="button">Cancel</button>
+      <input id="bc-brightness-range" type="range" value="0" />
+      <output id="bc-brightness-value">0</output>
+      <input id="bc-contrast-range" type="range" value="0" />
+      <output id="bc-contrast-value">0</output>
+      <button id="bc-apply-btn" type="button">Apply</button>
+    </div>
+  `;
+}
+
+function createControllerHarness() {
+  const doc = makeNewDocument("Doc", 10, 10, 100, "transparent");
+  const renderCanvas = vi.fn();
+  const renderEditorState = vi.fn();
+  const showToast = vi.fn();
+  const controller = createAdjustmentModalController({
+    getActiveDocument: () => doc,
+    getActiveLayer: (activeDoc) => activeDoc.layers.find((item) => item.id === activeDoc.activeLayerId) ?? null,
+    renderCanvas,
+    renderEditorState,
+    showToast,
+  });
+
+  return {
+    controller,
+    doc,
+    renderCanvas,
+    renderEditorState,
+    showToast,
+  };
+}
 
 describe("adjustmentModalController helpers", () => {
   beforeEach(() => {
@@ -231,5 +311,156 @@ describe("adjustmentModalController helpers", () => {
     // The selection mask must be drawn at (-layer.x, -layer.y) so the global
     // mask coordinates align with the layer-local canvas coordinate system.
     expect(context?.drawImage).toHaveBeenCalledWith(selectionMask, -10, -20);
+  });
+});
+
+describe("adjustment modal preview scheduling", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    installSliderModalDom();
+  });
+
+  it("coalesces rapid motion blur slider inputs to the latest debounced preview", () => {
+    const { controller, renderCanvas } = createControllerHarness();
+    let queuedFrame: FrameRequestCallback | null = null;
+
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
+      queuedFrame = callback;
+      return 1;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {
+      queuedFrame = null;
+    });
+
+    controller.openMotionBlurModal();
+
+    const angleRange = document.getElementById("mb-angle-range") as HTMLInputElement;
+    angleRange.value = "5";
+    angleRange.dispatchEvent(new Event("input"));
+    angleRange.value = "15";
+    angleRange.dispatchEvent(new Event("input"));
+    angleRange.value = "25";
+    angleRange.dispatchEvent(new Event("input"));
+
+    expect(adjustmentMocks.applyMotionBlur).not.toHaveBeenCalled();
+    expect(queuedFrame).toBeNull();
+
+    vi.advanceTimersByTime(49);
+    expect(adjustmentMocks.applyMotionBlur).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(queuedFrame).not.toBeNull();
+    if (!queuedFrame) {
+      throw new Error("Expected motion blur preview frame to be queued");
+    }
+    const motionBlurFrame = queuedFrame as FrameRequestCallback;
+    motionBlurFrame(16);
+
+    expect(adjustmentMocks.applyMotionBlur).toHaveBeenCalledTimes(1);
+    const latestMotionBlurPreviewCall = adjustmentMocks.applyMotionBlur.mock.calls[
+      adjustmentMocks.applyMotionBlur.mock.calls.length - 1
+    ] as unknown as [unknown, { angle: number; distance: number }] | undefined;
+    expect(latestMotionBlurPreviewCall?.[0]).toMatchObject({ data: expect.any(Uint8ClampedArray) });
+    expect(latestMotionBlurPreviewCall?.[1]).toEqual({ angle: 25, distance: 1 });
+    expect(renderCanvas).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancel clears a pending debounced motion blur preview and restores state", () => {
+    const { controller, renderCanvas } = createControllerHarness();
+    let queuedFrame: FrameRequestCallback | null = null;
+
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
+      queuedFrame = callback;
+      return 1;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {
+      queuedFrame = null;
+    });
+
+    controller.openMotionBlurModal();
+
+    const angleRange = document.getElementById("mb-angle-range") as HTMLInputElement;
+    angleRange.value = "30";
+    angleRange.dispatchEvent(new Event("input"));
+
+    const cancelButton = document.querySelector("#motion-blur-modal .modal-btn-reject") as HTMLButtonElement;
+    cancelButton.click();
+
+    vi.runAllTimers();
+    if (queuedFrame) {
+      const pendingFrame = queuedFrame as FrameRequestCallback;
+      pendingFrame(16);
+    }
+
+    expect(adjustmentMocks.applyMotionBlur).not.toHaveBeenCalled();
+    expect(renderCanvas).toHaveBeenCalledTimes(1);
+  });
+
+  it("apply commits the latest motion blur params without waiting for the delayed preview", () => {
+    const { controller, doc, renderEditorState, showToast } = createControllerHarness();
+
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+    controller.openMotionBlurModal();
+
+    const angleRange = document.getElementById("mb-angle-range") as HTMLInputElement;
+    const distanceRange = document.getElementById("mb-distance-range") as HTMLInputElement;
+    angleRange.value = "40";
+    angleRange.dispatchEvent(new Event("input"));
+    distanceRange.value = "12";
+    distanceRange.dispatchEvent(new Event("input"));
+
+    const applyButton = document.getElementById("mb-apply-btn") as HTMLButtonElement;
+    applyButton.click();
+
+    expect(adjustmentMocks.applyMotionBlur).toHaveBeenCalledTimes(1);
+    const latestMotionBlurApplyCall = adjustmentMocks.applyMotionBlur.mock.calls[
+      adjustmentMocks.applyMotionBlur.mock.calls.length - 1
+    ] as unknown as [unknown, { angle: number; distance: number }] | undefined;
+    expect(latestMotionBlurApplyCall?.[0]).toMatchObject({ data: expect.any(Uint8ClampedArray) });
+    expect(latestMotionBlurApplyCall?.[1]).toEqual({ angle: 40, distance: 12 });
+    expect(doc.history[0]).toBe("Motion Blur");
+    expect(doc.undoStack).toHaveLength(1);
+    expect(doc.dirty).toBe(true);
+    expect(renderEditorState).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledWith("Motion Blur applied", "success");
+  });
+
+  it("keeps other slider adjustments on the existing next-frame preview path", () => {
+    const { controller, renderCanvas } = createControllerHarness();
+    let queuedFrame: FrameRequestCallback | null = null;
+
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
+      queuedFrame = callback;
+      return 1;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {
+      queuedFrame = null;
+    });
+
+    controller.openBrightnessContrastModal();
+
+    const brightnessRange = document.getElementById("bc-brightness-range") as HTMLInputElement;
+    brightnessRange.value = "18";
+    brightnessRange.dispatchEvent(new Event("input"));
+
+    expect(queuedFrame).not.toBeNull();
+    expect(adjustmentMocks.applyBrightnessContrast).not.toHaveBeenCalled();
+
+    if (!queuedFrame) {
+      throw new Error("Expected brightness/contrast preview frame to be queued");
+    }
+    const brightnessFrame = queuedFrame as FrameRequestCallback;
+    brightnessFrame(16);
+
+    expect(adjustmentMocks.applyBrightnessContrast).toHaveBeenCalledTimes(1);
+    const latestBrightnessCall = adjustmentMocks.applyBrightnessContrast.mock.calls[
+      adjustmentMocks.applyBrightnessContrast.mock.calls.length - 1
+    ] as unknown as [unknown, { brightness: number; contrast: number }] | undefined;
+    expect(latestBrightnessCall?.[0]).toMatchObject({ data: expect.any(Uint8ClampedArray) });
+    expect(latestBrightnessCall?.[1]).toEqual({ brightness: 18, contrast: 0 });
+    expect(renderCanvas).toHaveBeenCalledTimes(1);
   });
 });

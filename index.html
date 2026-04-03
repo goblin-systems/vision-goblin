@@ -11,7 +11,6 @@
       <div class="window-frame-row" data-tauri-drag-region>
         <div class="window-title-wrap">
           <div class="window-title">Vision Goblin</div>
-          <p class="window-subtitle"></p>
         </div>
         <div class="window-actions" aria-label="Window controls">
           <button id="window-minimize-btn" class="icon-btn window-action-btn" type="button" aria-label="Minimize window" title="Minimize">
@@ -443,26 +442,50 @@
               </div>
             </div>
           </div>
+          <div class="nav-item">
+            <button class="nav-trigger" type="button">Settings <i data-lucide="chevron-down"></i></button>
+            <div class="nav-dropdown">
+              <button class="nav-option" type="button" data-nav-id="open-general-settings">
+                <span class="nav-option-icon"><i data-lucide="sliders-horizontal"></i></span>
+                <span class="nav-option-label">General</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="open-keyboard-shortcuts">
+                <span class="nav-option-icon"><i data-lucide="keyboard"></i></span>
+                <span class="nav-option-label">Keyboard Shortcuts</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="open-export-settings">
+                <span class="nav-option-icon"><i data-lucide="download"></i></span>
+                <span class="nav-option-label">Export</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="open-capture-settings">
+                <span class="nav-option-icon"><i data-lucide="monitor"></i></span>
+                <span class="nav-option-label">Screen Capture</span>
+              </button>
+              <button class="nav-option" type="button" data-nav-id="open-autosave-settings">
+                <span class="nav-option-icon"><i data-lucide="save"></i></span>
+                <span class="nav-option-label">Autosave</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="open-ai-settings">
+                <span class="nav-option-icon"><i data-lucide="bot"></i></span>
+                <span class="nav-option-label">AI Platform</span>
+              </button>
+              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="open-debug-settings">
+                <span class="nav-option-icon"><i data-lucide="bug"></i></span>
+                <span class="nav-option-label">Debug</span>
+              </button>
+            </div>
+          </div>
         </nav>
-
-        <section class="top-tabs" aria-label="Primary sections">
-          <button class="top-tab is-active" type="button" data-tab-trigger="editor">Editor</button>
-          <button class="top-tab" type="button" data-tab-trigger="settings">Settings</button>
-        </section>
+        <div class="top-bar-actions">
+          <button id="undo-btn" class="icon-btn icon-btn-sm" type="button" aria-label="Undo" title="Undo"><i data-lucide="undo-2"></i></button>
+          <button id="redo-btn" class="icon-btn icon-btn-sm" type="button" aria-label="Redo" title="Redo"><i data-lucide="redo-2"></i></button>
+        </div>
       </div>
 
-      <section class="tab-panel is-active" data-tab-panel="editor">
+      <section class="tab-panel is-active">
         <div class="editor-shell settings-section workspace-card">
-            <div class="editor-toolbar-row">
-              <div>
-                <h2>Workspace</h2>
-                <p class="hint">Open an image, paste from clipboard, paint on layers, move content, and export the result.</p>
-              </div>
-              <div class="toolbar-actions">
-                <button id="undo-btn" class="secondary-btn" type="button"><i data-lucide="undo-2"></i><span>Undo</span></button>
-                <button id="redo-btn" class="secondary-btn" type="button"><i data-lucide="redo-2"></i><span>Redo</span></button>
-              </div>
-            </div>
           <input id="file-open-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden />
 
           <div id="document-tabs" class="document-tabs" aria-label="Open documents"></div>
@@ -881,217 +904,7 @@
               <button class="icon-btn icon-btn-sm" type="button" data-zoom-step="in" aria-label="Zoom in" title="Zoom in"><i data-lucide="plus"></i></button>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section class="tab-panel" data-tab-panel="settings">
-        <div class="settings-grid">
-          <section class="settings-section">
-            <h2>Workspace Defaults</h2>
-            <label class="checkbox-label">
-              <input id="checkerboard-toggle" type="checkbox" />
-              <span>Show checkerboard background</span>
-            </label>
-            <label class="checkbox-label">
-              <input id="grid-toggle" type="checkbox" />
-              <span>Show composition grid</span>
-            </label>
-            <label class="field-block">
-              <span class="field-label">Grid size (px)</span>
-              <input id="grid-size-input" type="number" class="input" min="4" max="500" step="1" value="60" />
-            </label>
-            <label class="checkbox-label">
-              <input id="snap-toggle" type="checkbox" />
-              <span>Enable snap-ready layout guides</span>
-            </label>
-            <label class="checkbox-label">
-              <input id="confirm-layer-deletion-checkbox" type="checkbox" />
-              <span>Confirm before deleting layers</span>
-            </label>
-            <div class="inline-control-grid">
-              <label class="field-block">
-                <span>Left panel width</span>
-                <input id="left-panel-width-range" type="range" min="180" max="360" step="10" value="220" />
-              </label>
-              <label class="field-block">
-                <span>Right panel width</span>
-                <input id="right-panel-width-range" type="range" min="220" max="420" step="10" value="260" />
-              </label>
-            </div>
-          </section>
-
-          <section class="settings-section settings-wide-card" id="keybindings-section">
-            <h2>Keyboard Shortcuts</h2>
-            <div class="keybindings-grid" id="keybindings-grid"></div>
-            <button id="reset-keybindings-btn" class="secondary-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset to defaults</span></button>
-          </section>
-
-          <section class="settings-section">
-            <h2>Editor Defaults</h2>
-            <div class="inline-control-grid">
-              <label class="field-block">
-                <span>Default zoom</span>
-                <select id="default-zoom-select">
-                  <option value="50">50%</option>
-                  <option value="75">75%</option>
-                  <option value="100">100%</option>
-                  <option value="150">150%</option>
-                </select>
-              </label>
-              <label class="field-block">
-                <span>Colour format</span>
-                <select id="colour-format-select">
-                  <option value="hex">HEX</option>
-                  <option value="rgb">RGB</option>
-                  <option value="hsl">HSL</option>
-                </select>
-              </label>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h2>Export Defaults</h2>
-            <div class="inline-control-grid">
-              <label class="field-block">
-                <span>Format</span>
-                <select id="export-format-select">
-                  <option value="png">PNG</option>
-                  <option value="jpg">JPG</option>
-                  <option value="webp">WebP</option>
-                </select>
-              </label>
-              <label class="field-block">
-                <span>Quality</span>
-                <input id="export-quality-range" type="range" min="50" max="100" step="5" value="90" />
-              </label>
-            </div>
-            <p id="export-quality-label" class="hint">Export quality: 90%</p>
-          </section>
-
-          <section class="settings-section">
-            <h2>Screen Capture</h2>
-            <label class="field-block">
-              <span>Destination</span>
-              <select id="capture-destination-select">
-                <option value="new-canvas">New canvas</option>
-                <option value="add-layer">Paste into current canvas</option>
-                <option value="clipboard">Copy to clipboard</option>
-              </select>
-            </label>
-            <label class="field-block">
-              <span>Capture delay</span>
-              <select id="capture-delay-select">
-                <option value="0">None</option>
-                <option value="3">3 seconds</option>
-                <option value="5">5 seconds</option>
-              </select>
-            </label>
-            <label class="checkbox-label">
-              <input id="capture-hide-window-checkbox" type="checkbox" checked />
-              <span>Hide window before capture</span>
-            </label>
-          </section>
-
-          <section class="settings-section">
-            <h2>Autosave</h2>
-            <label class="checkbox-label">
-              <input id="autosave-enabled-checkbox" type="checkbox" checked />
-              <span>Enable autosave and crash recovery</span>
-            </label>
-            <label class="field-block">
-              <span>Interval (seconds)</span>
-              <input id="autosave-interval-input" type="number" min="10" max="600" step="10" value="60" class="input input-sm" style="width: 80px" />
-            </label>
-            <p class="hint">Dirty documents are auto-saved periodically. On crash, you will be offered a restore prompt.</p>
-          </section>
-
-          <section id="ai-settings-section" class="settings-section settings-wide-card">
-            <div class="section-heading-row">
-              <h2>AI Platform</h2>
-              <button id="focus-ai-jobs-btn" class="secondary-btn" type="button"><i data-lucide="bot"></i><span>Open jobs</span></button>
-            </div>
-            <p class="hint">Configure provider routing, keep secrets in secure storage, and validate connections before tool-specific AI flows land.</p>
-            <label class="checkbox-label">
-              <input id="ai-show-estimated-costs-checkbox" type="checkbox" />
-              <span>Show estimated cost messaging when the provider reports or implies a cost</span>
-            </label>
-            <div class="ai-provider-grid">
-              <article class="mini-panel ai-provider-card">
-                <div class="pane-heading-row">
-                  <h3>OpenAI compatible</h3>
-                  <span class="badge warning">remote</span>
-                </div>
-                <label class="checkbox-label">
-                  <input id="ai-provider-openai-compatible-enabled" type="checkbox" />
-                  <span>Enable remote OpenAI compatible provider</span>
-                </label>
-                <label class="field-block">
-                  <span>Endpoint</span>
-                  <input id="ai-provider-openai-compatible-endpoint" type="url" class="input" placeholder="https://api.openai.com/v1" />
-                </label>
-                <label class="field-block">
-                  <span>API key</span>
-                  <input id="ai-provider-openai-compatible-secret" type="password" class="input" placeholder="Stored in secure native credential storage" autocomplete="off" />
-                </label>
-                <div class="stack-actions compact-actions">
-                  <button id="ai-provider-openai-compatible-save-secret-btn" class="secondary-btn" type="button"><i data-lucide="key-round"></i><span>Save key</span></button>
-                  <button id="ai-provider-openai-compatible-clear-secret-btn" class="secondary-btn" type="button"><i data-lucide="trash-2"></i><span>Clear key</span></button>
-                  <button id="ai-provider-openai-compatible-validate-btn" class="secondary-btn" type="button"><i data-lucide="plug-zap"></i><span>Validate</span></button>
-                </div>
-                <p id="ai-provider-openai-compatible-secret-status" class="hint">No key stored.</p>
-                <p id="ai-provider-openai-compatible-status" class="hint">Not checked yet.</p>
-              </article>
-              <article class="mini-panel ai-provider-card">
-                <div class="pane-heading-row">
-                  <h3>Google Gemini</h3>
-                  <span class="badge warning">remote</span>
-                </div>
-                <label class="checkbox-label">
-                  <input id="ai-provider-gemini-enabled" type="checkbox" />
-                  <span>Enable Google Gemini provider</span>
-                </label>
-                <label class="field-block">
-                  <span>Endpoint</span>
-                  <input id="ai-provider-gemini-endpoint" type="url" class="input" placeholder="https://generativelanguage.googleapis.com/v1beta/openai" />
-                </label>
-                <label class="field-block">
-                  <span>API key</span>
-                  <input id="ai-provider-gemini-secret" type="password" class="input" placeholder="Stored in secure native credential storage" autocomplete="off" />
-                </label>
-                <div class="stack-actions compact-actions">
-                  <button id="ai-provider-gemini-save-secret-btn" class="secondary-btn" type="button"><i data-lucide="key-round"></i><span>Save key</span></button>
-                  <button id="ai-provider-gemini-clear-secret-btn" class="secondary-btn" type="button"><i data-lucide="trash-2"></i><span>Clear key</span></button>
-                  <button id="ai-provider-gemini-validate-btn" class="secondary-btn" type="button"><i data-lucide="plug-zap"></i><span>Validate</span></button>
-                </div>
-                <p id="ai-provider-gemini-secret-status" class="hint">No key stored.</p>
-                <p id="ai-provider-gemini-status" class="hint">Not checked yet.</p>
-              </article>
-            </div>
-            <div>
-              <div class="pane-heading-row">
-                <h3>Task Routing</h3>
-                <span class="badge beta">shared runtime</span>
-              </div>
-              <div id="ai-routing-grid" class="ai-routing-grid"></div>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h2>Debug</h2>
-            <label class="checkbox-label">
-              <input id="debug-logging-checkbox" type="checkbox" />
-              <span>Enable debug logging to local file</span>
-            </label>
-            <button id="open-debug-folder-btn" class="secondary-btn" type="button"><i data-lucide="folder-open"></i><span>Open debug logs folder</span></button>
-            <p id="debug-log-path" class="hint">Debug logs are disabled.</p>
-          </section>
-
-          <section class="settings-section settings-wide-card">
-            <div class="section-heading-row">
-              <h2>Application</h2>
-              <button id="reset-defaults-btn" class="secondary-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset defaults</span></button>
-            </div>
-          </section>
+          <p class="window-subtitle goblin-note"></p>
         </div>
       </section>
 
@@ -1870,7 +1683,7 @@
               <i data-lucide="x"></i>
             </button>
           </div>
-          <p class="modal-body-text">Build a multi-node curve, preview the blend, then apply a left-to-right gradient to the active raster target.</p>
+          <p class="modal-body-text">Build a multi-node curve, set the heading, preview the blend, then apply the gradient to the active raster target.</p>
           <div class="modal-form-grid">
             <div class="gradient-tool-curve-wrap">
               <canvas id="gradient-curve-canvas" width="560" height="220"></canvas>
@@ -1879,14 +1692,278 @@
               <canvas id="gradient-preview-canvas" width="560" height="48"></canvas>
             </div>
             <div class="gradient-tool-actions">
-              <button id="gradient-add-node-btn" class="secondary-btn" type="button"><i data-lucide="plus"></i><span>Add node</span></button>
-              <button id="gradient-reset-btn" class="secondary-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset</span></button>
+              <button id="gradient-add-node-btn" class="secondary-btn gradient-tool-action-btn" type="button"><i data-lucide="plus"></i><span>Add node</span></button>
+              <button id="gradient-reset-btn" class="secondary-btn gradient-tool-action-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset</span></button>
+              <label class="field-block gradient-tool-target-field">
+                <span>Apply to</span>
+                <select id="gradient-target-select" class="gradient-tool-target-select">
+                  <option value="selection">Selection</option>
+                  <option value="canvas">Full canvas</option>
+                </select>
+              </label>
+              <div class="gradient-tool-heading-field">
+                <div id="gradient-heading-control" class="radial-control radial-control-xs gradient-tool-heading-control" aria-label="Gradient heading" title="Gradient heading">
+                  <svg class="radial-control-visual" viewBox="0 0 100 100" aria-hidden="true">
+                    <path class="radial-control-track"></path>
+                    <path class="radial-control-fill"></path>
+                    <line class="radial-control-pointer" x1="50" y1="50" x2="50" y2="22"></line>
+                    <circle class="radial-control-thumb" cx="50" cy="12" r="5"></circle>
+                  </svg>
+                  <div class="radial-control-readout">
+                    <span class="radial-control-value"></span>
+                  </div>
+                </div>
+              </div>
             </div>
             <div id="gradient-node-list" class="gradient-node-list"></div>
           </div>
           <div class="modal-footer">
             <button class="secondary-btn modal-btn-reject" type="button">Cancel</button>
             <button id="gradient-apply-btn" class="modal-btn-accept modal-submit-btn" type="button">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="general-settings-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="general-settings-title">
+          <div class="modal-header">
+            <h3 id="general-settings-title">General</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div class="modal-form-grid">
+            <label class="checkbox-label">
+              <input id="confirm-layer-deletion-checkbox" type="checkbox" />
+              <span>Confirm before deleting layers</span>
+            </label>
+            <label class="checkbox-label">
+              <input id="show-goblin-note-checkbox" type="checkbox" />
+              <span>Show goblin note</span>
+            </label>
+            <label class="field-block">
+              <span>Colour format</span>
+              <select id="colour-format-select">
+                <option value="hex">HEX</option>
+                <option value="rgb">RGB</option>
+                <option value="hsl">HSL</option>
+              </select>
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button id="reset-defaults-btn" class="secondary-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset all defaults</span></button>
+            <button class="secondary-btn modal-btn-reject" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="keyboard-shortcuts-modal" class="modal-backdrop" hidden>
+        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="keyboard-shortcuts-title">
+          <div class="modal-header">
+            <h3 id="keyboard-shortcuts-title">Keyboard Shortcuts</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div class="modal-form-grid">
+            <div class="keybindings-grid" id="keybindings-grid"></div>
+          </div>
+          <div class="modal-footer">
+            <button id="reset-keybindings-btn" class="secondary-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset to defaults</span></button>
+            <button class="secondary-btn modal-btn-reject" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="export-settings-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="export-settings-title">
+          <div class="modal-header">
+            <h3 id="export-settings-title">Export Defaults</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Format</span>
+              <select id="export-format-select">
+                <option value="png">PNG</option>
+                <option value="jpg">JPG</option>
+                <option value="webp">WebP</option>
+              </select>
+            </label>
+            <label class="field-block">
+              <span>Quality</span>
+              <input id="export-quality-range" type="range" min="50" max="100" step="5" value="90" />
+            </label>
+            <p id="export-quality-label" class="hint">Export quality: 90%</p>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="capture-settings-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="capture-settings-title">
+          <div class="modal-header">
+            <h3 id="capture-settings-title">Screen Capture</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div class="modal-form-grid">
+            <label class="field-block">
+              <span>Destination</span>
+              <select id="capture-destination-select">
+                <option value="new-canvas">New canvas</option>
+                <option value="add-layer">Paste into current canvas</option>
+                <option value="clipboard">Copy to clipboard</option>
+              </select>
+            </label>
+            <label class="field-block">
+              <span>Capture delay</span>
+              <select id="capture-delay-select">
+                <option value="0">None</option>
+                <option value="3">3 seconds</option>
+                <option value="5">5 seconds</option>
+              </select>
+            </label>
+            <label class="checkbox-label">
+              <input id="capture-hide-window-checkbox" type="checkbox" checked />
+              <span>Hide window before capture</span>
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="autosave-settings-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="autosave-settings-title">
+          <div class="modal-header">
+            <h3 id="autosave-settings-title">Autosave</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div class="modal-form-grid">
+            <label class="checkbox-label">
+              <input id="autosave-enabled-checkbox" type="checkbox" checked />
+              <span>Enable autosave and crash recovery</span>
+            </label>
+            <label class="field-block">
+              <span>Interval (seconds)</span>
+              <input id="autosave-interval-input" type="number" min="10" max="600" step="10" value="60" class="input input-sm" style="width: 80px" />
+            </label>
+            <p class="hint">Dirty documents are auto-saved periodically. On crash, you will be offered a restore prompt.</p>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="ai-settings-modal" class="modal-backdrop" hidden>
+        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title">
+          <div class="modal-header">
+            <h3 id="ai-settings-title">AI Platform</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div class="modal-form-grid">
+            <p class="hint">Configure provider routing, keep secrets in secure storage, and validate connections before tool-specific AI flows land.</p>
+            <label class="checkbox-label">
+              <input id="ai-show-estimated-costs-checkbox" type="checkbox" />
+              <span>Show estimated cost messaging when the provider reports or implies a cost</span>
+            </label>
+            <div class="ai-provider-grid">
+              <article class="mini-panel ai-provider-card">
+                <div class="pane-heading-row">
+                  <h3>OpenAI compatible</h3>
+                  <span class="badge warning">remote</span>
+                </div>
+                <label class="checkbox-label">
+                  <input id="ai-provider-openai-compatible-enabled" type="checkbox" />
+                  <span>Enable remote OpenAI compatible provider</span>
+                </label>
+                <label class="field-block">
+                  <span>Endpoint</span>
+                  <input id="ai-provider-openai-compatible-endpoint" type="url" class="input" placeholder="https://api.openai.com/v1" />
+                </label>
+                <label class="field-block">
+                  <span>API key</span>
+                  <input id="ai-provider-openai-compatible-secret" type="password" class="input" placeholder="Stored in secure native credential storage" autocomplete="off" />
+                </label>
+                <div class="stack-actions compact-actions">
+                  <button id="ai-provider-openai-compatible-save-secret-btn" class="secondary-btn" type="button"><i data-lucide="key-round"></i><span>Save key</span></button>
+                  <button id="ai-provider-openai-compatible-clear-secret-btn" class="secondary-btn" type="button"><i data-lucide="trash-2"></i><span>Clear key</span></button>
+                  <button id="ai-provider-openai-compatible-validate-btn" class="secondary-btn" type="button"><i data-lucide="plug-zap"></i><span>Validate</span></button>
+                </div>
+                <p id="ai-provider-openai-compatible-secret-status" class="hint">No key stored.</p>
+                <p id="ai-provider-openai-compatible-status" class="hint">Not checked yet.</p>
+              </article>
+              <article class="mini-panel ai-provider-card">
+                <div class="pane-heading-row">
+                  <h3>Google Gemini</h3>
+                  <span class="badge warning">remote</span>
+                </div>
+                <label class="checkbox-label">
+                  <input id="ai-provider-gemini-enabled" type="checkbox" />
+                  <span>Enable Google Gemini provider</span>
+                </label>
+                <label class="field-block">
+                  <span>Endpoint</span>
+                  <input id="ai-provider-gemini-endpoint" type="url" class="input" placeholder="https://generativelanguage.googleapis.com/v1beta/openai" />
+                </label>
+                <label class="field-block">
+                  <span>API key</span>
+                  <input id="ai-provider-gemini-secret" type="password" class="input" placeholder="Stored in secure native credential storage" autocomplete="off" />
+                </label>
+                <div class="stack-actions compact-actions">
+                  <button id="ai-provider-gemini-save-secret-btn" class="secondary-btn" type="button"><i data-lucide="key-round"></i><span>Save key</span></button>
+                  <button id="ai-provider-gemini-clear-secret-btn" class="secondary-btn" type="button"><i data-lucide="trash-2"></i><span>Clear key</span></button>
+                  <button id="ai-provider-gemini-validate-btn" class="secondary-btn" type="button"><i data-lucide="plug-zap"></i><span>Validate</span></button>
+                </div>
+                <p id="ai-provider-gemini-secret-status" class="hint">No key stored.</p>
+                <p id="ai-provider-gemini-status" class="hint">Not checked yet.</p>
+              </article>
+            </div>
+            <div>
+              <div class="pane-heading-row">
+                <h3>Task Routing</h3>
+                <span class="badge beta">shared runtime</span>
+              </div>
+              <div id="ai-routing-grid" class="ai-routing-grid"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="focus-ai-jobs-btn" class="secondary-btn" type="button"><i data-lucide="bot"></i><span>Open jobs</span></button>
+            <button class="secondary-btn modal-btn-reject" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="debug-settings-modal" class="modal-backdrop" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="debug-settings-title">
+          <div class="modal-header">
+            <h3 id="debug-settings-title">Debug</h3>
+            <button class="icon-btn modal-close-btn modal-btn-reject" type="button" aria-label="Close">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+          <div class="modal-form-grid">
+            <label class="checkbox-label">
+              <input id="debug-logging-checkbox" type="checkbox" />
+              <span>Enable debug logging to local file</span>
+            </label>
+            <button id="open-debug-folder-btn" class="secondary-btn" type="button"><i data-lucide="folder-open"></i><span>Open debug logs folder</span></button>
+            <p id="debug-log-path" class="hint">Debug logs are disabled.</p>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary-btn modal-btn-reject" type="button">Close</button>
           </div>
         </div>
       </div>

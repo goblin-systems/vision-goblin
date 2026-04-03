@@ -74,7 +74,7 @@ describe("AI controller", () => {
       <button id="ai-provider-gemini-validate-btn" type="button"></button>
       <button id="focus-ai-jobs-btn" type="button"></button>
       <button id="focus-ai-settings-btn" type="button"></button>
-      <section id="ai-settings-section"></section>
+      <div id="ai-settings-modal" class="modal-backdrop" hidden></div>
       <section id="ai-jobs-panel"></section>
     `;
     vi.clearAllMocks();

@@ -336,7 +336,8 @@ export function drawThroughMask(
   inverted: boolean,
   layerX: number,
   layerY: number,
-  drawFn: (ctx: CanvasRenderingContext2D) => void
+  drawFn: (ctx: CanvasRenderingContext2D) => void,
+  layerCompositeOperation: GlobalCompositeOperation = "source-over",
 ) {
   const tmp = getClipTmp(layerWidth, layerHeight);
   const tmpCtx = tmp.getContext("2d")!;
@@ -354,7 +355,10 @@ export function drawThroughMask(
   tmpCtx.restore();
 
   // Composite result onto layer
+  layerCtx.save();
+  layerCtx.globalCompositeOperation = layerCompositeOperation;
   layerCtx.drawImage(tmp, 0, 0);
+  layerCtx.restore();
 }
 
 // ---------------------------------------------------------------------------

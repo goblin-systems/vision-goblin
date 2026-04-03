@@ -1,16 +1,20 @@
-import { applyIcons, closeModal, openModal } from "@goblin-systems/goblin-design-system";
+import { applyIcons, bindRadial, closeModal, openModal, type RadialHandle } from "@goblin-systems/goblin-design-system";
 import { byId } from "./dom";
 import {
   addGradientNode,
+  addGradientNodeAtPosition,
   applyGradientToSelection,
+  createGradientSampler,
   createDefaultGradientNodes,
+  DEFAULT_GRADIENT_HEADING_DEGREES,
   moveGradientNode,
   removeGradientNode,
   resetGradientNodes,
-  sampleGradientColourHex,
   updateGradientNodeColour,
   type GradientCurveNode,
+  type GradientTargetScope,
 } from "../editor/gradient";
+import { resolveEffectiveSelectionMask } from "../editor/fill";
 import { beginDocumentOperation, cancelDocumentOperation, commitDocumentOperation, markDocumentOperationChanged } from "../editor/history";
 import { snapshotDocument } from "../editor/documents";
 import type { DocumentState, Layer, RasterLayer } from "../editor/types";
@@ -20,7 +24,7 @@ type ToastVariant = "success" | "error" | "info";
 export interface GradientToolControllerDeps {
   getActiveDocument: () => DocumentState | null;
   getActiveLayer: (doc: DocumentState) => Layer | null;
-  getActiveColour: () => string;
+  getGradientPaletteColours: () => string[];
   renderEditorState: () => void;
   showToast: (message: string, variant?: ToastVariant) => void;
 }
@@ -82,13 +86,26 @@ function drawCurveCanvas(canvas: HTMLCanvasElement, nodes: GradientCurveNode[], 
   }
 }
 
-function drawPreviewCanvas(canvas: HTMLCanvasElement, nodes: GradientCurveNode[]) {
+function drawPreviewCanvas(canvas: HTMLCanvasElement, nodes: GradientCurveNode[], headingDegrees: number) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  for (let x = 0; x < canvas.width; x += 1) {
-    ctx.fillStyle = sampleGradientColourHex(nodes, canvas.width <= 1 ? 0 : x / (canvas.width - 1));
-    ctx.fillRect(x, 0, 1, canvas.height);
+  const sampler = createGradientSampler(nodes);
+  const angleRadians = (headingDegrees * Math.PI) / 180;
+  const dirX = Math.cos(angleRadians);
+  const dirY = Math.sin(angleRadians);
+  const maxX = Math.max(canvas.width - 1, 0);
+  const maxY = Math.max(canvas.height - 1, 0);
+  const minDot = Math.min(0, maxX * dirX, maxY * dirY, maxX * dirX + maxY * dirY);
+  const maxDot = Math.max(0, maxX * dirX, maxY * dirY, maxX * dirX + maxY * dirY);
+  const dotSpan = Math.max(maxDot - minDot, Number.EPSILON);
+
+  for (let y = 0; y < canvas.height; y += 1) {
+    for (let x = 0; x < canvas.width; x += 1) {
+      const position = Math.max(0, Math.min(1, ((x * dirX + y * dirY) - minDot) / dotSpan));
+      ctx.fillStyle = sampler.sampleHex(position);
+      ctx.fillRect(x, y, 1, 1);
+    }
   }
 }
 
@@ -124,6 +141,26 @@ function renderNodeList(root: HTMLElement, nodes: GradientCurveNode[], onColourC
   });
 }
 
+function resolveGradientPaletteColours(colours: string[]) {
+  const normalized = colours.filter((colour) => typeof colour === "string" && colour.trim().length > 0);
+  return normalized.length >= 2 ? normalized : ["#6C63FF", "#FFFFFF"];
+}
+
+function createPaletteGradientNodes(colours: string[]) {
+  const paletteColours = resolveGradientPaletteColours(colours);
+  return createDefaultGradientNodes(paletteColours[0], paletteColours[1] ?? paletteColours[0]);
+}
+
+function getNextPaletteColour(colours: string[], nodes: GradientCurveNode[]) {
+  const paletteColours = resolveGradientPaletteColours(colours);
+  return paletteColours[nodes.length % paletteColours.length] ?? paletteColours[0];
+}
+
+function getInsertedNodeId(previousNodes: GradientCurveNode[], nextNodes: GradientCurveNode[]) {
+  const previousIds = new Set(previousNodes.map((node) => node.id));
+  return nextNodes.find((node) => !previousIds.has(node.id))?.id ?? null;
+}
+
 export function createGradientToolController(deps: GradientToolControllerDeps): GradientToolController {
   function openGradientToolModal() {
     const doc = deps.getActiveDocument();
@@ -146,14 +183,28 @@ export function createGradientToolController(deps: GradientToolControllerDeps): 
     const addButton = byId<HTMLButtonElement>("gradient-add-node-btn");
     const resetButton = byId<HTMLButtonElement>("gradient-reset-btn");
     const applyButton = byId<HTMLButtonElement>("gradient-apply-btn");
+    const targetSelect = byId<HTMLSelectElement>("gradient-target-select");
+    const headingControl = byId<HTMLElement>("gradient-heading-control");
 
-    let nodes = createDefaultGradientNodes(deps.getActiveColour(), "#FFFFFF");
+    const hasEffectiveSelection = resolveEffectiveSelectionMask(doc) !== null;
+
+    let nodes = createPaletteGradientNodes(deps.getGradientPaletteColours());
     let activeNodeId: string | null = null;
     let draggingPointerId: number | null = null;
+    let targetScope: GradientTargetScope = hasEffectiveSelection ? "selection" : "canvas";
+    let headingDegrees = DEFAULT_GRADIENT_HEADING_DEGREES;
+    let radialHandle: RadialHandle | null = null;
+
+    targetSelect.disabled = !hasEffectiveSelection;
+    targetSelect.value = targetScope;
+
+    const onTargetChange = () => {
+      targetScope = targetSelect.value === "canvas" ? "canvas" : "selection";
+    };
 
     const render = () => {
       drawCurveCanvas(curveCanvas, nodes, activeNodeId);
-      drawPreviewCanvas(previewCanvas, nodes);
+      drawPreviewCanvas(previewCanvas, nodes, headingDegrees);
       renderNodeList(nodeList, nodes, (id, colour) => {
         nodes = updateGradientNodeColour(nodes, id, colour);
         render();
@@ -185,8 +236,14 @@ export function createGradientToolController(deps: GradientToolControllerDeps): 
 
     const onPointerDown = (event: PointerEvent) => {
       const node = findNodeAtEvent(event);
-      if (!node) return;
-      activeNodeId = node.id;
+      if (node) {
+        activeNodeId = node.id;
+      } else {
+        const point = getCanvasNodePosition(event);
+        const nextNodes = addGradientNodeAtPosition(nodes, point.x, point.y, getNextPaletteColour(deps.getGradientPaletteColours(), nodes));
+        activeNodeId = getInsertedNodeId(nodes, nextNodes);
+        nodes = nextNodes;
+      }
       draggingPointerId = event.pointerId;
       curveCanvas.setPointerCapture(event.pointerId);
       render();
@@ -206,14 +263,18 @@ export function createGradientToolController(deps: GradientToolControllerDeps): 
     };
 
     const onAddNode = () => {
-      nodes = addGradientNode(nodes);
-      activeNodeId = nodes[Math.max(0, nodes.length - 2)]?.id ?? null;
+      const nextNodes = addGradientNode(nodes, getNextPaletteColour(deps.getGradientPaletteColours(), nodes));
+      activeNodeId = getInsertedNodeId(nodes, nextNodes);
+      nodes = nextNodes;
       render();
     };
 
     const onReset = () => {
-      nodes = resetGradientNodes(deps.getActiveColour(), "#FFFFFF");
+      const paletteColours = resolveGradientPaletteColours(deps.getGradientPaletteColours());
+      nodes = resetGradientNodes(paletteColours[0], paletteColours[1] ?? paletteColours[0]);
       activeNodeId = null;
+      headingDegrees = DEFAULT_GRADIENT_HEADING_DEGREES;
+      radialHandle?.setValue(headingDegrees);
       render();
     };
 
@@ -227,6 +288,9 @@ export function createGradientToolController(deps: GradientToolControllerDeps): 
       addButton.removeEventListener("click", onAddNode);
       resetButton.removeEventListener("click", onReset);
       applyButton.removeEventListener("click", onApply);
+      targetSelect.removeEventListener("change", onTargetChange);
+      radialHandle?.destroy();
+      radialHandle = null;
     };
 
     const onApply = () => {
@@ -243,7 +307,7 @@ export function createGradientToolController(deps: GradientToolControllerDeps): 
       }
 
       beginDocumentOperation(snapshotDocument(currentDoc));
-      const result = applyGradientToSelection(currentDoc, currentLayer as RasterLayer, nodes);
+      const result = applyGradientToSelection(currentDoc, currentLayer as RasterLayer, nodes, targetScope, headingDegrees);
       if (!result.ok) {
         cancelDocumentOperation();
         deps.showToast(result.message, result.variant);
@@ -263,6 +327,19 @@ export function createGradientToolController(deps: GradientToolControllerDeps): 
     addButton.addEventListener("click", onAddNode);
     resetButton.addEventListener("click", onReset);
     applyButton.addEventListener("click", onApply);
+    targetSelect.addEventListener("change", onTargetChange);
+    radialHandle = bindRadial({
+      el: headingControl,
+      min: 0,
+      max: 359,
+      step: 1,
+      value: headingDegrees,
+      formatValue: (value) => `${value}deg`,
+      onChange: (value) => {
+        headingDegrees = value;
+        drawPreviewCanvas(previewCanvas, nodes, headingDegrees);
+      },
+    });
 
     render();
     openModal({

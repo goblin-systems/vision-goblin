@@ -61,6 +61,12 @@ export interface RegisterEditorCommandsDeps {
   switchTool: (tool: ToolName) => void | Promise<void>;
   openAiJobs: () => void | Promise<void>;
   openAiSettings: () => void | Promise<void>;
+  openGeneralSettings: () => void;
+  openKeyboardShortcuts: () => void;
+  openExportSettings: () => void;
+  openCaptureSettings: () => void;
+  openAutosaveSettings: () => void;
+  openDebugSettings: () => void;
   selectAiSubject: () => void | Promise<void>;
   selectAiBackground: () => void | Promise<void>;
   selectAiObjectByPrompt: () => void | Promise<void>;
@@ -218,6 +224,12 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
     { id: "command-palette", label: "Command Palette", shortcut: "Ctrl+K", category: "window", enabled: () => true, execute: () => deps.togglePalette() },
     { id: "open-ai-jobs", label: "AI: Open Jobs", category: "ai", enabled: () => true, execute: () => void deps.openAiJobs() },
     { id: "open-ai-settings", label: "AI: Open Settings", category: "ai", enabled: () => true, execute: () => void deps.openAiSettings() },
+    { id: "open-general-settings", label: "General Settings", category: "window", enabled: () => true, execute: () => deps.openGeneralSettings() },
+    { id: "open-keyboard-shortcuts", label: "Keyboard Shortcuts", category: "window", enabled: () => true, execute: () => deps.openKeyboardShortcuts() },
+    { id: "open-export-settings", label: "Export Settings", category: "window", enabled: () => true, execute: () => deps.openExportSettings() },
+    { id: "open-capture-settings", label: "Screen Capture Settings", category: "window", enabled: () => true, execute: () => deps.openCaptureSettings() },
+    { id: "open-autosave-settings", label: "Autosave Settings", category: "window", enabled: () => true, execute: () => deps.openAutosaveSettings() },
+    { id: "open-debug-settings", label: "Debug Settings", category: "window", enabled: () => true, execute: () => deps.openDebugSettings() },
 
     { id: "manage-palettes", label: "Manage Palettes", category: "tool", enabled: () => true, execute: () => deps.openManagePalettes() },
     { id: "capture-region", label: "Capture region", category: "tool", enabled: () => true, execute: () => void deps.beginRegionSnip() },

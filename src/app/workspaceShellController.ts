@@ -1,9 +1,9 @@
-import { applyIcons, bindNavigation, bindSplitPaneResize, bindTabs } from "@goblin-systems/goblin-design-system";
+import { applyIcons, bindNavigation, bindSplitPaneResize } from "@goblin-systems/goblin-design-system";
 import { bindSettingsInputs as bindSettingsInputsView, bindToolSelection as bindToolSelectionView } from "./bindings";
 import { byId } from "./dom";
 import { renderDocumentTabs as renderDocumentTabsView, renderSettingsUI as renderSettingsUIView, renderToolState as renderToolStateView, updateBrushUI as updateBrushUIView } from "../editor/render";
 import { clamp } from "../editor/utils";
-import { DEFAULT_KEYBINDINGS, getDefaultSettings, type AppTab, type VisionSettings } from "../settings";
+import { DEFAULT_KEYBINDINGS, getDefaultSettings, type VisionSettings } from "../settings";
 import type { ActiveTool, DocumentState, Layer, ShapeKind } from "../editor/types";
 import { SHAPE_NAMES, type SelectionMode } from "../editor/selection";
 import type { TransformMode } from "../editor/transformController";
@@ -339,6 +339,7 @@ export interface WorkspaceShellControllerDeps {
 export interface WorkspaceShellController {
   bind: () => void;
   syncFromSettings: () => void;
+  renderShellState: () => void;
   renderEditorState: () => void;
   renderBrushUI: () => void;
   renderToolState: () => void;
@@ -348,8 +349,6 @@ export interface WorkspaceShellController {
 }
 
 export function createWorkspaceShellController(deps: WorkspaceShellControllerDeps): WorkspaceShellController {
-  let topTabs: { activate: (tabId: string) => void } | null = null;
-
   function setNavOptionDisabled(id: string, disabled: boolean) {
     const option = byId<HTMLButtonElement>(id);
     option.disabled = disabled;
@@ -375,10 +374,6 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
         el.setAttribute("data-lucide", t === theme ? "circle-dot" : "circle");
       }
     }
-  }
-
-  function renderTabs(activeTab: AppTab) {
-    topTabs?.activate(activeTab);
   }
 
   function renderDebugLoggingUI() {
@@ -561,6 +556,20 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
     deps.canvasWrap.classList.toggle("quick-mask-active", shellState.quickMaskActive);
   }
 
+  function renderShellState() {
+    const settings = deps.getSettings();
+    const doc = deps.getActiveDocument();
+    applyCanvasPreferences(doc);
+    applyShellState(buildWorkspaceShellState({
+      settings,
+      doc,
+      activeLayer: doc ? deps.getActiveLayer(doc) : null,
+      selectedLayerCount: doc ? deps.getSelectedLayerCount(doc) : 0,
+      quickMaskActive: deps.isQuickMaskActive(),
+      activeShapeKind: deps.getActiveShapeKind(),
+    }));
+  }
+
   function renderEditorState() {
     const settings = deps.getSettings();
     const documents = deps.getDocuments();
@@ -618,20 +627,12 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
     renderDebugLoggingUI();
     deps.renderRecentMenus();
 
-    applyShellState(buildWorkspaceShellState({
-      settings,
-      doc,
-      activeLayer: deps.getActiveLayer(doc),
-      selectedLayerCount: deps.getSelectedLayerCount(doc),
-      quickMaskActive: deps.isQuickMaskActive(),
-      activeShapeKind: deps.getActiveShapeKind(),
-    }));
+    renderShellState();
     syncThemeMenuIcons(settings.uiTheme);
     applyIcons();
   }
 
   function syncFromSettings() {
-    renderTabs(deps.getSettings().lastTab);
     renderSettingsUI();
     renderEditorState();
   }
@@ -642,19 +643,6 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
       ? { ...settings, leftPanelCollapsed: !settings.leftPanelCollapsed }
       : { ...settings, rightPanelCollapsed: !settings.rightPanelCollapsed };
     await deps.persistSettings(nextSettings);
-  }
-
-  function bindTabNavigation() {
-    topTabs = bindTabs({
-      onChange: (tabId) => {
-        const nextTab = tabId as AppTab;
-        if (deps.getSettings().lastTab === nextTab) {
-          return;
-        }
-        void deps.persistSettings({ ...deps.getSettings(), lastTab: nextTab });
-        deps.emitWorkspaceEvent("tab-changed", { tab: nextTab });
-      },
-    });
   }
 
   function bindAppNavigation() {
@@ -788,7 +776,6 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
   }
 
   function bind() {
-    bindTabNavigation();
     bindAppNavigation();
     bindToolSelection();
     bindSettingsInputs();
@@ -798,6 +785,7 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
   return {
     bind,
     syncFromSettings,
+    renderShellState,
     renderEditorState,
     renderBrushUI: updateBrushUI,
     renderToolState,

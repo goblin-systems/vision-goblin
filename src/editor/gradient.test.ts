@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeNewDocument } from "./actions/documentActions";
 import {
   addGradientNode,
+  addGradientNodeAtPosition,
   applyGradientToSelection,
+  createGradientSampler,
   createDefaultGradientNodes,
   moveGradientNode,
   removeGradientNode,
   sampleGradientColourHex,
+  sampleGradientCurveY,
   updateGradientNodeColour,
 } from "./gradient";
 
@@ -195,6 +198,16 @@ describe("gradient domain", () => {
     expect(removed[1].x).toBe(1);
   });
 
+  it("adds a node at an explicit curve position", () => {
+    const defaults = createDefaultGradientNodes("#000000", "#FFFFFF");
+    const withNode = addGradientNodeAtPosition(defaults, 0.25, 0.75, "#FF0000");
+
+    expect(withNode).toHaveLength(3);
+    expect(withNode[1]).toMatchObject({ x: 0.25, y: 0.75, color: "#FF0000" });
+    expect(withNode[0].x).toBe(0);
+    expect(withNode[2].x).toBe(1);
+  });
+
   it("samples colours through a multi-node curve", () => {
     const custom = [
       { id: "start", x: 0, y: 0, color: "#000000" },
@@ -204,6 +217,39 @@ describe("gradient domain", () => {
 
     expect(sampleGradientColourHex(custom, 0.5)).toBe("#800000");
     expect(sampleGradientColourHex(custom, 1)).toBe("#FFFFFF");
+  });
+
+  it("reuses cached sampling semantics across curve and colour lookups", () => {
+    const custom = [
+      { id: "start", x: 0, y: 0, color: "#000000" },
+      { id: "mid", x: 0.5, y: 0.25, color: "#FF0000" },
+      { id: "end", x: 1, y: 1, color: "#FFFFFF" },
+    ];
+
+    const sampler = createGradientSampler(custom);
+    const positions = [0, 0.125, 0.25, 0.5, 0.75, 1];
+
+    expect(createGradientSampler(custom)).toBe(sampler);
+
+    for (const position of positions) {
+      expect(sampler.sampleCurveY(position)).toBe(sampleGradientCurveY(custom, position));
+      expect(sampler.sampleHex(position)).toBe(sampleGradientColourHex(custom, position));
+    }
+  });
+
+  it("returns an error when gradient colours are invalid", () => {
+    const doc = makeNewDocument("Doc", 3, 1, 100, "transparent");
+    const layer = doc.layers[1];
+    if (layer.type !== "raster") {
+      throw new Error("Expected raster layer");
+    }
+
+    const result = applyGradientToSelection(doc, layer, [
+      { id: "start", x: 0, y: 0, color: "#000000" },
+      { id: "end", x: 1, y: 1, color: "#GGGGGG" },
+    ]);
+
+    expect(result).toEqual({ ok: false, message: "One or more gradient colours are invalid", variant: "error" });
   });
 
   it("applies a left-to-right gradient across the whole layer when there is no selection", () => {
@@ -239,7 +285,7 @@ describe("gradient domain", () => {
     doc.selectionMask = selectionMask;
     doc.selectionRect = { x: 1, y: 0, width: 3, height: 1 };
 
-    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"));
+    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"), "selection");
 
     expect(result).toEqual({ ok: true, message: "Applied gradient to selection" });
     expect(readPixel(layer.canvas, 0, 0)).toEqual({ r: 17, g: 17, b: 17, a: 255 });
@@ -247,5 +293,62 @@ describe("gradient domain", () => {
     expect(readPixel(layer.canvas, 2, 0).r).toBeGreaterThan(100);
     expect(readPixel(layer.canvas, 3, 0).r).toBe(255);
     expect(readPixel(layer.canvas, 4, 0)).toEqual({ r: 34, g: 34, b: 34, a: 255 });
+  });
+
+  it("ignores the active selection when canvas targeting is chosen", () => {
+    const doc = makeNewDocument("Doc", 5, 1, 100, "transparent");
+    const layer = doc.layers[1];
+    if (layer.type !== "raster") {
+      throw new Error("Expected raster layer");
+    }
+
+    const selectionMask = document.createElement("canvas");
+    selectionMask.width = 5;
+    selectionMask.height = 1;
+    setPixel(selectionMask, 1, 0, "#FFFFFF");
+    setPixel(selectionMask, 2, 0, "#FFFFFF");
+    setPixel(selectionMask, 3, 0, "#FFFFFF");
+    doc.selectionMask = selectionMask;
+    doc.selectionRect = { x: 1, y: 0, width: 3, height: 1 };
+
+    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"), "canvas");
+
+    expect(result).toEqual({ ok: true, message: "Applied gradient to layer" });
+    expect(readPixel(layer.canvas, 0, 0).r).toBe(0);
+    expect(readPixel(layer.canvas, 1, 0).r).toBeGreaterThan(0);
+    expect(readPixel(layer.canvas, 3, 0).r).toBeLessThan(255);
+    expect(readPixel(layer.canvas, 4, 0).r).toBe(255);
+  });
+
+  it("applies a top-to-bottom gradient when the heading is rotated downward", () => {
+    const doc = makeNewDocument("Doc", 1, 4, 100, "transparent");
+    const layer = doc.layers[1];
+    if (layer.type !== "raster") {
+      throw new Error("Expected raster layer");
+    }
+
+    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"), "canvas", 90);
+
+    expect(result).toEqual({ ok: true, message: "Applied gradient to layer" });
+    expect(readPixel(layer.canvas, 0, 0).r).toBe(0);
+    expect(readPixel(layer.canvas, 0, 1).r).toBeGreaterThan(0);
+    expect(readPixel(layer.canvas, 0, 2).r).toBeLessThan(255);
+    expect(readPixel(layer.canvas, 0, 3).r).toBe(255);
+  });
+
+  it("applies a diagonal gradient based on the heading", () => {
+    const doc = makeNewDocument("Doc", 3, 3, 100, "transparent");
+    const layer = doc.layers[1];
+    if (layer.type !== "raster") {
+      throw new Error("Expected raster layer");
+    }
+
+    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"), "canvas", 45);
+
+    expect(result).toEqual({ ok: true, message: "Applied gradient to layer" });
+    expect(readPixel(layer.canvas, 0, 0).r).toBe(0);
+    expect(readPixel(layer.canvas, 2, 2).r).toBe(255);
+    expect(readPixel(layer.canvas, 2, 0).r).toBeGreaterThan(readPixel(layer.canvas, 0, 0).r);
+    expect(readPixel(layer.canvas, 0, 2).r).toBeGreaterThan(readPixel(layer.canvas, 0, 0).r);
   });
 });

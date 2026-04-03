@@ -383,7 +383,70 @@ export function buildTransformMatrix(draft: Pick<TransformDraft, "scaleX" | "sca
   return multiply2x2(rotate, multiply2x2(skew, scale));
 }
 
+type TransformPreview = {
+  canvas: HTMLCanvasElement;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type TransformPreviewCacheKey = {
+  sourceCanvas: HTMLCanvasElement;
+  sourceWidth: number;
+  sourceHeight: number;
+  centerX: number;
+  centerY: number;
+  pivotX: number;
+  pivotY: number;
+  scaleX: number;
+  scaleY: number;
+  rotateDeg: number;
+  skewXDeg: number;
+  skewYDeg: number;
+};
+
+const transformPreviewCache = new WeakMap<TransformDraft, { key: TransformPreviewCacheKey; preview: TransformPreview }>();
+
+function createTransformPreviewCacheKey(draft: TransformDraft): TransformPreviewCacheKey {
+  return {
+    sourceCanvas: draft.sourceCanvas,
+    sourceWidth: draft.sourceCanvas.width,
+    sourceHeight: draft.sourceCanvas.height,
+    centerX: draft.centerX,
+    centerY: draft.centerY,
+    pivotX: draft.pivotX,
+    pivotY: draft.pivotY,
+    scaleX: draft.scaleX,
+    scaleY: draft.scaleY,
+    rotateDeg: draft.rotateDeg,
+    skewXDeg: draft.skewXDeg,
+    skewYDeg: draft.skewYDeg,
+  };
+}
+
+function isMatchingTransformPreviewCacheKey(left: TransformPreviewCacheKey, right: TransformPreviewCacheKey) {
+  return left.sourceCanvas === right.sourceCanvas
+    && left.sourceWidth === right.sourceWidth
+    && left.sourceHeight === right.sourceHeight
+    && left.centerX === right.centerX
+    && left.centerY === right.centerY
+    && left.pivotX === right.pivotX
+    && left.pivotY === right.pivotY
+    && left.scaleX === right.scaleX
+    && left.scaleY === right.scaleY
+    && left.rotateDeg === right.rotateDeg
+    && left.skewXDeg === right.skewXDeg
+    && left.skewYDeg === right.skewYDeg;
+}
+
 export function buildTransformPreview(draft: TransformDraft) {
+  const nextKey = createTransformPreviewCacheKey(draft);
+  const cached = transformPreviewCache.get(draft);
+  if (cached && isMatchingTransformPreviewCacheKey(cached.key, nextKey)) {
+    return cached.preview;
+  }
+
   const matrix = buildTransformMatrix(draft);
   const source = draft.sourceCanvas;
   const anchorSourceX = draft.pivotX - draft.centerX + source.width / 2;
@@ -409,7 +472,9 @@ export function buildTransformPreview(draft: TransformDraft) {
     ctx.drawImage(source, -anchorSourceX, -anchorSourceY);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
-  return { canvas, x: draft.pivotX + minX, y: draft.pivotY + minY, width: canvas.width, height: canvas.height };
+  const preview = { canvas, x: draft.pivotX + minX, y: draft.pivotY + minY, width: canvas.width, height: canvas.height };
+  transformPreviewCache.set(draft, { key: nextKey, preview });
+  return preview;
 }
 
 export function fillLayer(layer: Layer, color: string) {

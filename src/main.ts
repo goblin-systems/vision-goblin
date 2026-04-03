@@ -9,6 +9,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   getDefaultSettings,
+  getActivePalette,
   loadSettings,
   saveSettings,
   type ToolName,
@@ -80,6 +81,10 @@ function renderEditorState() {
   workspaceShellController.renderEditorState();
 }
 
+function renderShellState() {
+  workspaceShellController.renderShellState();
+}
+
 function renderToolState() {
   workspaceShellController.renderToolState();
 }
@@ -94,6 +99,10 @@ function updateBrushUI() {
 
 function renderCanvas() {
   canvasWorkspaceController.renderCanvas();
+}
+
+function scheduleCanvasRender() {
+  canvasWorkspaceController.scheduleCanvasRender();
 }
 
 function renderLayers(doc: DocumentState) {
@@ -339,6 +348,7 @@ const canvasPointer = createCanvasPointerController({
   snapLayerPosition: (layer, rawX, rawY) => canvasWorkspaceController.snapLayerPosition(layer, rawX, rawY),
   pointerState,
   renderCanvas,
+  scheduleCanvasRender,
   renderEditorState,
   onColourPicked: (colour) => {
     editorInteractionController.setActiveColour(colour);
@@ -424,7 +434,7 @@ const distortModalController = createDistortModalController({
 const gradientToolController = createGradientToolController({
   getActiveDocument,
   getActiveLayer,
-  getActiveColour: () => editorInteractionController.getBrushState().activeColour,
+  getGradientPaletteColours: () => getActivePalette(settings).colours,
   renderEditorState,
   showToast,
 });
@@ -466,6 +476,7 @@ canvasWorkspaceController = createCanvasWorkspaceController({
   getMarqueeSides: () => selectionController.getMarqueeSides(),
   getMarqueeModifiers,
   getQuickMaskOverlay: () => selectionController.getQuickMaskOverlay(),
+  renderShellState,
   renderEditorState,
   updateMarqueeModeFromModifiers,
   captureSelectionMode: () => selectionController.captureSelectionMode(),
@@ -540,7 +551,7 @@ async function switchTool(tool: ToolName) {
   if (transformController.getDraft() && tool !== "transform") {
     commitTransformDraft();
   }
-  await persistSettings({ ...settings, activeTool: tool, lastTab: "editor" });
+  await persistSettings({ ...settings, activeTool: tool });
   renderEditorState();
   if (tool === "gradient") {
     gradientToolController.openGradientToolModal();
@@ -603,6 +614,11 @@ function resizeActiveCanvas() {
   pushHistory(doc, `Resized canvas to ${Math.round(nextWidth)}x${Math.round(nextHeight)} from ${anchor}`);
   debugLog(`Resized canvas for '${doc.name}' to ${Math.round(nextWidth)}x${Math.round(nextHeight)} from ${anchor}`, "INFO");
   renderEditorState();
+}
+
+function openSettingsModal(modalId: string) {
+  const backdrop = byId<HTMLElement>(modalId);
+  openModal({ backdrop });
 }
 
 function openResizeCanvasModal() {
@@ -920,6 +936,12 @@ function registerEditorCommands() {
     switchTool,
     openAiJobs: () => aiController.focusJobs(),
     openAiSettings: () => aiController.focusSettings(),
+    openGeneralSettings: () => openSettingsModal("general-settings-modal"),
+    openKeyboardShortcuts: () => openSettingsModal("keyboard-shortcuts-modal"),
+    openExportSettings: () => openSettingsModal("export-settings-modal"),
+    openCaptureSettings: () => openSettingsModal("capture-settings-modal"),
+    openAutosaveSettings: () => openSettingsModal("autosave-settings-modal"),
+    openDebugSettings: () => openSettingsModal("debug-settings-modal"),
     selectAiSubject: () => aiEditingController.selectSubject(),
     selectAiBackground: () => aiEditingController.selectBackground(),
     selectAiObjectByPrompt: () => aiEditingController.selectObjectByPrompt(),

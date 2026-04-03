@@ -12,7 +12,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@goblin-systems/goblin-design-system": "^0.1.7",
+    "@goblin-systems/goblin-design-system": "^0.2.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-fs": "^2",

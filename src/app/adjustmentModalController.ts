@@ -88,6 +88,11 @@ interface SliderModalOptions<P> {
   defaultParams: P;
   applyFn: (source: ImageData, params: P) => ImageData;
   historyLabel: string;
+  previewDebounceMs?: number;
+}
+
+interface AdjustmentSessionOptions {
+  previewDebounceMs?: number;
 }
 
 export function getAdjustmentSessionError(doc: DocumentState | null, layer: Layer | null): string | null {
@@ -195,15 +200,52 @@ function resolveAdjustmentSessionTarget(deps: Pick<AdjustmentModalControllerDeps
   };
 }
 
-function createSession(target: AdjustmentSessionTarget, deps: Pick<AdjustmentModalControllerDeps, "renderCanvas" | "renderEditorState" | "showToast">) {
+function createSession(
+  target: AdjustmentSessionTarget,
+  deps: Pick<AdjustmentModalControllerDeps, "renderCanvas" | "renderEditorState" | "showToast">,
+  options: AdjustmentSessionOptions = {},
+) {
   let previewRaf = 0;
+  let previewTimeout = 0;
+  let pendingPreview: ((source: ImageData) => ImageData) | null = null;
   let settled = false;
   const cleanupFns: Array<() => void> = [];
+  const previewDebounceMs = options.previewDebounceMs ?? 0;
+
+  const cancelPendingPreview = () => {
+    cancelAnimationFrame(previewRaf);
+    previewRaf = 0;
+    clearTimeout(previewTimeout);
+    previewTimeout = 0;
+  };
+
+  const queueLatestPreview = () => {
+    if (!pendingPreview) return;
+    cancelAnimationFrame(previewRaf);
+    previewRaf = requestAnimationFrame(() => {
+      previewRaf = 0;
+      const applyPreview = pendingPreview;
+      pendingPreview = null;
+      if (!applyPreview || settled) return;
+      renderPreview(target, deps.renderCanvas, applyPreview);
+    });
+  };
 
   return {
     schedulePreview(applyPreview: (source: ImageData) => ImageData) {
-      cancelAnimationFrame(previewRaf);
-      previewRaf = requestAnimationFrame(() => renderPreview(target, deps.renderCanvas, applyPreview));
+      pendingPreview = applyPreview;
+      if (previewDebounceMs <= 0) {
+        clearTimeout(previewTimeout);
+        previewTimeout = 0;
+        queueLatestPreview();
+        return;
+      }
+
+      cancelPendingPreview();
+      previewTimeout = window.setTimeout(() => {
+        previewTimeout = 0;
+        queueLatestPreview();
+      }, previewDebounceMs);
     },
     addCleanup(fn: () => void) {
       cleanupFns.push(fn);
@@ -211,13 +253,16 @@ function createSession(target: AdjustmentSessionTarget, deps: Pick<AdjustmentMod
     finish(applied: boolean) {
       if (settled) return;
       settled = true;
-      cancelAnimationFrame(previewRaf);
+      cancelPendingPreview();
+      pendingPreview = null;
       for (const cleanup of cleanupFns) cleanup();
       if (!applied) {
         restoreDestructiveAdjustmentPreview(target, deps.renderCanvas);
       }
     },
     commit(backdrop: HTMLElement, historyLabel: string, successMessage: string, applyPreview: (source: ImageData) => ImageData) {
+      cancelPendingPreview();
+      pendingPreview = null;
       closeModal({ backdrop });
       commitDestructiveAdjustment({
         target,
@@ -289,7 +334,7 @@ export function createAdjustmentModalController(deps: AdjustmentModalControllerD
     const backdrop = byId<HTMLElement>(options.modalId);
     const applyBtn = byId<HTMLButtonElement>(options.applyBtnId);
     const params = { ...options.defaultParams };
-    const session = createSession(target, deps);
+    const session = createSession(target, deps, { previewDebounceMs: options.previewDebounceMs });
 
     for (const slider of options.sliders) {
       const range = byId<HTMLInputElement>(slider.rangeId);
@@ -720,6 +765,7 @@ export function createAdjustmentModalController(deps: AdjustmentModalControllerD
       defaultParams: { angle: 0, distance: 1 },
       applyFn: applyMotionBlur,
       historyLabel: "Motion Blur",
+      previewDebounceMs: 50,
     });
   }
 

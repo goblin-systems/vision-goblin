@@ -12,45 +12,22 @@ interface BindingDeps {
   showToast: (message: string) => void;
 }
 
-export function bindTabNavigation(deps: BindingDeps & { onTabChanged: (tab: string) => void }) {
-  document.querySelectorAll<HTMLButtonElement>("[data-tab-trigger]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const nextTab = button.dataset.tabTrigger as VisionSettings["lastTab"];
-      await deps.setSettings({ ...deps.getSettings(), lastTab: nextTab });
-      deps.onTabChanged(nextTab);
-    });
-  });
-}
-
 export function bindToolSelection(deps: BindingDeps & { onToolChanged: (tool: ActiveTool) => void }) {
   document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
     button.addEventListener("click", async () => {
       const tool = button.dataset.tool as ActiveTool;
-      await deps.setSettings({ ...deps.getSettings(), activeTool: tool, lastTab: "editor" });
+      await deps.setSettings({ ...deps.getSettings(), activeTool: tool });
       deps.onToolChanged(tool);
     });
   });
 }
 
 export function bindSettingsInputs(deps: BindingDeps) {
-  byId<HTMLInputElement>("checkerboard-toggle").addEventListener("change", async (event: Event) => {
-    await deps.setSettings({ ...deps.getSettings(), showCheckerboard: (event.currentTarget as HTMLInputElement).checked });
-  });
-  byId<HTMLInputElement>("grid-toggle").addEventListener("change", async (event: Event) => {
-    await deps.setSettings({ ...deps.getSettings(), showGrid: (event.currentTarget as HTMLInputElement).checked });
-  });
-  byId<HTMLInputElement>("grid-size-input").addEventListener("change", async (event: Event) => {
-    const value = clamp(Math.round(Number((event.currentTarget as HTMLInputElement).value)), 4, 500);
-    await deps.setSettings({ ...deps.getSettings(), gridSize: value });
-  });
-  byId<HTMLInputElement>("snap-toggle").addEventListener("change", async (event: Event) => {
-    await deps.setSettings({ ...deps.getSettings(), snapEnabled: (event.currentTarget as HTMLInputElement).checked });
-  });
   byId<HTMLInputElement>("confirm-layer-deletion-checkbox").addEventListener("change", async (event: Event) => {
     await deps.setSettings({ ...deps.getSettings(), confirmLayerDeletion: (event.currentTarget as HTMLInputElement).checked });
   });
-  byId<HTMLSelectElement>("default-zoom-select").addEventListener("change", async (event: Event) => {
-    await deps.setSettings({ ...deps.getSettings(), defaultZoom: Number((event.currentTarget as HTMLSelectElement).value) });
+  byId<HTMLInputElement>("show-goblin-note-checkbox").addEventListener("change", async (event: Event) => {
+    await deps.setSettings({ ...deps.getSettings(), showGoblinNote: (event.currentTarget as HTMLInputElement).checked });
   });
   byId<HTMLSelectElement>("colour-format-select").addEventListener("change", async (event: Event) => {
     await deps.setSettings({ ...deps.getSettings(), colourFormat: (event.currentTarget as HTMLSelectElement).value as VisionSettings["colourFormat"] });
@@ -73,12 +50,6 @@ export function bindSettingsInputs(deps: BindingDeps) {
   });
   byId<HTMLInputElement>("capture-hide-window-checkbox").addEventListener("change", async (event: Event) => {
     await deps.setSettings({ ...deps.getSettings(), captureHideWindow: (event.currentTarget as HTMLInputElement).checked });
-  });
-  byId<HTMLInputElement>("left-panel-width-range").addEventListener("input", async (event: Event) => {
-    await deps.setSettings({ ...deps.getSettings(), leftPanelWidth: Number((event.currentTarget as HTMLInputElement).value), leftPanelCollapsed: false });
-  });
-  byId<HTMLInputElement>("right-panel-width-range").addEventListener("input", async (event: Event) => {
-    await deps.setSettings({ ...deps.getSettings(), rightPanelWidth: Number((event.currentTarget as HTMLInputElement).value), rightPanelCollapsed: false });
   });
 }
 

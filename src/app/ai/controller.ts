@@ -1,4 +1,4 @@
-import { applyIcons } from "@goblin-systems/goblin-design-system";
+import { applyIcons, openModal } from "@goblin-systems/goblin-design-system";
 import { byId } from "../dom";
 import { AI_PROVIDER_IDS, type AiProviderId } from "./config";
 import { clearAiProviderSecret, getAiProviderSecret, hasAiProviderSecret, storeAiProviderSecret } from "./secureStore";
@@ -373,16 +373,10 @@ export function createAiController(deps: AiControllerDeps): AiController {
   }
 
   async function focusSettings() {
-    if (deps.getSettings().lastTab !== "settings") {
-      await deps.persistSettings({ ...deps.getSettings(), lastTab: "settings" });
-    }
-    requestAnimationFrame(() => byId<HTMLElement>("ai-settings-section").scrollIntoView({ block: "nearest" }));
+    openModal({ backdrop: byId<HTMLElement>("ai-settings-modal") });
   }
 
   async function focusJobs() {
-    if (deps.getSettings().lastTab !== "editor") {
-      await deps.persistSettings({ ...deps.getSettings(), lastTab: "editor" });
-    }
     requestAnimationFrame(() => byId<HTMLElement>("ai-jobs-panel").scrollIntoView({ block: "nearest" }));
   }
 

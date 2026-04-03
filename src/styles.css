@@ -72,7 +72,6 @@ button svg {
 }
 
 .window-actions,
-.top-tabs,
 .editor-tools-pane,
 .editor-sidebar-pane,
 .editor-canvas-pane,
@@ -95,7 +94,11 @@ button svg {
 }
 
 .window-subtitle {
-  margin-top: var(--space-1);
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  text-align: center;
+  font-size: var(--text-xs);
+  opacity: 0.6;
 }
 
 .goblin-toast {
@@ -156,12 +159,15 @@ button svg {
   gap: var(--space-5);
 }
 
-.nav-bar {
-  flex-shrink: 0;
+.top-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
-.top-tabs {
-  flex: 1;
+.nav-bar {
+  flex-shrink: 0;
 }
 
 .window-action-btn {
@@ -221,7 +227,6 @@ button svg {
   overflow-y: auto;
 }
 
-.editor-toolbar-row,
 .pane-heading-row {
   display: flex;
   align-items: flex-start;
@@ -1081,14 +1086,30 @@ button svg {
   margin-top: var(--space-2);
 }
 
+.modal-card.modal-card--wide {
+  width: min(640px, 100%);
+}
+
 .gradient-tool-modal-card {
+  width: min(760px, calc(100vw - 32px));
   max-width: 760px;
+  max-height: min(760px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.gradient-tool-modal-card .modal-form-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .gradient-tool-curve-wrap,
 .gradient-tool-preview-wrap {
   border: 1px solid var(--border);
   background: var(--bg-section);
+  flex-shrink: 0;
   overflow: hidden;
 }
 
@@ -1106,12 +1127,41 @@ button svg {
   display: flex;
   gap: var(--space-3);
   flex-wrap: wrap;
+  flex-shrink: 0;
+  align-items: flex-end;
+}
+
+.gradient-tool-action-btn,
+.gradient-tool-target-select {
+  min-height: 40px;
+}
+
+.gradient-tool-heading-field,
+.gradient-tool-target-field {
+  margin: 0;
+}
+
+.gradient-tool-heading-field {
+  margin-left: auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+
+.gradient-tool-heading-control {
+  --radial-control-fill-color: color-mix(in srgb, var(--accent) 72%, #ffffff 28%);
+  flex-shrink: 0;
 }
 
 .gradient-node-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  flex-shrink: 0;
+  height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: var(--space-2);
 }
 
 .gradient-node-row {
@@ -1163,7 +1213,6 @@ button svg {
 
   .window-frame-row,
   .top-bar-row,
-  .editor-toolbar-row,
   .editor-status-bar {
     flex-direction: column;
     align-items: flex-start;
@@ -1175,6 +1224,15 @@ button svg {
 
   .canvas-stage {
     min-height: 420px;
+  }
+
+  .gradient-tool-modal-card {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .gradient-node-row {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 
@@ -1416,17 +1474,10 @@ button svg {
 }
 
 /* 2a. Active tab */
-[data-theme] .top-tab.is-active,
 [data-theme] .document-tab.is-active {
   background: var(--tab-active-bg);
   border-color: var(--tab-active-border);
   color: var(--text-heading);
-}
-
-/* 2b. Inactive tab */
-[data-theme] .top-tab {
-  background: var(--tab-inactive-bg);
-  color: var(--text-muted);
 }
 
 [data-theme] .document-tab {

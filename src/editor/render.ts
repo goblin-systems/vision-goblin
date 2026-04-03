@@ -1,4 +1,4 @@
-import type { AppTab, VisionSettings } from "../settings";
+import type { VisionSettings } from "../settings";
 import { getCanvasBounds } from "./geometry";
 import { traceMaskContours, traceMarqueeShape } from "./selection";
 import type { ActiveTool, DocumentState, EffectType, Layer, LayerEffect, Rect } from "./types";
@@ -516,15 +516,6 @@ function getRulerStep(scale: number): number {
   return candidates[candidates.length - 1];
 }
 
-export function renderTabs(activeTab: AppTab) {
-  document.querySelectorAll<HTMLElement>("[data-tab-trigger]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.tabTrigger === activeTab);
-  });
-  document.querySelectorAll<HTMLElement>("[data-tab-panel]").forEach((panel) => {
-    panel.classList.toggle("is-active", panel.dataset.tabPanel === activeTab);
-  });
-}
-
 export function renderDocumentTabs(params: {
   tabs: HTMLElement;
   documents: DocumentState[];
@@ -942,11 +933,6 @@ function renderEffectsList(container: HTMLElement, effects: LayerEffect[], onCha
 }
 
 export function renderSettingsUI(settings: VisionSettings) {
-  (document.getElementById("checkerboard-toggle") as HTMLInputElement).checked = settings.showCheckerboard;
-  (document.getElementById("grid-toggle") as HTMLInputElement).checked = settings.showGrid;
-  (document.getElementById("grid-size-input") as HTMLInputElement).value = String(settings.gridSize);
-  (document.getElementById("snap-toggle") as HTMLInputElement).checked = settings.snapEnabled;
-  (document.getElementById("default-zoom-select") as HTMLSelectElement).value = String(settings.defaultZoom);
   (document.getElementById("colour-format-select") as HTMLSelectElement).value = settings.colourFormat;
   (document.getElementById("export-format-select") as HTMLSelectElement).value = settings.exportFormat;
   (document.getElementById("export-quality-range") as HTMLInputElement).value = String(settings.exportQuality);
@@ -954,7 +940,8 @@ export function renderSettingsUI(settings: VisionSettings) {
   (document.getElementById("capture-destination-select") as HTMLSelectElement).value = settings.captureDestination;
   (document.getElementById("capture-delay-select") as HTMLSelectElement).value = String(settings.captureDelaySeconds);
   (document.getElementById("capture-hide-window-checkbox") as HTMLInputElement).checked = settings.captureHideWindow;
-  (document.getElementById("left-panel-width-range") as HTMLInputElement).value = String(settings.leftPanelWidth);
-  (document.getElementById("right-panel-width-range") as HTMLInputElement).value = String(settings.rightPanelWidth);
   (document.getElementById("confirm-layer-deletion-checkbox") as HTMLInputElement).checked = settings.confirmLayerDeletion;
+  (document.getElementById("show-goblin-note-checkbox") as HTMLInputElement).checked = settings.showGoblinNote;
+  const goblinNote = document.querySelector<HTMLElement>(".goblin-note");
+  if (goblinNote) goblinNote.hidden = !settings.showGoblinNote;
 }

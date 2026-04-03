@@ -2,7 +2,6 @@ import { load, type Store } from "@tauri-apps/plugin-store";
 import { DEFAULT_AI_SETTINGS, cloneAiSettings, normalizeAiSettings, type AiSettings } from "./app/ai/config";
 import { isUiTheme, type UiTheme } from "./app/theme";
 
-export type AppTab = "editor" | "settings";
 export type ToolName = "move" | "marquee" | "transform" | "crop" | "brush" | "eraser" | "fill" | "gradient" | "eyedropper" | "smudge" | "clone-stamp" | "healing-brush" | "text" | "shape" | "lasso" | "polygon-lasso" | "magic-wand";
 export type ColourFormat = "hex" | "rgb" | "hsl";
 export type ExportFormat = "png" | "jpg" | "webp";
@@ -84,7 +83,6 @@ function migratePalette(p: ColourPalette & { primary?: string; secondary?: strin
 }
 
 export interface VisionSettings {
-  lastTab: AppTab;
   activeTool: ToolName;
   showCheckerboard: boolean;
   showGrid: boolean;
@@ -109,9 +107,16 @@ export interface VisionSettings {
   confirmLayerDeletion: boolean;
   keybindings: Record<string, string>;
   ai: AiSettings;
+  showGoblinNote: boolean;
   uiTheme: UiTheme;
   palettes: ColourPalette[];
   activePaletteId: string;
+}
+
+export function getActivePalette(settings: Pick<VisionSettings, "palettes" | "activePaletteId">): ColourPalette {
+  return settings.palettes.find((palette) => palette.id === settings.activePaletteId)
+    ?? settings.palettes[0]
+    ?? DEFAULT_PALETTES[0];
 }
 
 export const DEFAULT_KEYBINDINGS: Record<string, string> = {
@@ -151,7 +156,6 @@ export const DEFAULT_KEYBINDINGS: Record<string, string> = {
 };
 
 const DEFAULTS: VisionSettings = {
-  lastTab: "editor",
   activeTool: "move",
   showCheckerboard: true,
   showGrid: true,
@@ -176,6 +180,7 @@ const DEFAULTS: VisionSettings = {
   confirmLayerDeletion: false,
   keybindings: { ...DEFAULT_KEYBINDINGS },
   ai: cloneAiSettings(DEFAULT_AI_SETTINGS),
+  showGoblinNote: true,
   uiTheme: "goblin" as UiTheme,
   palettes: clonePalettes(DEFAULT_PALETTES),
   activePaletteId: "goblin-neon",
@@ -204,11 +209,6 @@ export function getDefaultSettings(): VisionSettings {
 export async function loadSettings(): Promise<VisionSettings> {
   const next = getDefaultSettings();
   const s = await getStore();
-
-  const lastTab = await s.get<string>("lastTab");
-  if (lastTab === "editor" || lastTab === "settings") {
-    next.lastTab = lastTab;
-  }
 
   const activeTool = await s.get<ToolName>("activeTool");
   if (
@@ -299,6 +299,9 @@ export async function loadSettings(): Promise<VisionSettings> {
   const debugLoggingEnabled = await s.get<boolean>("debugLoggingEnabled");
   if (typeof debugLoggingEnabled === "boolean") next.debugLoggingEnabled = debugLoggingEnabled;
 
+  const showGoblinNote = await s.get<boolean>("showGoblinNote");
+  if (typeof showGoblinNote === "boolean") next.showGoblinNote = showGoblinNote;
+
   const recentImages = await s.get<string[]>("recentImages");
   if (Array.isArray(recentImages)) next.recentImages = recentImages.filter((item): item is string => typeof item === "string").slice(0, 8);
 
@@ -354,7 +357,6 @@ export async function loadSettings(): Promise<VisionSettings> {
 
 export async function saveSettings(settings: VisionSettings): Promise<void> {
   const s = await getStore();
-  await s.set("lastTab", settings.lastTab);
   await s.set("activeTool", settings.activeTool);
   await s.set("showCheckerboard", settings.showCheckerboard);
   await s.set("showGrid", settings.showGrid);
@@ -382,5 +384,6 @@ export async function saveSettings(settings: VisionSettings): Promise<void> {
   await s.set("uiTheme", settings.uiTheme);
   await s.set("palettes", settings.palettes);
   await s.set("activePaletteId", settings.activePaletteId);
+  await s.set("showGoblinNote", settings.showGoblinNote);
   await s.save();
 }

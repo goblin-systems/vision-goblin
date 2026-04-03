@@ -115,4 +115,96 @@ describe("editor documents", () => {
     expect(result.canvas.width).toBeGreaterThan(0);
     expect(result.canvas.height).toBeGreaterThan(0);
   });
+
+  it("reuses the cached preview when the draft inputs are unchanged", () => {
+    const source = createLayerCanvas(80, 60);
+    const ctx = source.getContext("2d")!;
+    vi.mocked(ctx.drawImage).mockClear();
+    vi.mocked(ctx.setTransform).mockClear();
+
+    const draft: TransformDraft = {
+      layerId: "layer-1",
+      sourceCanvas: source,
+      centerX: 40,
+      centerY: 30,
+      pivotX: 40,
+      pivotY: 30,
+      scaleX: 1.2,
+      scaleY: 0.9,
+      rotateDeg: 15,
+      skewXDeg: 5,
+      skewYDeg: -3,
+      snapshot: "data:image/png;base64,AAA",
+    };
+
+    const first = buildTransformPreview(draft);
+    const second = buildTransformPreview(draft);
+
+    expect(second).toBe(first);
+    expect(second.canvas).toBe(first.canvas);
+    expect(ctx.drawImage).toHaveBeenCalledTimes(1);
+    expect(ctx.setTransform).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates the cached preview when transform inputs change", () => {
+    const source = createLayerCanvas(80, 60);
+    const draft: TransformDraft = {
+      layerId: "layer-1",
+      sourceCanvas: source,
+      centerX: 40,
+      centerY: 30,
+      pivotX: 40,
+      pivotY: 30,
+      scaleX: 1,
+      scaleY: 1,
+      rotateDeg: 0,
+      skewXDeg: 0,
+      skewYDeg: 0,
+      snapshot: "data:image/png;base64,AAA",
+    };
+
+    const first = buildTransformPreview(draft);
+    draft.rotateDeg = 30;
+
+    const second = buildTransformPreview(draft);
+
+    expect(second).not.toBe(first);
+    expect(second.canvas).not.toBe(first.canvas);
+  });
+
+  it("invalidates the cached preview when the source canvas identity or size changes", () => {
+    const initialSource = createLayerCanvas(80, 60);
+    const replacementSource = createLayerCanvas(120, 90);
+    const draft: TransformDraft = {
+      layerId: "layer-1",
+      sourceCanvas: initialSource,
+      centerX: 40,
+      centerY: 30,
+      pivotX: 40,
+      pivotY: 30,
+      scaleX: 1,
+      scaleY: 1,
+      rotateDeg: 0,
+      skewXDeg: 0,
+      skewYDeg: 0,
+      snapshot: "data:image/png;base64,AAA",
+    };
+
+    const first = buildTransformPreview(draft);
+    draft.sourceCanvas.width = 100;
+
+    const resizedSourcePreview = buildTransformPreview(draft);
+    draft.sourceCanvas = replacementSource;
+    draft.centerX = 60;
+    draft.centerY = 45;
+    draft.pivotX = 60;
+    draft.pivotY = 45;
+
+    const replacedSourcePreview = buildTransformPreview(draft);
+
+    expect(resizedSourcePreview).not.toBe(first);
+    expect(resizedSourcePreview.canvas).not.toBe(first.canvas);
+    expect(replacedSourcePreview).not.toBe(resizedSourcePreview);
+    expect(replacedSourcePreview.canvas).not.toBe(resizedSourcePreview.canvas);
+  });
 });
