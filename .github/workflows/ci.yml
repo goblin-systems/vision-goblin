@@ -40,6 +40,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libjavascriptcoregtk-4.1-dev \
             libpipewire-0.3-dev \
+            libgbm-dev \
             build-essential \
             curl \
             wget \
