@@ -185,7 +185,7 @@ jobs:
             bundles: nsis
           - os: macos-latest
             bundles: dmg
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             bundles: deb,appimage
 
     steps:
@@ -201,7 +201,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux system dependencies
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -217,7 +217,7 @@ jobs:
             libasound2-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            libfuse2 \
+            libfuse2t64 \
             patchelf
 
       - name: Install dependencies
