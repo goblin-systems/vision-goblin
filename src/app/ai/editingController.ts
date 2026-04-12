@@ -1,30 +1,56 @@
 import { createLayerCanvas, snapshotDocument, syncLayerSource } from "../../editor/documents";
-import { isMaskEmpty, maskBoundingRect } from "../../editor/selection";
-import type { DocumentState, Layer } from "../../editor/types";
+import { createMaskCanvas, isMaskEmpty, maskBoundingRect } from "../../editor/selection";
+import type { DocumentState, Layer, RasterLayer } from "../../editor/types";
+import { applyStructuredTextReconstruction } from "../../editor/textReconstruction";
 import type { AiController } from "./controller";
-import type { AiInputScope, AiTask } from "./types";
-import { aiPromptTextWithInputScope, aiPromptSelect, aiPromptOutpaintWithInputScope, aiPromptEnhancement, aiPromptRemoveBackgroundWithInputScope, aiPromptThumbnailWithInputScope, aiPromptInputScope } from "./aiPromptModal";
+import type { AiProviderId } from "./config";
+import type { AiImageAsset, AiInputScope, AiMaskAsset, AiTask } from "./types";
+import { aiPromptTextWithInputScope, aiPromptSelect, aiPromptOutpaintWithInputScope, aiPromptEnhancement, aiPromptRemoveBackgroundWithInputScope, aiPromptThumbnailWithInputScope, aiPromptInputScope, aiPromptReviewText, aiPromptReviewTextPieces } from "./aiPromptModal";
 import {
+  createGuideMaskUnion,
   addRasterLayerFromCanvas,
   applyMaskToLayer,
   applyMaskToSelection,
   artifactToCanvas,
   buildAiProvenance,
   buildBackgroundComposite,
+  buildDualColorGuideMaskAsset,
+  buildMaskAssetFromCanvas,
   buildScopedCompositeImageAsset,
   buildCutoutCanvas,
   buildEnhancementTask,
   buildGenerationTask,
   buildInpaintingTask,
   buildLayerImageAsset,
+  buildRasterLayerContentImageAsset,
   buildSegmentationTask,
-  buildSelectionMaskAsset,
   getImageArtifact,
   getMaskArtifact,
   readReferenceImages,
   replaceLayerWithCanvas,
+  splitMaskIntoConnectedComponents,
   waitForJob,
 } from "./editingSupport";
+import { runTwoStageTextReplacement } from "./textReconstruction/flow";
+import {
+  buildGuideDrivenInpaintingPrompt,
+  REMOVE_OBJECT_DEFAULT_PROMPT,
+  DEFAULT_BACKGROUND_DESCRIPTION,
+  buildThumbnailTextOverlayPrompt,
+} from "./prompts";
+import {
+  DEFAULT_ADD_REFLECTION_SESSION_CONFIG,
+  DEFAULT_CLONE_OBJECT_SESSION_CONFIG,
+  DEFAULT_ADD_SHADOW_SESSION_CONFIG,
+  DEFAULT_INPAINT_SESSION_CONFIG,
+  DEFAULT_MOVE_OBJECT_SESSION_CONFIG,
+  DEFAULT_REMOVE_OBJECT_SESSION_CONFIG,
+  DEFAULT_REMOVE_REFLECTION_SESSION_CONFIG,
+  DEFAULT_REMOVE_SHADOW_SESSION_CONFIG,
+  DEFAULT_REPLACE_TEXT_SESSION_CONFIG,
+  type AiMaskSessionConfig,
+  type AiMaskSessionResult,
+} from "./aiMaskSession";
 
 type ToastVariant = "success" | "error" | "info";
 type EnhancementMode = "auto-enhance" | "denoise" | "style-transfer" | "restore";
@@ -38,6 +64,9 @@ export interface AiEditingControllerDeps {
   showToast: (message: string, variant?: ToastVariant) => void;
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
   saveDebugImage: (dataUrl: string, jobName: string, direction: "input" | "output", label: string) => void;
+  startAiMaskSession?: (doc: DocumentState, config?: AiMaskSessionConfig) => Promise<AiMaskSessionResult | null>;
+  getPrimaryProviderIdForFamily?: (family: AiTask["family"]) => AiProviderId;
+  getPreferredModelForFamily?: (family: AiTask["family"]) => string | undefined;
 }
 
 export interface AiEditingController {
@@ -56,12 +85,21 @@ export interface AiEditingController {
   openRestoreModal(): void;
   generateThumbnail(): Promise<void>;
   freeformAi(): Promise<void>;
+  addShadow(): Promise<void>;
+  removeShadow(): Promise<void>;
+  addReflection(): Promise<void>;
+  removeReflection(): Promise<void>;
+  cloneObject(): Promise<void>;
+  moveObject(): Promise<void>;
+  replaceRasterText(): Promise<void>;
 }
 
 interface AiTaskLogSummary {
   rawPrompt?: string;
   promptMetadata?: string;
 }
+
+const CLONE_OBJECT_MIN_DESTINATION_PIXELS = 24;
 
 export function createAiEditingController(deps: AiEditingControllerDeps): AiEditingController {
   function summarizeTaskForLogging(task: AiTask): AiTaskLogSummary {
@@ -81,10 +119,20 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
         };
       }
       case "inpainting":
-        return {
-          rawPrompt: task.prompt,
-          promptMetadata: `image=${task.input.image.width ?? "?"}×${task.input.image.height ?? "?"}, mask=${task.input.mask.width ?? "?"}×${task.input.mask.height ?? "?"}, mode=${task.options?.mode ?? "replace"}`,
-        };
+        {
+          const metadataParts = [
+            `image=${task.input.image.width ?? "?"}×${task.input.image.height ?? "?"}`,
+            `mask=${task.input.mask.width ?? "?"}×${task.input.mask.height ?? "?"}`,
+            `mode=${task.options?.mode ?? "replace"}`,
+          ];
+          if (task.options?.guideMode) {
+            metadataParts.push(`guideMode=${task.options.guideMode}`);
+          }
+          return {
+            rawPrompt: task.prompt,
+            promptMetadata: metadataParts.join(", "),
+          };
+        }
       case "segmentation":
         return {
           rawPrompt: task.prompt,
@@ -152,6 +200,19 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     return { doc, layer };
   }
 
+  function getEditableRasterLayer(): { doc: DocumentState; layer: RasterLayer } | null {
+    const editable = getEditableLayer();
+    if (!editable) {
+      return null;
+    }
+    if (editable.layer.type !== "raster") {
+      deps.showToast("Choose a raster layer first.", "error");
+      return null;
+    }
+    return { doc: editable.doc, layer: editable.layer };
+  }
+
+
   async function runSegmentation(
     mode: "subject" | "background" | "object" | "background-removal",
     prompt?: string,
@@ -205,6 +266,22 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
 
   function buildScopedInputAsset(doc: DocumentState, inputScope: AiInputScope) {
     return buildScopedCompositeImageAsset(doc, inputScope);
+  }
+
+  function buildImageAssetFromCanvas(canvas: HTMLCanvasElement) {
+    return {
+      kind: "image" as const,
+      mimeType: "image/png",
+      data: canvas.toDataURL("image/png"),
+      width: canvas.width,
+      height: canvas.height,
+    };
+  }
+
+  function extractCanvasRegion(source: HTMLCanvasElement, region: { x: number; y: number; width: number; height: number }) {
+    const extracted = createLayerCanvas(region.width, region.height);
+    extracted.getContext("2d")?.drawImage(source, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height);
+    return extracted;
   }
 
   async function selectSubject() {
@@ -308,7 +385,7 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     }
 
     if (mode === "replace") {
-      const prompt = result.description || "soft studio backdrop";
+      const prompt = result.description || DEFAULT_BACKGROUND_DESCRIPTION;
       deps.saveDebugImage(sourceAsset.asset.data, "AI background replacement", "input", sourceAsset.debugLabel);
       const backgroundResponse = await runTask("AI background replacement", {
         task: buildGenerationTask(prompt, editable.doc.width, editable.doc.height, [sourceAsset.asset]),
@@ -346,34 +423,20 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     if (!editable) {
       return;
     }
-    let mask = buildSelectionMaskAsset(editable.doc);
-    let prompt = "Remove the selected distraction and reconstruct the background.";
-    let inputScope: AiInputScope = "visible-content";
-    if (mask) {
-      deps.log(`AI remove object: using selection mask, ${mask.width ?? 0}×${mask.height ?? 0}`);
+    const sessionResult = deps.startAiMaskSession
+      ? await deps.startAiMaskSession(editable.doc, DEFAULT_REMOVE_OBJECT_SESSION_CONFIG)
+      : null;
+    if (!sessionResult) {
+      return;
     }
+    const mask = buildMaskAssetFromCanvas(sessionResult.surfaceMask);
     if (!mask) {
-      const result = await aiPromptTextWithInputScope("AI: Remove Object", "What should Vision Goblin remove?", "stray person");
-      if (!result) {
-        deps.showToast("Select something or describe the object to remove.", "info");
-        return;
-      }
-      const { prompt: objectPrompt } = result;
-      inputScope = result.inputScope;
-      deps.log(`AI remove object: prompt-based detection, prompt="${objectPrompt}"`);
-      prompt = `Remove the ${objectPrompt} and reconstruct the background naturally.`;
-      const selection = await runSegmentation("object", objectPrompt, inputScope);
-      if (!selection) {
-        return;
-      }
-      mask = {
-        kind: "mask",
-        mimeType: "image/png",
-        data: selection.mask.toDataURL("image/png"),
-        width: selection.mask.width,
-        height: selection.mask.height,
-      };
+      deps.showToast("Paint or select the object to remove.", "error");
+      return;
     }
+    const prompt = REMOVE_OBJECT_DEFAULT_PROMPT;
+    const inputScope = sessionResult.inputScope;
+    deps.log(`AI remove object: using session mask, inputScope=${inputScope}, ${mask.width ?? 0}×${mask.height ?? 0}`);
     const scopedAsset = buildScopedInputAsset(editable.doc, inputScope);
     const targetRegion = {
       x: editable.layer.x,
@@ -415,16 +478,23 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     if (!editable) {
       return;
     }
-    const mask = buildSelectionMaskAsset(editable.doc);
+    const sessionResult = deps.startAiMaskSession
+      ? await deps.startAiMaskSession(editable.doc, DEFAULT_INPAINT_SESSION_CONFIG)
+      : null;
+    if (!sessionResult) {
+      return;
+    }
+    const mask = buildMaskAssetFromCanvas(sessionResult.surfaceMask);
     if (!mask) {
-      deps.showToast("Create a selection before using inpainting.", "error");
+      deps.showToast("Paint or select the area to inpaint.", "error");
       return;
     }
     const result = await aiPromptTextWithInputScope("AI: Inpaint Selection", "Describe what should replace the selected area", "add a hat and sunglasses");
     if (!result) {
       return;
     }
-    const { prompt, inputScope } = result;
+    const { prompt } = result;
+    const inputScope = sessionResult.inputScope;
     deps.log(`AI inpaint: prompt="${prompt}", inputScope=${inputScope}, image=${editable.doc.width}×${editable.doc.height}, mask=${mask.width ?? 0}×${mask.height ?? 0}`);
     const scopedAsset = buildScopedInputAsset(editable.doc, inputScope);
     const targetRegion = {
@@ -458,6 +528,264 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     );
     deps.renderEditorState();
     deps.showToast("Inpainting applied.", "success");
+  }
+
+  async function replaceRasterText() {
+    const editable = getEditableRasterLayer();
+    if (!editable) {
+      return;
+    }
+
+    const sessionResult = deps.startAiMaskSession
+      ? await deps.startAiMaskSession(editable.doc, DEFAULT_REPLACE_TEXT_SESSION_CONFIG)
+      : null;
+    if (!sessionResult) {
+      return;
+    }
+
+    const isLayerScope = sessionResult.inputScope === "selected-layers";
+
+    let effectiveMask: HTMLCanvasElement;
+    let selectionBounds: { x: number; y: number; width: number; height: number };
+    let scopedAsset: { asset: AiImageAsset; debugLabel: string };
+    let contentBoundsLocal: { x: number; y: number; width: number; height: number } | null = null;
+
+    if (isLayerScope) {
+      const contentAsset = buildRasterLayerContentImageAsset(editable.layer);
+      contentBoundsLocal = contentAsset.boundsLocal;
+      const contentOffsetX = contentBoundsLocal?.x ?? 0;
+      const contentOffsetY = contentBoundsLocal?.y ?? 0;
+
+      // Translate the document-space mask into cropped-content-space so it
+      // matches the tight raster content image we send to the AI.
+      const contentWidth = contentAsset.asset.width ?? editable.layer.canvas.width;
+      const contentHeight = contentAsset.asset.height ?? editable.layer.canvas.height;
+      const layerMask = createMaskCanvas(contentWidth, contentHeight);
+      const layerMaskCtx = layerMask.getContext("2d");
+      if (layerMaskCtx) {
+        layerMaskCtx.drawImage(
+          sessionResult.surfaceMask,
+          -editable.layer.x - contentOffsetX,
+          -editable.layer.y - contentOffsetY,
+        );
+      }
+      effectiveMask = layerMask;
+
+      const maskRect = maskBoundingRect(layerMask);
+      if (maskRect) {
+        selectionBounds = maskRect;
+      } else {
+        selectionBounds = {
+          x: 0,
+          y: 0,
+          width: contentWidth,
+          height: contentHeight,
+        };
+        const fallbackCtx = layerMask.getContext("2d");
+        if (fallbackCtx) {
+          fallbackCtx.fillStyle = "#ffffff";
+          fallbackCtx.fillRect(0, 0, contentWidth, contentHeight);
+        }
+      }
+
+      scopedAsset = {
+        asset: contentAsset.asset,
+        debugLabel: "layer-content",
+      };
+    } else {
+      effectiveMask = sessionResult.surfaceMask;
+
+      const maskRect = maskBoundingRect(sessionResult.surfaceMask);
+      if (maskRect) {
+        selectionBounds = maskRect;
+      } else {
+        selectionBounds = {
+          x: editable.layer.x,
+          y: editable.layer.y,
+          width: editable.layer.canvas.width,
+          height: editable.layer.canvas.height,
+        };
+        const fullMaskCtx = sessionResult.surfaceMask.getContext("2d");
+        if (fullMaskCtx) {
+          fullMaskCtx.fillStyle = "#ffffff";
+          fullMaskCtx.fillRect(selectionBounds.x, selectionBounds.y, selectionBounds.width, selectionBounds.height);
+        }
+      }
+
+      scopedAsset = buildScopedInputAsset(editable.doc, sessionResult.inputScope);
+    }
+
+    // Overlap check: compare selection bounds against layer extent.
+    // For layer-scope, both are in cropped-content-space (origin 0,0).
+    // For doc-scope, both are in document-space.
+    const layerExtent = isLayerScope
+      ? {
+        x: 0,
+        y: 0,
+        width: scopedAsset.asset.width ?? editable.layer.canvas.width,
+        height: scopedAsset.asset.height ?? editable.layer.canvas.height,
+      }
+      : { x: editable.layer.x, y: editable.layer.y, width: editable.layer.canvas.width, height: editable.layer.canvas.height };
+    const overlapsLayer = selectionBounds.x < layerExtent.x + layerExtent.width
+      && selectionBounds.x + selectionBounds.width > layerExtent.x
+      && selectionBounds.y < layerExtent.y + layerExtent.height
+      && selectionBounds.y + selectionBounds.height > layerExtent.y;
+    if (!overlapsLayer) {
+      deps.showToast("Selection must overlap the active raster layer.", "error");
+      return;
+    }
+
+    const maskAsset = buildMaskAssetFromCanvas(effectiveMask);
+    if (!maskAsset) {
+      deps.showToast("Selection mask is unavailable.", "error");
+      return;
+    }
+
+    deps.log(`AI replace raster text: selection=${JSON.stringify(selectionBounds)}, scope=${isLayerScope ? "layer" : "document"}`);
+    deps.saveDebugImage(scopedAsset.asset.data, "AI replace raster text", "input", scopedAsset.debugLabel);
+    deps.saveDebugImage(maskAsset.data, "AI replace raster text", "input", "mask");
+
+    const textReplacementProviderId = deps.getPrimaryProviderIdForFamily?.("text-replacement");
+    const textReplacementModel = deps.getPreferredModelForFamily?.("text-replacement");
+
+    const result = await runTwoStageTextReplacement(
+      {
+        runTask: async (title, request) => runTask(title, {
+          ...request,
+          plannedProviderId: textReplacementProviderId,
+          plannedModel: textReplacementModel,
+        }),
+        showToast: deps.showToast,
+      },
+      scopedAsset.asset,
+      maskAsset,
+    );
+
+    if (!result.ok || !result.cleanedImageArtifact || !result.blocks) {
+      deps.showToast(result.error ?? "AI text replacement returned invalid output.", "error");
+      return;
+    }
+
+    deps.saveDebugImage(result.cleanedImageArtifact.data, "AI replace raster text", "output", "cleaned");
+
+    let cleanedCanvas: HTMLCanvasElement;
+    if (isLayerScope) {
+      // AI returned an image sized to the cropped raster content — use it directly.
+      cleanedCanvas = await artifactToCanvas(result.cleanedImageArtifact, {
+        expectedWidth: scopedAsset.asset.width,
+        expectedHeight: scopedAsset.asset.height,
+      });
+    } else {
+      // AI returned a document-sized image — extract the layer region.
+      const cleanedFullCanvas = await artifactToCanvas(result.cleanedImageArtifact, {
+        expectedWidth: editable.doc.width,
+        expectedHeight: editable.doc.height,
+      });
+      cleanedCanvas = extractCanvasRegion(cleanedFullCanvas, {
+        x: editable.layer.x,
+        y: editable.layer.y,
+        width: editable.layer.canvas.width,
+        height: editable.layer.canvas.height,
+      });
+    }
+
+    // Normalize AI-returned text block coordinates to document-space.
+    // For layer-scope: AI coordinates are relative to cropped-content top-left →
+    //   offset by layer position plus cropped content origin to get document-space.
+    // For doc-scope: AI coordinates are relative to the selection crop →
+    //   offset by selection bounds (already in document-space).
+    const blockOffsetX = isLayerScope ? editable.layer.x + (contentBoundsLocal?.x ?? 0) : selectionBounds.x;
+    const blockOffsetY = isLayerScope ? editable.layer.y + (contentBoundsLocal?.y ?? 0) : selectionBounds.y;
+    const normalizedBlocks = result.blocks.map((block) => ({
+      ...block,
+      bounds: {
+        x: block.bounds.x + blockOffsetX,
+        y: block.bounds.y + blockOffsetY,
+        width: block.bounds.width,
+        height: block.bounds.height,
+      },
+    }));
+
+    const reviewedBlocks = normalizedBlocks.length === 1
+      ? await (async () => {
+        const block = normalizedBlocks[0];
+        const messageParts = ["Review and edit the reconstructed text before applying. Handwriting, curved, and decorative text may need manual correction."];
+        if (typeof block.confidence === "number") {
+          messageParts.push(`Confidence: ${Math.round(block.confidence * 100)}%`);
+        }
+        if (block.notes) {
+          messageParts.push(`Note: ${block.notes}`);
+        }
+        const review = await aiPromptReviewText(
+          "AI: Replace Raster Text",
+          messageParts.join(" — "),
+          block.text,
+        );
+        if (!review) {
+          return null;
+        }
+        return [{ ...block, text: review.text }];
+      })()
+      : await (async () => {
+        const hasConfidence = normalizedBlocks.some((b) => typeof b.confidence === "number");
+        const hasNotes = normalizedBlocks.some((b) => !!b.notes);
+        const messageParts = ["Review and edit each reconstructed text block before applying. Handwriting, curved, and decorative text may need manual correction."];
+        if (hasConfidence) {
+          const avgConfidence = normalizedBlocks.reduce((sum, b) => sum + (b.confidence ?? 0), 0) / normalizedBlocks.length;
+          messageParts.push(`Average confidence: ${Math.round(avgConfidence * 100)}%`);
+        }
+        if (hasNotes) {
+          const blockNotes = normalizedBlocks.filter((b) => b.notes).map((b, i) => `Block ${i + 1}: ${b.notes}`);
+          messageParts.push(blockNotes.join("; "));
+        }
+        const review = await aiPromptReviewTextPieces(
+          "AI: Replace Raster Text",
+          messageParts.join(" — "),
+          normalizedBlocks.map((block) => ({ id: block.id, text: block.text })),
+        );
+        if (!review) {
+          return null;
+        }
+        const reviewedById = new Map(review.map((piece) => [piece.id, piece.text]));
+        return normalizedBlocks
+          .map((block) => {
+            const text = reviewedById.get(block.id)?.trim() ?? "";
+            return text ? { ...block, text } : null;
+          })
+          .filter((block): block is typeof normalizedBlocks[number] => block !== null);
+      })();
+
+    if (!reviewedBlocks || reviewedBlocks.length === 0) {
+      deps.showToast("Raster text replacement cancelled.", "info");
+      return;
+    }
+
+    applyStructuredTextReconstruction(
+      editable.doc,
+      editable.layer,
+      cleanedCanvas,
+      reviewedBlocks,
+      "AI Replace Raster Text",
+      isLayerScope
+        ? {
+          rasterX: editable.layer.x + (contentBoundsLocal?.x ?? 0),
+          rasterY: editable.layer.y + (contentBoundsLocal?.y ?? 0),
+        }
+        : undefined,
+    );
+
+    for (const warning of result.warnings) {
+      deps.log(`AI text reconstruction warning: ${warning}`, "WARN");
+    }
+
+    deps.renderEditorState();
+    deps.showToast(
+      reviewedBlocks.length > 1
+        ? "Raster text replaced with editable text layers."
+        : "Raster text replaced with an editable text layer.",
+      "success",
+    );
+    return;
   }
 
   async function outpaintCanvas() {
@@ -674,7 +1002,7 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     const [w, h] = result.size.split("x").map(Number);
     let prompt = result.prompt;
     if (result.textOverlay) {
-      prompt += `. Include the text "${result.textOverlay}" positioned at the ${result.textPosition} of the image.`;
+      prompt = buildThumbnailTextOverlayPrompt(prompt, result.textOverlay, result.textPosition ?? "bottom");
     }
     deps.log(`AI thumbnail: size=${result.size}, inputScope=${result.inputScope}, prompt="${result.prompt}"${result.textOverlay ? `, text="${result.textOverlay}" at ${result.textPosition}` : ""}`);
     const scopedAsset = buildScopedInputAsset(doc, result.inputScope);
@@ -745,6 +1073,312 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     deps.showToast("Freeform AI result added as a new layer.", "success");
   }
 
+  async function addShadow() {
+    await runAiMaskGuidedEdit({
+      actionLabel: "AI Add Shadow",
+      title: "AI shadow generation",
+      debugJobName: "AI shadow",
+      providerRequirementLabel: "AI Add Shadow",
+      blockedProviderMessage: "AI Add Shadow currently requires Google Gemini as the primary inpainting provider.",
+      successMessage: "Shadow applied.",
+      historyLabel: "AI Add Shadow",
+      provenanceOperation: "add-shadow",
+      sessionConfig: DEFAULT_ADD_SHADOW_SESSION_CONFIG,
+    });
+  }
+
+  async function removeShadow() {
+    await runAiMaskGuidedEdit({
+      actionLabel: "AI Remove Shadow",
+      title: "AI shadow removal",
+      debugJobName: "AI shadow removal",
+      providerRequirementLabel: "AI Remove Shadow",
+      blockedProviderMessage: "AI Remove Shadow currently requires Google Gemini as the primary inpainting provider.",
+      successMessage: "Shadow removal applied.",
+      historyLabel: "AI Remove Shadow",
+      provenanceOperation: "remove-shadow",
+      sessionConfig: DEFAULT_REMOVE_SHADOW_SESSION_CONFIG,
+    });
+  }
+
+  async function addReflection() {
+    await runAiMaskGuidedEdit({
+      actionLabel: "AI Add Reflection",
+      title: "AI reflection generation",
+      debugJobName: "AI reflection",
+      providerRequirementLabel: "AI Add Reflection",
+      blockedProviderMessage: "AI Add Reflection currently requires Google Gemini as the primary inpainting provider.",
+      successMessage: "Reflection applied.",
+      historyLabel: "AI Add Reflection",
+      provenanceOperation: "add-reflection",
+      sessionConfig: DEFAULT_ADD_REFLECTION_SESSION_CONFIG,
+    });
+  }
+
+  async function removeReflection() {
+    await runAiMaskGuidedEdit({
+      actionLabel: "AI Remove Reflection",
+      title: "AI reflection removal",
+      debugJobName: "AI reflection removal",
+      providerRequirementLabel: "AI Remove Reflection",
+      blockedProviderMessage: "AI Remove Reflection currently requires Google Gemini as the primary inpainting provider.",
+      successMessage: "Reflection removal applied.",
+      historyLabel: "AI Remove Reflection",
+      provenanceOperation: "remove-reflection",
+      sessionConfig: DEFAULT_REMOVE_REFLECTION_SESSION_CONFIG,
+    });
+  }
+
+  async function cloneObject() {
+    const editable = getEditableLayer();
+    if (!editable) {
+      return;
+    }
+    const primaryInpaintingProvider = deps.getPrimaryProviderIdForFamily?.("inpainting");
+    if (primaryInpaintingProvider && primaryInpaintingProvider !== "gemini") {
+      deps.log(`ai clone object blocked: primary inpainting provider is ${primaryInpaintingProvider}, but guided object cloning requires Gemini.`, "WARN");
+      deps.showToast("AI Clone Object currently requires Google Gemini as the primary inpainting provider.", "error");
+      return;
+    }
+
+    const guideState = deps.startAiMaskSession
+      ? await deps.startAiMaskSession(editable.doc, DEFAULT_CLONE_OBJECT_SESSION_CONFIG)
+      : {
+          guideMode: DEFAULT_CLONE_OBJECT_SESSION_CONFIG.guideMode,
+          intensity: DEFAULT_CLONE_OBJECT_SESSION_CONFIG.defaults?.intensity ?? 50,
+          lightDirection: "auto" as const,
+          inputScope: "visible-content" as const,
+          casterMask: createMaskCanvas(editable.doc.width, editable.doc.height),
+          surfaceMask: createMaskCanvas(editable.doc.width, editable.doc.height),
+        };
+    if (!guideState) {
+      return;
+    }
+
+    if (isMaskEmpty(guideState.casterMask)) {
+      deps.showToast(DEFAULT_CLONE_OBJECT_SESSION_CONFIG.channels.caster.validationMessage, "error");
+      return;
+    }
+    if (isMaskEmpty(guideState.surfaceMask)) {
+      deps.showToast(DEFAULT_CLONE_OBJECT_SESSION_CONFIG.channels.surface.validationMessage, "error");
+      return;
+    }
+
+    const destinationComponents = splitMaskIntoConnectedComponents(guideState.surfaceMask);
+    const cloneDestinations = destinationComponents.filter((component) => component.pixelCount >= CLONE_OBJECT_MIN_DESTINATION_PIXELS);
+    const ignoredSpecks = destinationComponents.length - cloneDestinations.length;
+
+    if (cloneDestinations.length === 0) {
+      deps.showToast(`AI Clone Object requires at least one destination area larger than ${CLONE_OBJECT_MIN_DESTINATION_PIXELS} pixels. Tiny black specks are ignored.`, "error");
+      return;
+    }
+
+    const filteredDestinationMask = createGuideMaskUnion(...cloneDestinations.map((component) => component.canvas));
+    if (!filteredDestinationMask) {
+      deps.showToast("Could not build the clone object destination mask.", "error");
+      return;
+    }
+
+    const prompt = buildGuideDrivenInpaintingPrompt("clone-object", {
+      intensity: guideState.intensity,
+      lightDirection: guideState.lightDirection,
+    });
+    deps.log(`ai clone object: guideMode=${guideState.guideMode}, inputScope=${guideState.inputScope}, destinations=${cloneDestinations.length}, ignoredSpecks=${ignoredSpecks}, execution=single-pass`);
+
+    const scopedAsset = buildScopedInputAsset(editable.doc, guideState.inputScope);
+    const targetRegion = {
+      x: editable.layer.x,
+      y: editable.layer.y,
+      width: editable.layer.canvas.width,
+      height: editable.layer.canvas.height,
+    };
+    deps.saveDebugImage(scopedAsset.asset.data, "AI clone object", "input", scopedAsset.debugLabel);
+
+    const editMask = buildDualColorGuideMaskAsset("clone-object", guideState.casterMask, filteredDestinationMask);
+    if (!editMask) {
+      deps.showToast("Could not build the clone object task assets.", "error");
+      return;
+    }
+
+    deps.saveDebugImage(editMask.data, "AI clone object", "input", "clone-guide");
+    const response = await runTask("AI clone object", {
+      task: buildInpaintingTask(scopedAsset.asset, editMask, prompt, "replace", {
+        guideMode: "clone-object",
+      }),
+      fallbackPolicy: "forbid",
+    });
+    if (!response) {
+      return;
+    }
+
+    const artifact = getImageArtifact(response);
+    if (!artifact) {
+      deps.showToast("AI Clone Object returned no image.", "error");
+      return;
+    }
+    deps.saveDebugImage(artifact.data, "AI clone object", "output", "result");
+
+    replaceLayerWithCanvas(
+      editable.doc,
+      editable.layer,
+      await artifactToCanvas(artifact, {
+        expectedWidth: editable.doc.width,
+        expectedHeight: editable.doc.height,
+        extractRegion: targetRegion,
+      }),
+      "AI Clone Object",
+      buildAiProvenance(response, "clone-object", prompt),
+    );
+    deps.renderEditorState();
+    deps.showToast("Object cloned.", "success");
+  }
+
+  async function moveObject() {
+    await runAiMaskGuidedEdit({
+      actionLabel: "AI Move Object",
+      title: "AI move object",
+      debugJobName: "AI move object",
+      providerRequirementLabel: "AI Move Object",
+      blockedProviderMessage: "AI Move Object currently requires Google Gemini as the primary inpainting provider.",
+      successMessage: "Object moved.",
+      historyLabel: "AI Move Object",
+      provenanceOperation: "move-object",
+      sessionConfig: DEFAULT_MOVE_OBJECT_SESSION_CONFIG,
+      validateGuideState: ({ guideState }) => {
+        const destinationIslands = splitMaskIntoConnectedComponents(guideState.surfaceMask);
+        if (destinationIslands.length > 1) {
+          return {
+            ok: false,
+            toast: "AI Move Object currently supports exactly one destination area. Please keep the black guide as a single connected island.",
+          };
+        }
+        return { ok: true };
+      },
+      buildTaskAssets: ({ guideState }) => {
+        const editMask = buildDualColorGuideMaskAsset("move-object", guideState.casterMask, guideState.surfaceMask);
+        if (!editMask) {
+          return {
+            ok: false,
+            toast: "Paint the object to move and one destination area before applying.",
+          };
+        }
+        return {
+          ok: true,
+          editMask,
+        };
+      },
+    });
+  }
+
+  async function runAiMaskGuidedEdit(options: {
+    actionLabel: string;
+    title: string;
+    debugJobName: string;
+    providerRequirementLabel: string;
+    blockedProviderMessage: string;
+    successMessage: string;
+    historyLabel: string;
+    provenanceOperation: string;
+    sessionConfig: AiMaskSessionConfig;
+    validateGuideState?: (args: { guideState: AiMaskSessionResult }) => { ok: true } | { ok: false; toast: string };
+    buildTaskAssets?: (args: { guideState: AiMaskSessionResult }) =>
+      | { ok: true; editMask: AiMaskAsset }
+      | { ok: false; toast: string };
+  }) {
+    const editable = getEditableLayer();
+    if (!editable) {
+      return;
+    }
+    const primaryInpaintingProvider = deps.getPrimaryProviderIdForFamily?.("inpainting");
+    if (primaryInpaintingProvider && primaryInpaintingProvider !== "gemini") {
+      deps.log(`${options.actionLabel.toLowerCase()} blocked: primary inpainting provider is ${primaryInpaintingProvider}, but dual-guide shadow generation requires Gemini.`, "WARN");
+      deps.showToast(options.blockedProviderMessage, "error");
+      return;
+    }
+    const guideState = deps.startAiMaskSession
+      ? await deps.startAiMaskSession(editable.doc, options.sessionConfig)
+      : {
+          guideMode: options.sessionConfig.guideMode,
+          intensity: options.sessionConfig.defaults?.intensity ?? 50,
+          lightDirection: "auto" as const,
+          inputScope: "visible-content" as const,
+          casterMask: createMaskCanvas(editable.doc.width, editable.doc.height),
+          surfaceMask: createMaskCanvas(editable.doc.width, editable.doc.height),
+        };
+    if (!guideState) {
+      return;
+    }
+    const { guideMode, intensity, lightDirection, inputScope } = guideState;
+    if (isMaskEmpty(guideState.surfaceMask)) {
+      deps.showToast(options.sessionConfig.channels.surface.validationMessage, "error");
+      return;
+    }
+
+    const validationResult = options.validateGuideState?.({ guideState });
+    if (validationResult && !validationResult.ok) {
+      deps.showToast(validationResult.toast, "error");
+      return;
+    }
+
+    const taskAssets = options.buildTaskAssets?.({ guideState }) ?? (() => {
+      const editMask = buildDualColorGuideMaskAsset(guideState.guideMode, guideState.casterMask, guideState.surfaceMask);
+      if (!editMask) {
+        return {
+          ok: false as const,
+          toast: "Paint both guides before applying.",
+        };
+      }
+      return {
+        ok: true as const,
+        editMask,
+      };
+    })();
+    if (!taskAssets.ok) {
+      deps.showToast(taskAssets.toast, "error");
+      return;
+    }
+
+    const prompt = buildGuideDrivenInpaintingPrompt(guideMode, { intensity, lightDirection });
+    deps.log(`${options.actionLabel.toLowerCase()}: guideMode=${guideMode}, intensity=${intensity}, lightDirection=${lightDirection}, inputScope=${inputScope}`);
+    const scopedAsset = buildScopedInputAsset(editable.doc, inputScope);
+    const targetRegion = {
+      x: editable.layer.x,
+      y: editable.layer.y,
+      width: editable.layer.canvas.width,
+      height: editable.layer.canvas.height,
+    };
+    deps.saveDebugImage(scopedAsset.asset.data, options.debugJobName, "input", scopedAsset.debugLabel);
+    deps.saveDebugImage(taskAssets.editMask.data, options.debugJobName, "input", "guide-mask");
+    const response = await runTask(options.title, {
+      task: buildInpaintingTask(scopedAsset.asset, taskAssets.editMask, prompt, "replace", {
+        guideMode,
+      }),
+      fallbackPolicy: "forbid",
+    });
+    if (!response) {
+      return;
+    }
+    const artifact = getImageArtifact(response);
+    if (!artifact) {
+      deps.showToast(`${options.providerRequirementLabel} returned no image.`, "error");
+      return;
+    }
+    deps.saveDebugImage(artifact.data, options.debugJobName, "output", "result");
+    replaceLayerWithCanvas(
+      editable.doc,
+      editable.layer,
+      await artifactToCanvas(artifact, {
+        expectedWidth: editable.doc.width,
+        expectedHeight: editable.doc.height,
+        extractRegion: targetRegion,
+      }),
+      options.historyLabel,
+      buildAiProvenance(response, options.provenanceOperation, prompt),
+    );
+    deps.renderEditorState();
+    deps.showToast(options.successMessage, "success");
+  }
+
   function bindButton(id: string, handler: () => void | Promise<void>) {
     const button = document.getElementById(id);
     if (!button) {
@@ -770,6 +1404,12 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     bindButton("ai-restore-btn", openRestoreModal);
     bindButton("ai-thumbnail-btn", generateThumbnail);
     bindButton("ai-freeform-btn", freeformAi);
+    bindButton("ai-add-shadow-btn", addShadow);
+    bindButton("ai-remove-shadow-btn", removeShadow);
+    bindButton("ai-add-reflection-btn", addReflection);
+    bindButton("ai-remove-reflection-btn", removeReflection);
+    bindButton("ai-clone-object-btn", cloneObject);
+    bindButton("ai-move-object-btn", moveObject);
   }
 
   return {
@@ -788,5 +1428,12 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     openRestoreModal,
     generateThumbnail,
     freeformAi,
+    addShadow,
+    removeShadow,
+    addReflection,
+    removeReflection,
+    cloneObject,
+    moveObject,
+    replaceRasterText,
   };
 }

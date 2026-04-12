@@ -150,6 +150,7 @@ export const DEFAULT_KEYBINDINGS: Record<string, string> = {
   "undo": "Ctrl+Z",
   "redo": "Ctrl+Y",
   "redo-alt": "Ctrl+Shift+Z",
+  "copy-image": "Ctrl+C",
   "select-all": "Ctrl+A",
   "deselect": "Ctrl+D",
   "invert-selection": "Ctrl+Shift+I",

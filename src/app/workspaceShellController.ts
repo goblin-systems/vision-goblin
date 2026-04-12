@@ -4,7 +4,7 @@ import { byId } from "./dom";
 import { renderDocumentTabs as renderDocumentTabsView, renderSettingsUI as renderSettingsUIView, renderToolState as renderToolStateView, updateBrushUI as updateBrushUIView } from "../editor/render";
 import { clamp } from "../editor/utils";
 import { DEFAULT_KEYBINDINGS, getDefaultSettings, type VisionSettings } from "../settings";
-import type { ActiveTool, DocumentState, Layer, ShapeKind } from "../editor/types";
+import type { ActiveTool, BrushState, DocumentState, Layer, ShapeKind, TransformIntent } from "../editor/types";
 import { SHAPE_NAMES, type SelectionMode } from "../editor/selection";
 import type { TransformMode } from "../editor/transformController";
 import type { UiTheme } from "./theme";
@@ -107,6 +107,7 @@ const EMPTY_DOC_DISABLED_NAV_IDS = [
   "color-range-nav",
   "refine-edge-nav",
   "quick-mask-nav",
+  "ai-replace-raster-text-nav",
 ] as const;
 
 interface WorkspaceShellState {
@@ -277,6 +278,7 @@ export function buildWorkspaceShellState(params: BuildWorkspaceShellStateParams)
     "color-range-nav": false,
     "refine-edge-nav": !doc.selectionMask,
     "quick-mask-nav": false,
+    "ai-replace-raster-text-nav": false,
   };
   return {
     hasDocument: true,
@@ -309,6 +311,7 @@ export interface WorkspaceShellControllerDeps {
   getMarqueeSides: () => number;
   getEffectiveMarqueeMode: () => SelectionMode;
   getTransformMode: () => TransformMode;
+  getTransformIntent: () => TransformIntent | null;
   isQuickMaskActive: () => boolean;
   getTransformDraftLayerId: () => string | null;
   syncTransformInputs: () => void;
@@ -327,7 +330,7 @@ export interface WorkspaceShellControllerDeps {
   onToolChanged: (tool: ActiveTool) => void;
   emitWorkspaceEvent: (name: string, detail: Record<string, unknown>) => void;
   onAppNavSelect: (id: string) => Promise<void>;
-  getBrushUiState: () => { brushSize: number; brushOpacity: number; activeColour: string };
+  getBrushUiState: () => BrushState;
   configureAutosaveTimer: () => void;
   openDebugLogFolder: () => Promise<void>;
   getDebugLogPath: () => string;
@@ -405,8 +408,12 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
       brushSize: brushUiState.brushSize,
       brushOpacity: brushUiState.brushOpacity,
       activeColour: brushUiState.activeColour,
+      healingSampleSpread: brushUiState.healingSampleSpread,
+      healingBlend: brushUiState.healingBlend,
       brushSizeInput: byId<HTMLInputElement>("brush-size-range"),
       brushOpacityInput: byId<HTMLInputElement>("brush-opacity-range"),
+      healingSampleInput: byId<HTMLInputElement>("healing-sample-range"),
+      healingBlendInput: byId<HTMLInputElement>("healing-blend-range"),
       brushColourValue: byId<HTMLElement>("brush-colour-value"),
       primarySwatch: byId<HTMLElement>("palette-primary-swatch"),
     });
@@ -438,12 +445,15 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
     const settings = deps.getSettings();
     renderToolStateView({
       activeTool: settings.activeTool,
+      transformIntent: deps.getTransformIntent(),
       toolCopy: TOOL_COPY,
       canvasWrap: deps.canvasWrap,
       activeToolCopy: byId<HTMLElement>("active-tool-copy"),
       brushSizeField: byId<HTMLElement>("brush-size-field"),
       brushOpacityField: byId<HTMLElement>("brush-opacity-field"),
       brushColourField: byId<HTMLElement>("brush-colour-field"),
+      healingSampleField: byId<HTMLElement>("healing-sample-field"),
+      healingBlendField: byId<HTMLElement>("healing-blend-field"),
       healingToolHint: byId<HTMLElement>("healing-tool-hint"),
       gradientToolHint: byId<HTMLElement>("gradient-tool-hint"),
       textToolHint: byId<HTMLElement>("text-tool-hint"),
@@ -646,19 +656,37 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
   }
 
   function bindAppNavigation() {
-    bindNavigation({
+    const nav = bindNavigation({
       root: byId<HTMLElement>("app-nav"),
       onSelect: (id) => {
         void deps.onAppNavSelect(id);
       },
     });
+
+    // Recent menu items are rendered dynamically after bindNavigation runs,
+    // so their buttons don't receive click handlers. Use event delegation
+    // on the static container elements to catch clicks on dynamic children.
+    for (const containerId of ["recent-projects-nav", "recent-images-nav"]) {
+      byId<HTMLElement>(containerId).addEventListener("click", (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLElement>(".nav-option");
+        if (!button || button.classList.contains("nav-option--disabled")) return;
+        const navId = button.dataset.navId;
+        if (!navId) return;
+        event.stopPropagation();
+        void deps.onAppNavSelect(navId);
+        nav.closeAll();
+      });
+    }
   }
 
   function bindToolSelection() {
     bindToolSelectionView({
       getSettings: deps.getSettings,
       setSettings: async (next) => {
-        if (deps.getTransformDraftLayerId() && next.activeTool !== "transform") {
+        const currentDraftIntent = deps.getTransformIntent();
+        const keepsCurrentDraft = (next.activeTool === "transform" && currentDraftIntent === "layer")
+          || (next.activeTool === "text" && currentDraftIntent === "text-layout");
+        if (deps.getTransformDraftLayerId() && !keepsCurrentDraft) {
           deps.commitTransformDraft();
         }
         await deps.applySettings(next);

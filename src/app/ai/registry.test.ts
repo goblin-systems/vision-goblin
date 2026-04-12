@@ -124,6 +124,30 @@ describe("AI provider registry", () => {
         outputTokens: 9,
         totalTokens: 31,
       },
+      inspection: {
+        request: {
+          prompt: "Write a brief caption for this image.",
+          assets: [
+            {
+              kind: "image",
+              label: "input image",
+              mimeType: "image/png",
+              data: "data:image/png;base64,BBBB",
+              width: 256,
+              height: 256,
+            },
+          ],
+        },
+        response: {
+          rawPayload: {
+            id: "resp_123",
+            model: "gpt-4.1-mini",
+            output_text: "A green goblin holding a paintbrush beside a canvas.",
+            usage: { input_tokens: 22, output_tokens: 9, total_tokens: 31 },
+          },
+          returnedContent: "A green goblin holding a paintbrush beside a canvas.",
+        },
+      },
     });
   });
 

@@ -41,6 +41,20 @@ export function loadSampleMask(): AiMaskAsset {
 }
 
 /**
+ * Loads a named PNG sample as a mask asset.
+ */
+export function loadNamedSampleMask(filename: string): AiMaskAsset {
+  const filePath = resolve(SAMPLES_DIR, filename);
+  const buffer = readFileSync(filePath);
+  const base64 = buffer.toString("base64");
+  return {
+    kind: "mask",
+    mimeType: "image/png",
+    data: `data:image/png;base64,${base64}`,
+  };
+}
+
+/**
  * Returns the value of the given environment variable, or throws if it is
  * not set. Use inside `describe.skipIf` blocks so the throw only fires
  * when the suite is actually meant to run.

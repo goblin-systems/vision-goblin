@@ -9,8 +9,9 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
-            capture::capture_primary_monitor_png,
+            capture::capture_virtual_desktop_png,
             capture::capture_window_png,
+            capture::get_virtual_desktop_bounds,
             capture::list_capture_windows,
             debug_log::set_debug_logging_enabled,
             debug_log::write_debug_log,

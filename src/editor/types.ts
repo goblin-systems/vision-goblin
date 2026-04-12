@@ -33,6 +33,7 @@ export interface LayerBase {
   y: number;
   visible: boolean;
   opacity: number;
+  blendMode?: GlobalCompositeOperation;
   locked: boolean;
   isBackground?: boolean;
   fillColor?: string;
@@ -57,18 +58,78 @@ export interface RasterLayer extends LayerBase {
   type: "raster";
 }
 
+// ---------------------------------------------------------------------------
+// Text fill and stroke types
+// ---------------------------------------------------------------------------
+
+export interface GradientStop {
+  offset: number; // 0–1
+  color: string;
+}
+
+export interface SolidFill {
+  type: "solid";
+  color: string;
+}
+
+export interface LinearGradientFill {
+  type: "linear-gradient";
+  angle: number; // degrees, 0 = left-to-right, 90 = top-to-bottom
+  stops: GradientStop[];
+}
+
+export interface RadialGradientFill {
+  type: "radial-gradient";
+  stops: GradientStop[];
+  centerX?: number;
+  centerY?: number;
+}
+
+export type GradientType = "linear" | "radial";
+
+export type TextFill = SolidFill | LinearGradientFill | RadialGradientFill;
+
+export interface TextStroke {
+  color: string;
+  width: number;
+}
+
+/**
+ * Extract a representative CSS color string from a TextFill.
+ * Returns the solid color for SolidFill, or the first gradient stop color.
+ * Useful for UI code that needs a single color (inspector, canvas editing overlay).
+ */
+export function getTextFillColor(fill: TextFill): string {
+  if (fill.type === "solid") return fill.color;
+  return fill.stops[0]?.color ?? "#ffffff";
+}
+
 export interface TextLayerData {
   text: string;
   fontFamily: string;
   fontSize: number;
   lineHeight: number;
   kerning: number;
+  scaleX: number;
+  scaleY: number;
   rotationDeg: number;
+  skewXDeg: number;
+  skewYDeg: number;
   alignment: "left" | "center" | "right";
+  fill: TextFill;
+  stroke: TextStroke | null;
+  /**
+   * @deprecated Use `fill` instead. Kept for backward compatibility with code
+   * that hasn't been migrated yet (inspector, AI, text editing controller).
+   * Always reflects `getTextFillColor(fill)` after rendering.
+   */
   fillColor: string;
   bold: boolean;
   italic: boolean;
+  underline: boolean;
+  strikethrough: boolean;
   boxWidth: number | null;
+  boxHeight: number | null;
 }
 
 export interface TextLayer extends LayerBase {
@@ -203,9 +264,21 @@ export interface StylePreset {
 
 export type TransformHandle = "nw" | "ne" | "sw" | "se" | "n" | "e" | "s" | "w";
 
+export type TransformIntent = "layer" | "text-layout";
+
+export interface ShapeTransformMemberSnapshot {
+  layerId: string;
+  centerX: number;
+  centerY: number;
+}
+
 export interface TransformDraft {
   layerId: string;
+  intent: TransformIntent;
   sourceCanvas: HTMLCanvasElement;
+  frameBounds?: Rect;
+  previewLayerIds?: string[];
+  groupMembers?: ShapeTransformMemberSnapshot[];
   centerX: number;
   centerY: number;
   pivotX: number;
@@ -215,6 +288,15 @@ export interface TransformDraft {
   rotateDeg: number;
   skewXDeg: number;
   skewYDeg: number;
+  textBoxWidth?: number | null;
+  textBoxHeight?: number | null;
+  previewOverride?: {
+    canvas: HTMLCanvasElement;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
   snapshot: string;
 }
 
@@ -222,6 +304,14 @@ export interface Guide {
   id: string;
   orientation: "horizontal" | "vertical";
   position: number;
+}
+
+export interface BrushState {
+  brushSize: number;
+  brushOpacity: number;
+  activeColour: string;
+  healingSampleSpread: number;
+  healingBlend: number;
 }
 
 export interface SelectionPath {
@@ -256,6 +346,37 @@ export interface DocumentState {
   selectionPath: SelectionPath | null;
   selectionMask: HTMLCanvasElement | null;
   guides: Guide[];
+  customFonts: Array<{ family: string; dataUrl: string; fileName: string }>;
+}
+
+/**
+ * Serialized text data — accepts both new format (fill + stroke) and legacy
+ * format (fillColor only, no fill). Deserialization migrates legacy format.
+ */
+export interface SerializedTextLayerData {
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  kerning: number;
+  scaleX?: number;
+  scaleY?: number;
+  rotationDeg: number;
+  skewXDeg?: number;
+  skewYDeg?: number;
+  alignment: "left" | "center" | "right";
+  /** New fill field (present in current format). */
+  fill?: TextFill;
+  /** New stroke field (present in current format). */
+  stroke?: TextStroke | null;
+  /** @deprecated Legacy fill color (present in old saves). */
+  fillColor?: string;
+  bold: boolean;
+  italic: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  boxWidth: number | null;
+  boxHeight?: number | null;
 }
 
 export interface SerializedLayer {
@@ -266,12 +387,13 @@ export interface SerializedLayer {
   y: number;
   visible: boolean;
   opacity: number;
+  blendMode?: string;
   locked: boolean;
   isBackground?: boolean;
   fillColor?: string;
   dataUrl: string;
   effects?: LayerEffect[];
-  textData?: TextLayerData;
+  textData?: SerializedTextLayerData;
   shapeData?: ShapeLayerData;
   adjustmentData?: AdjustmentLayerData;
   smartObjectData?: {
@@ -304,6 +426,7 @@ export interface SerializedDocument {
   selectionPath?: SelectionPath | null;
   selectionMaskDataUrl?: string | null;
   guides?: Guide[];
+  customFonts?: Array<{ family: string; dataUrl: string; fileName: string }>;
   layers: SerializedLayer[];
 }
 
@@ -341,6 +464,8 @@ export interface PointerState {
   startRotateDeg: number;
   startSkewXDeg: number;
   startSkewYDeg: number;
+  startTextBoxWidth: number;
+  startTextBoxHeight: number;
   cloneOffsetX: number;
   cloneOffsetY: number;
   creationLayerId: string | null;

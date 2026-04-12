@@ -60,4 +60,20 @@ describe("layer list UI", () => {
     expect(extra1Row?.classList.contains("is-selected")).toBe(true);
     expect(extra2Row?.classList.contains("is-active")).toBe(true);
   });
+
+  it("shows effect discoverability badges and summary text", () => {
+    const doc = createBlankDocument("Test", 200, 100, 100);
+    const extra = addLayer(doc, "Styled");
+    extra.effects = [
+      { type: "drop-shadow", color: "#000000", offsetX: 0, offsetY: 4, blur: 12, opacity: 0.35, enabled: true },
+      { type: "outline", color: "#ffffff", width: 2, opacity: 1, enabled: false },
+    ];
+    const root = document.createElement("div");
+
+    renderLayerList(root, doc, mockActions());
+
+    const row = Array.from(root.querySelectorAll<HTMLElement>(".layer-row")).find((item) => item.dataset.layerId === extra.id);
+    expect(row?.textContent).toContain("fx");
+    expect(row?.querySelector(".layer-meta")?.textContent).toContain("1 active, 1 disabled");
+  });
 });

@@ -29,17 +29,21 @@ const contextStub = {
   ellipse: vi.fn(),
   fill: vi.fn(),
   fillText: vi.fn(),
+  strokeText: vi.fn(),
   save: vi.fn(),
   restore: vi.fn(),
   translate: vi.fn(),
+  rotate: vi.fn(),
   scale: vi.fn(),
   stroke: vi.fn(),
   moveTo: vi.fn(),
   lineTo: vi.fn(),
   closePath: vi.fn(),
+  rect: vi.fn(),
   roundRect: vi.fn(),
   strokeRect: vi.fn(),
   createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+  createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
   createImageData: vi.fn((w: number, h: number) => new ImageData(w, h)),
   getImageData: vi.fn(() => ({ data: new Uint8ClampedArray([255, 255, 255, 255]) })),
   measureText: vi.fn((text: string) => ({ width: text.length * 8 })),
@@ -74,3 +78,11 @@ Object.defineProperty(URL, "createObjectURL", {
 Object.defineProperty(URL, "revokeObjectURL", {
   value: vi.fn(),
 });
+
+if (typeof Image !== "undefined" && !("decode" in Image.prototype)) {
+  Object.defineProperty(Image.prototype, "decode", {
+    value: vi.fn(async function decode() {
+      return undefined;
+    }),
+  });
+}

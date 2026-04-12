@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { artifactToCanvas, buildEnhancementTask, buildGenerationTask, buildSegmentationTask, buildAiProvenance, buildScopedCompositeImageAsset, buildSelectedLayersImageAsset, buildSelectionMaskAsset, convertAiMaskToAlphaMask } from "./editingSupport";
+import { artifactToCanvas, buildEnhancementTask, buildGenerationTask, buildSegmentationTask, buildAiProvenance, buildDualColorGuideMaskAsset, buildDualColorAiMaskAsset, buildGuideImageAssetForMode, buildInpaintingTask, buildRasterLayerContentImageAsset, buildScopedCompositeImageAsset, buildSelectedLayersImageAsset, buildSelectionMaskAsset, convertAiMaskToAlphaMask, createGuideMaskUnion, splitMaskIntoConnectedComponents } from "./editingSupport";
 import * as documents from "../../editor/documents";
 import type { DocumentState, RasterLayer } from "../../editor/types";
+import { installPixelCanvasMock, setPixel } from "../../test/pixelCanvasMock";
 
 function makeLayer(id: string, visible = true): RasterLayer {
   const canvas = document.createElement("canvas");
@@ -48,6 +49,7 @@ function makeDocument(layers: RasterLayer[]): DocumentState {
     selectionPath: null,
     selectionMask: null,
     guides: [],
+    customFonts: [],
   };
 }
 
@@ -127,12 +129,12 @@ describe("ai editing support", () => {
     expect(exportedContext.putImageData).toHaveBeenCalledTimes(1);
     const normalized = exportedContext.putImageData.mock.calls[0][0] as ImageData;
     expect(Array.from(normalized.data)).toEqual([
-      255, 255, 255, 255,
       0, 0, 0, 255,
       255, 255, 255, 255,
       0, 0, 0, 255,
       255, 255, 255, 255,
       0, 0, 0, 255,
+      255, 255, 255, 255,
     ]);
     expect(dataUrlSpy).toHaveBeenCalledWith("image/png");
   });
@@ -211,6 +213,162 @@ describe("ai editing support", () => {
     expect(task.options?.operation).toBe("restore");
     expect(task.options?.intensity).toBe(0.8);
     expect(task.input.image.width).toBe(200);
+  });
+
+  it("builds inpainting tasks with guide mode metadata", () => {
+    const task = buildInpaintingTask({
+      kind: "image",
+      mimeType: "image/png",
+      data: "data:image/png;base64,SOURCE",
+      width: 80,
+      height: 60,
+    }, {
+      kind: "mask",
+      mimeType: "image/png",
+      data: "data:image/png;base64,MASK",
+      width: 80,
+      height: 60,
+    }, "Add a shadow", "replace", { guideMode: "shadow-add" });
+
+    expect(task.options?.guideMode).toBe("shadow-add");
+    expect(task.input.mask).toBeDefined();
+  });
+
+  it("builds inpainting tasks without guide image or transport fields", () => {
+    const task = buildInpaintingTask({
+      kind: "image",
+      mimeType: "image/png",
+      data: "data:image/png;base64,SOURCE",
+      width: 80,
+      height: 60,
+    }, {
+      kind: "mask",
+      mimeType: "image/png",
+      data: "data:image/png;base64,MASK",
+      width: 80,
+      height: 60,
+    }, "Move the object", "replace", { guideMode: "move-object" });
+
+    expect(task.options?.guideMode).toBe("move-object");
+    expect((task.input as Record<string, unknown>).guideImage).toBeUndefined();
+    expect((task.options as Record<string, unknown>).transport).toBeUndefined();
+  });
+
+  it("builds a dual-colour shadow guide image with red caster and black surface semantics", () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const casterMask = document.createElement("canvas");
+    casterMask.width = 2;
+    casterMask.height = 1;
+    const surfaceMask = document.createElement("canvas");
+    surfaceMask.width = 2;
+    surfaceMask.height = 1;
+
+    const casterContext = createMockCanvasContext(new ImageData(new Uint8ClampedArray([
+      255, 255, 255, 255,
+      0, 0, 0, 0,
+    ]), 2, 1));
+    const surfaceContext = createMockCanvasContext(new ImageData(new Uint8ClampedArray([
+      0, 0, 0, 0,
+      255, 255, 255, 255,
+    ]), 2, 1));
+    const guideCanvas = document.createElement("canvas");
+    const guideContext = createMockCanvasContext(new ImageData(2, 1));
+
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+      if (this === casterMask) {
+        return casterContext as unknown as CanvasRenderingContext2D;
+      }
+      if (this === surfaceMask) {
+        return surfaceContext as unknown as CanvasRenderingContext2D;
+      }
+      if (this === guideCanvas) {
+        return guideContext as unknown as CanvasRenderingContext2D;
+      }
+      return null;
+    });
+
+    vi.spyOn(document, "createElement").mockImplementation(((tagName: string) => {
+      if (tagName === "canvas") {
+        return guideCanvas;
+      }
+      return originalCreateElement(tagName);
+    }) as typeof document.createElement);
+    vi.spyOn(guideCanvas, "toDataURL").mockReturnValue("data:image/png;base64,DUALGUIDE");
+
+    const asset = buildDualColorAiMaskAsset(casterMask, surfaceMask);
+
+    expect(asset).toEqual({
+      kind: "image",
+      mimeType: "image/png",
+      data: "data:image/png;base64,DUALGUIDE",
+      width: 2,
+      height: 1,
+    });
+    const guidePixels = guideContext.putImageData.mock.calls[0][0] as ImageData;
+    expect(Array.from(guidePixels.data)).toEqual([
+      255, 0, 0, 255,
+      0, 0, 0, 255,
+    ]);
+  });
+
+  it("buildGuideImageAssetForMode allows shadow-remove with black-only guidance", () => {
+    installPixelCanvasMock();
+    const surfaceMask = document.createElement("canvas");
+    surfaceMask.width = 3;
+    surfaceMask.height = 1;
+    setPixel(surfaceMask, 1, 0, { r: 255, g: 255, b: 255, a: 255 });
+
+    const asset = buildGuideImageAssetForMode("shadow-remove", null, surfaceMask);
+
+    expect(asset).not.toBeNull();
+    expect(asset).toMatchObject({
+      kind: "image",
+      mimeType: "image/png",
+      width: 3,
+      height: 1,
+    });
+  });
+
+  it("buildGuideImageAssetForMode keeps add-shadow requiring both guides", () => {
+    installPixelCanvasMock();
+    const surfaceMask = document.createElement("canvas");
+    surfaceMask.width = 3;
+    surfaceMask.height = 1;
+    setPixel(surfaceMask, 1, 0, { r: 255, g: 255, b: 255, a: 255 });
+
+    expect(buildGuideImageAssetForMode("shadow-add", null, surfaceMask)).toBeNull();
+  });
+
+  it("buildDualColorGuideMaskAsset wraps guide image as a mask asset", () => {
+    installPixelCanvasMock();
+    const casterMask = document.createElement("canvas");
+    casterMask.width = 3;
+    casterMask.height = 1;
+    setPixel(casterMask, 0, 0, { r: 255, g: 255, b: 255, a: 255 });
+    const surfaceMask = document.createElement("canvas");
+    surfaceMask.width = 3;
+    surfaceMask.height = 1;
+    setPixel(surfaceMask, 1, 0, { r: 255, g: 255, b: 255, a: 255 });
+
+    const asset = buildDualColorGuideMaskAsset("shadow-add", casterMask, surfaceMask);
+
+    expect(asset).not.toBeNull();
+    expect(asset).toMatchObject({
+      kind: "mask",
+      mimeType: "image/png",
+      width: 3,
+      height: 1,
+    });
+  });
+
+  it("buildDualColorGuideMaskAsset returns null when guide image cannot be built", () => {
+    installPixelCanvasMock();
+    const surfaceMask = document.createElement("canvas");
+    surfaceMask.width = 3;
+    surfaceMask.height = 1;
+    setPixel(surfaceMask, 1, 0, { r: 255, g: 255, b: 255, a: 255 });
+
+    expect(buildDualColorGuideMaskAsset("shadow-add", null, surfaceMask)).toBeNull();
   });
 
   it("builds generation tasks for thumbnail with specific dimensions and reference", () => {
@@ -361,6 +519,100 @@ describe("ai editing support", () => {
     expect(result.debugLabel).toBe("selected-layers");
     expect(result.asset.width).toBe(200);
     expect(selectedSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("buildRasterLayerContentImageAsset crops oversized raster content to tight bounds", () => {
+    installPixelCanvasMock();
+    const layer = makeLayer("layer-a");
+    layer.canvas.width = 40;
+    layer.canvas.height = 30;
+    setPixel(layer.canvas, 12, 8, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(layer.canvas, 19, 13, { r: 255, g: 255, b: 255, a: 255 });
+
+    const result = buildRasterLayerContentImageAsset(layer);
+
+    expect(result.boundsLocal).toEqual({ x: 12, y: 8, width: 8, height: 6 });
+    expect(result.asset.width).toBe(8);
+    expect(result.asset.height).toBe(6);
+  });
+
+  it("splitMaskIntoConnectedComponents returns separate connected black-mask islands", () => {
+    installPixelCanvasMock();
+    const mask = document.createElement("canvas");
+    mask.width = 6;
+    mask.height = 5;
+    setPixel(mask, 0, 0, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(mask, 1, 0, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(mask, 4, 3, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(mask, 4, 4, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(mask, 5, 4, { r: 255, g: 255, b: 255, a: 255 });
+
+    const components = splitMaskIntoConnectedComponents(mask);
+
+    expect(components).toHaveLength(2);
+    expect(components[0]).toMatchObject({
+      pixelCount: 3,
+      bounds: { x: 4, y: 3, width: 2, height: 2 },
+    });
+    expect(components[1]).toMatchObject({
+      pixelCount: 2,
+      bounds: { x: 0, y: 0, width: 2, height: 1 },
+    });
+  });
+
+  it("splitMaskIntoConnectedComponents uses 4-way adjacency", () => {
+    installPixelCanvasMock();
+    const mask = document.createElement("canvas");
+    mask.width = 3;
+    mask.height = 3;
+    setPixel(mask, 0, 0, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(mask, 1, 1, { r: 255, g: 255, b: 255, a: 255 });
+
+    const components = splitMaskIntoConnectedComponents(mask);
+
+    expect(components).toHaveLength(2);
+    expect(components.map((entry) => entry.pixelCount)).toEqual([1, 1]);
+  });
+
+  it("splitMaskIntoConnectedComponents sorts larger destinations before tiny specks", () => {
+    installPixelCanvasMock();
+    const mask = document.createElement("canvas");
+    mask.width = 7;
+    mask.height = 5;
+    setPixel(mask, 0, 0, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(mask, 4, 1, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(mask, 5, 1, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(mask, 4, 2, { r: 255, g: 255, b: 255, a: 255 });
+
+    const components = splitMaskIntoConnectedComponents(mask);
+
+    expect(components.map((entry) => entry.pixelCount)).toEqual([3, 1]);
+    expect(components[0].bounds).toEqual({ x: 4, y: 1, width: 2, height: 2 });
+    expect(components[1].bounds).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  });
+
+  it("createGuideMaskUnion merges source and destination masks into one edit mask", () => {
+    installPixelCanvasMock();
+    const sourceMask = document.createElement("canvas");
+    sourceMask.width = 4;
+    sourceMask.height = 4;
+    const destinationMask = document.createElement("canvas");
+    destinationMask.width = 4;
+    destinationMask.height = 4;
+
+    setPixel(sourceMask, 0, 0, { r: 255, g: 255, b: 255, a: 255 });
+    setPixel(destinationMask, 3, 3, { r: 255, g: 255, b: 255, a: 255 });
+
+    const merged = createGuideMaskUnion(sourceMask, destinationMask);
+
+    expect(merged).not.toBeNull();
+    expect(merged?.width).toBe(4);
+    expect(merged?.height).toBe(4);
+    expect(setPixel).toBeDefined();
+    const mergedCtx = merged!.getContext("2d");
+    const mergedData = mergedCtx!.getImageData(0, 0, 4, 4).data;
+    expect(mergedData[3]).toBe(255);
+    expect(mergedData[((3 * 4) + 3) * 4 + 3]).toBe(255);
   });
 });
 

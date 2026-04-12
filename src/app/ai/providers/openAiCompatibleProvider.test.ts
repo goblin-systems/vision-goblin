@@ -96,6 +96,13 @@ describe("OpenAI compatible provider", () => {
     expect(body.output_format).toBe("png");
     expect(body).not.toHaveProperty("response_format");
     expect(body.prompt).toContain("Output image must be exactly 512x512px");
+    expect(result.inspection?.request?.prompt).toContain("A goblin with a paintbrush");
+    expect(result.inspection?.response?.rawPayload).toEqual({
+      created: "gen-123",
+      model: "gpt-image-1",
+      data: [{ b64_json: "[omitted base64 payload, 4 chars]" }],
+      usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+    });
   });
 
   it("generation: logs the exact serialized JSON body before dispatch", async () => {

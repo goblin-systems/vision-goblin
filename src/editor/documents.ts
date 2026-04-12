@@ -1,20 +1,23 @@
 import { pushHistory } from "./history";
-import { deserializeMask, serializeMask } from "./selection";
-import type {
-  AdjustmentLayer,
-  AdjustmentLayerData,
-  DocumentState,
-  Layer,
-  LayerBase,
-  LayerEffect,
-  RasterLayer,
-  SerializedDocument,
-  ShapeKind,
-  ShapeLayer,
-  SmartObjectLayer,
-  TextLayer,
-  TextLayerData,
-  TransformDraft,
+import { deserializeMask, invertMask, isMaskEmpty, maskBoundingRect, normalizeSelectionToMask, serializeMask } from "./selection";
+import {
+  getTextFillColor,
+  type AdjustmentLayer,
+  type AdjustmentLayerData,
+  type DocumentState,
+  type Layer,
+  type LayerBase,
+  type LayerEffect,
+  type RasterLayer,
+  type SerializedDocument,
+  type ShapeKind,
+  type ShapeLayer,
+  type SmartObjectLayer,
+  type TextFill,
+  type TextLayer,
+  type TextLayerData,
+  type TextStroke,
+  type TransformDraft,
 } from "./types";
 import { nextId, stripExtension } from "./utils";
 import { applyAdjustmentLayerParams } from "./adjustmentLayers";
@@ -72,14 +75,16 @@ function wrapText(text: string, data: TextLayerData): string[] {
   return lines;
 }
 
-function drawTextLine(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, kerning: number) {
+function drawTextLine(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, kerning: number, stroke?: boolean) {
   if (!kerning) {
-    ctx.fillText(text, x, y);
+    if (stroke) ctx.strokeText(text, x, y);
+    else ctx.fillText(text, x, y);
     return;
   }
   let cursor = x;
   for (const char of text) {
-    ctx.fillText(char, cursor, y);
+    if (stroke) ctx.strokeText(char, cursor, y);
+    else ctx.fillText(char, cursor, y);
     cursor += ctx.measureText(char).width + kerning;
   }
 }
@@ -91,8 +96,14 @@ function getTextMetrics(data: TextLayerData) {
   const maxLineWidth = lines.reduce((max, line) => Math.max(max, ctx.measureText(line).width + Math.max(0, line.length - 1) * data.kerning), 0);
   const width = Math.max(1, Math.ceil(data.boxWidth ?? maxLineWidth + Math.max(8, data.fontSize * 0.35)));
   const lineAdvance = Math.max(1, Math.round(data.fontSize * data.lineHeight));
-  const height = Math.max(1, Math.ceil(lines.length * lineAdvance + Math.max(8, data.fontSize * 0.35)));
-  return { lines, width, height, lineAdvance };
+  const contentHeight = Math.max(1, Math.ceil(lines.length * lineAdvance + Math.max(8, data.fontSize * 0.35)));
+  const height = Math.max(1, Math.ceil(data.boxHeight ?? contentHeight));
+  return { lines, width, height, contentHeight, lineAdvance };
+}
+
+export function measureTextBoxBounds(data: TextLayerData) {
+  const { width, height } = getTextMetrics(data);
+  return { width, height };
 }
 
 /** Returns an empty effects array — effects are now opt-in (F2.3). */
@@ -112,6 +123,49 @@ function rotateCanvas(source: HTMLCanvasElement, rotationDeg: number) {
     ctx.translate(width / 2, height / 2);
     ctx.rotate(angle);
     ctx.drawImage(source, -source.width / 2, -source.height / 2);
+  }
+  return canvas;
+}
+
+function transformCanvas(source: HTMLCanvasElement, options: {
+  scaleX: number;
+  scaleY: number;
+  rotateDeg: number;
+  skewXDeg?: number;
+  skewYDeg?: number;
+}) {
+  const skewX = Math.tan(((options.skewXDeg ?? 0) * Math.PI) / 180);
+  const skewY = Math.tan(((options.skewYDeg ?? 0) * Math.PI) / 180);
+  const angle = (options.rotateDeg * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const matrix = {
+    a: cos * options.scaleX - sin * skewY * options.scaleX,
+    b: sin * options.scaleX + cos * skewY * options.scaleX,
+    c: cos * skewX * options.scaleY - sin * options.scaleY,
+    d: sin * skewX * options.scaleY + cos * options.scaleY,
+  };
+  const halfWidth = source.width / 2;
+  const halfHeight = source.height / 2;
+  const corners = [
+    { x: -halfWidth, y: -halfHeight },
+    { x: halfWidth, y: -halfHeight },
+    { x: -halfWidth, y: halfHeight },
+    { x: halfWidth, y: halfHeight },
+  ].map((point) => ({
+    x: matrix.a * point.x + matrix.c * point.y,
+    y: matrix.b * point.x + matrix.d * point.y,
+  }));
+  const minX = Math.min(...corners.map((point) => point.x));
+  const minY = Math.min(...corners.map((point) => point.y));
+  const maxX = Math.max(...corners.map((point) => point.x));
+  const maxY = Math.max(...corners.map((point) => point.y));
+  const canvas = createLayerCanvas(Math.max(1, Math.ceil(maxX - minX)), Math.max(1, Math.ceil(maxY - minY)));
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, canvas.width / 2, canvas.height / 2);
+    ctx.drawImage(source, -source.width / 2, -source.height / 2);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
   return canvas;
 }
@@ -148,6 +202,96 @@ export function cloneCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
   return canvas;
 }
 
+export interface LayerLocalBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export function getRasterLayerContentBoundsLocal(layer: Pick<RasterLayer, "canvas">): LayerLocalBounds | null {
+  const { width, height } = layer.canvas;
+  if (width < 1 || height < 1) {
+    return null;
+  }
+  const ctx = layer.canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+  const data = ctx.getImageData(0, 0, width, height).data;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (data[((y * width) + x) * 4 + 3] <= 0) {
+        continue;
+      }
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return null;
+  }
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+export function getRasterLayerContentBounds(layer: Pick<RasterLayer, "x" | "y" | "canvas">): LayerLocalBounds | null {
+  const bounds = getRasterLayerContentBoundsLocal(layer);
+  if (!bounds) {
+    return null;
+  }
+  return {
+    x: layer.x + bounds.x,
+    y: layer.y + bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+  };
+}
+
+export function extractRasterLayerContentCanvas(
+  layer: Pick<RasterLayer, "canvas">,
+  bounds: LayerLocalBounds | null | undefined = undefined,
+): HTMLCanvasElement {
+  const resolvedBounds = bounds === undefined ? getRasterLayerContentBoundsLocal(layer) : bounds;
+  if (!resolvedBounds) {
+    return cloneCanvas(layer.canvas);
+  }
+  if (
+    resolvedBounds.x === 0
+    && resolvedBounds.y === 0
+    && resolvedBounds.width === layer.canvas.width
+    && resolvedBounds.height === layer.canvas.height
+  ) {
+    return cloneCanvas(layer.canvas);
+  }
+  const canvas = createLayerCanvas(resolvedBounds.width, resolvedBounds.height);
+  canvas.getContext("2d")?.drawImage(
+    layer.canvas,
+    resolvedBounds.x,
+    resolvedBounds.y,
+    resolvedBounds.width,
+    resolvedBounds.height,
+    0,
+    0,
+    resolvedBounds.width,
+    resolvedBounds.height,
+  );
+  return canvas;
+}
+
 export function getLayerContext(layer: Pick<LayerBase, "canvas">): CanvasRenderingContext2D {
   const ctx = layer.canvas.getContext("2d");
   if (!ctx) {
@@ -160,14 +304,83 @@ export function syncLayerSource(layer: Layer) {
   layer.sourceCanvas = cloneCanvas(layer.canvas);
 }
 
+/** Set ctx.fillStyle based on a TextFill, scoped to the given text block dimensions. */
+export function createTextFillStyle(ctx: CanvasRenderingContext2D, fill: TextFill, width: number, height: number): void {
+  if (fill.type === "solid") {
+    ctx.fillStyle = fill.color;
+    return;
+  }
+  if (fill.type === "linear-gradient") {
+    const rad = (fill.angle * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const halfW = width / 2;
+    const halfH = height / 2;
+    const x0 = halfW - cos * halfW;
+    const y0 = halfH - sin * halfH;
+    const x1 = halfW + cos * halfW;
+    const y1 = halfH + sin * halfH;
+    const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+    for (const stop of fill.stops) {
+      grad.addColorStop(stop.offset, stop.color);
+    }
+    ctx.fillStyle = grad;
+    return;
+  }
+  if (fill.type === "radial-gradient") {
+    const cx = (fill.centerX ?? 0.5) * width;
+    const cy = (fill.centerY ?? 0.5) * height;
+    const radius = Math.max(
+      Math.hypot(cx, cy),
+      Math.hypot(width - cx, cy),
+      Math.hypot(cx, height - cy),
+      Math.hypot(width - cx, height - cy),
+      1,
+    );
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    for (const stop of fill.stops) {
+      grad.addColorStop(stop.offset, stop.color);
+    }
+    ctx.fillStyle = grad;
+    return;
+  }
+}
+
 export function renderTextLayer(layer: TextLayer) {
-  const { lines, width, height, lineAdvance } = getTextMetrics(layer.textData);
+  layer.textData.scaleX = layer.textData.scaleX ?? 1;
+  layer.textData.scaleY = layer.textData.scaleY ?? 1;
+  layer.textData.skewXDeg = layer.textData.skewXDeg ?? 0;
+  layer.textData.skewYDeg = layer.textData.skewYDeg ?? 0;
+
+  // Backward compat: if external code wrote to fillColor without updating fill,
+  // or if fill is missing entirely (old test fixtures / inspector code), sync it.
+  if (!layer.textData.fill) {
+    layer.textData.fill = { type: "solid", color: layer.textData.fillColor ?? "#ffffff" };
+  } else if (layer.textData.fill.type === "solid" && layer.textData.fillColor !== layer.textData.fill.color) {
+    layer.textData.fill = { type: "solid", color: layer.textData.fillColor };
+  }
+  if (layer.textData.stroke === undefined) {
+    layer.textData.stroke = null;
+  }
+  if (layer.textData.underline === undefined) {
+    layer.textData.underline = false;
+  }
+  if (layer.textData.strikethrough === undefined) {
+    layer.textData.strikethrough = false;
+  }
+  if (layer.textData.boxHeight === undefined) {
+    layer.textData.boxHeight = null;
+  }
+
+  const { lines, width, height, contentHeight, lineAdvance } = getTextMetrics(layer.textData);
   const baseCanvas = createLayerCanvas(width, height);
   const ctx = getLayerContext({ canvas: baseCanvas });
   ctx.clearRect(0, 0, width, height);
   ctx.font = buildTextFont(layer.textData);
-  ctx.fillStyle = layer.textData.fillColor;
   ctx.textBaseline = "top";
+
+  // Compute per-line x positions
+  const linePositions: Array<{ line: string; x: number; y: number }> = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lineWidth = ctx.measureText(line).width + Math.max(0, line.length - 1) * layer.textData.kerning;
@@ -176,10 +389,60 @@ export function renderTextLayer(layer: TextLayer) {
       : layer.textData.alignment === "right"
         ? width - lineWidth
         : 0;
-    drawTextLine(ctx, line, x, i * lineAdvance, layer.textData.kerning);
+    linePositions.push({ line, x, y: i * lineAdvance });
   }
-  layer.canvas = layer.textData.rotationDeg ? rotateCanvas(baseCanvas, layer.textData.rotationDeg) : baseCanvas;
-  layer.fillColor = layer.textData.fillColor;
+
+  // Draw stroke BEFORE fill so fill renders on top
+  const stroke = layer.textData.stroke;
+  if (stroke && stroke.width > 0) {
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = stroke.width;
+    for (const { line, x, y } of linePositions) {
+      drawTextLine(ctx, line, x, y, layer.textData.kerning, true);
+    }
+  }
+
+  // Draw fill
+  createTextFillStyle(ctx, layer.textData.fill, width, contentHeight);
+  for (const { line, x, y } of linePositions) {
+    drawTextLine(ctx, line, x, y, layer.textData.kerning);
+  }
+
+  // Draw text decorations (underline / strikethrough)
+  if (layer.textData.underline || layer.textData.strikethrough) {
+    // ctx.fillStyle is already set from createTextFillStyle above
+    const decorationHeight = Math.max(1, Math.round(layer.textData.fontSize / 16));
+    for (const { line, x, y } of linePositions) {
+      const lineWidth = ctx.measureText(line).width + Math.max(0, line.length - 1) * layer.textData.kerning;
+      if (layer.textData.underline) {
+        const underlineY = y + layer.textData.fontSize * 0.92;
+        ctx.fillRect(x, underlineY, lineWidth, decorationHeight);
+      }
+      if (layer.textData.strikethrough) {
+        const strikeY = y + layer.textData.fontSize * 0.55;
+        ctx.fillRect(x, strikeY, lineWidth, decorationHeight);
+      }
+    }
+  }
+
+  const hasNativeTransform = Math.abs(layer.textData.scaleX - 1) > 0.001
+    || Math.abs(layer.textData.scaleY - 1) > 0.001
+    || Math.abs(layer.textData.rotationDeg) > 0.001
+    || Math.abs(layer.textData.skewXDeg) > 0.001
+    || Math.abs(layer.textData.skewYDeg) > 0.001;
+  layer.canvas = hasNativeTransform
+    ? transformCanvas(baseCanvas, {
+      scaleX: layer.textData.scaleX,
+      scaleY: layer.textData.scaleY,
+      rotateDeg: layer.textData.rotationDeg,
+      skewXDeg: layer.textData.skewXDeg,
+      skewYDeg: layer.textData.skewYDeg,
+    })
+    : baseCanvas;
+  // Sync deprecated fillColor and summary fillColor from fill
+  const representativeColor = getTextFillColor(layer.textData.fill);
+  layer.textData.fillColor = representativeColor;
+  layer.fillColor = representativeColor;
   syncLayerSource(layer);
 }
 
@@ -254,49 +517,45 @@ function buildOutlineCanvas(layer: Layer, width: number, color: string, opacity:
 export function drawLayerOnto(ctx: CanvasRenderingContext2D, layer: Layer, x = layer.x, y = layer.y) {
   const effects = normalizeEffects(layer.effects);
   const hasContent = layer.canvas.width > 0 && layer.canvas.height > 0;
-
-  // Collect enabled effects by type
-  const outerGlow = effects.find((e): e is Extract<LayerEffect, { type: "outer-glow" }> => e.type === "outer-glow" && e.enabled);
-  const shadow = effects.find((e): e is Extract<LayerEffect, { type: "drop-shadow" }> => e.type === "drop-shadow" && e.enabled);
-  const outline = effects.find((e): e is Extract<LayerEffect, { type: "outline" }> => e.type === "outline" && e.enabled);
-  const innerShadow = effects.find((e): e is Extract<LayerEffect, { type: "inner-shadow" }> => e.type === "inner-shadow" && e.enabled);
-  const colorOverlay = effects.find((e): e is Extract<LayerEffect, { type: "color-overlay" }> => e.type === "color-overlay" && e.enabled);
+  const enabledEffects = effects.filter((effect) => effect.enabled);
+  const behindEffects = enabledEffects.filter((effect) => effect.type === "outer-glow" || effect.type === "drop-shadow" || effect.type === "outline");
+  const innerEffects = enabledEffects.filter((effect) => effect.type === "inner-shadow" || effect.type === "color-overlay");
 
   // --- Behind-layer effects (drawn before layer content) ---
 
-  // Outer glow: shadow API with 0 offset
-  if (outerGlow && hasContent) {
-    ctx.save();
-    ctx.shadowColor = outerGlow.color;
-    ctx.shadowBlur = outerGlow.blur + outerGlow.spread;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
-    ctx.globalAlpha *= outerGlow.opacity;
-    ctx.drawImage(layer.canvas, x, y);
-    ctx.restore();
-  }
-
-  // Drop shadow
-  if (shadow && hasContent) {
-    ctx.save();
-    ctx.shadowColor = shadow.color;
-    ctx.shadowBlur = shadow.blur;
-    ctx.shadowOffsetX = shadow.offsetX;
-    ctx.shadowOffsetY = shadow.offsetY;
-    ctx.globalAlpha *= shadow.opacity;
-    ctx.drawImage(layer.canvas, x, y);
-    ctx.restore();
-  }
-
-  // Outline (radial stamp)
-  if (outline && outline.width > 0 && hasContent) {
-    const outlined = buildOutlineCanvas(layer, outline.width, outline.color, outline.opacity);
-    ctx.drawImage(outlined.canvas, x + outlined.offsetX, y + outlined.offsetY);
+  for (const effect of behindEffects) {
+    if (!hasContent) break;
+    if (effect.type === "outer-glow") {
+      ctx.save();
+      ctx.shadowColor = effect.color;
+      ctx.shadowBlur = effect.blur + effect.spread;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.globalAlpha *= effect.opacity;
+      ctx.drawImage(layer.canvas, x, y);
+      ctx.restore();
+      continue;
+    }
+    if (effect.type === "drop-shadow") {
+      ctx.save();
+      ctx.shadowColor = effect.color;
+      ctx.shadowBlur = effect.blur;
+      ctx.shadowOffsetX = effect.offsetX;
+      ctx.shadowOffsetY = effect.offsetY;
+      ctx.globalAlpha *= effect.opacity;
+      ctx.drawImage(layer.canvas, x, y);
+      ctx.restore();
+      continue;
+    }
+    if (effect.type === "outline" && effect.width > 0) {
+      const outlined = buildOutlineCanvas(layer, effect.width, effect.color, effect.opacity);
+      ctx.drawImage(outlined.canvas, x + outlined.offsetX, y + outlined.offsetY);
+    }
   }
 
   // --- Layer content ---
 
-  const hasInnerEffects = (innerShadow || colorOverlay) && hasContent;
+  const hasInnerEffects = innerEffects.length > 0 && hasContent;
 
   if (hasInnerEffects) {
     // Use temp canvas so we can apply inside-layer effects clipped to layer alpha
@@ -306,54 +565,53 @@ export function drawLayerOnto(ctx: CanvasRenderingContext2D, layer: Layer, x = l
       // Draw layer content onto temp
       tCtx.drawImage(layer.canvas, 0, 0);
 
-      // Inner shadow: inverted alpha + shadow API + source-atop
-      if (innerShadow) {
-        const inv = createLayerCanvas(layer.canvas.width, layer.canvas.height);
-        const invCtx = inv.getContext("2d");
-        if (invCtx) {
-          // Create inverted alpha: fill everything, then punch out layer shape
+      for (const effect of innerEffects) {
+        if (effect.type === "inner-shadow") {
+          const inv = createLayerCanvas(layer.canvas.width, layer.canvas.height);
+          const invCtx = inv.getContext("2d");
+          if (!invCtx) {
+            continue;
+          }
           invCtx.fillStyle = "#000000";
           invCtx.fillRect(0, 0, inv.width, inv.height);
           invCtx.globalCompositeOperation = "destination-out";
           invCtx.drawImage(layer.canvas, 0, 0);
           invCtx.globalCompositeOperation = "source-over";
 
-          // Draw inverted shape with shadow onto a shadow canvas
           const shadowCanvas = createLayerCanvas(layer.canvas.width, layer.canvas.height);
           const sCtx = shadowCanvas.getContext("2d");
-          if (sCtx) {
-            sCtx.shadowColor = innerShadow.color;
-            sCtx.shadowBlur = innerShadow.blur;
-            sCtx.shadowOffsetX = innerShadow.offsetX;
-            sCtx.shadowOffsetY = innerShadow.offsetY;
-            sCtx.drawImage(inv, 0, 0);
-            // Clear the inverted shape itself so only the shadow remains
-            sCtx.shadowColor = "transparent";
-            sCtx.shadowBlur = 0;
-            sCtx.shadowOffsetX = 0;
-            sCtx.shadowOffsetY = 0;
-            sCtx.globalCompositeOperation = "destination-out";
-            sCtx.drawImage(inv, 0, 0);
-            sCtx.globalCompositeOperation = "source-over";
+          if (!sCtx) {
+            continue;
           }
+          sCtx.shadowColor = effect.color;
+          sCtx.shadowBlur = effect.blur;
+          sCtx.shadowOffsetX = effect.offsetX;
+          sCtx.shadowOffsetY = effect.offsetY;
+          sCtx.drawImage(inv, 0, 0);
+          sCtx.shadowColor = "transparent";
+          sCtx.shadowBlur = 0;
+          sCtx.shadowOffsetX = 0;
+          sCtx.shadowOffsetY = 0;
+          sCtx.globalCompositeOperation = "destination-out";
+          sCtx.drawImage(inv, 0, 0);
+          sCtx.globalCompositeOperation = "source-over";
 
-          // Composite inner shadow onto temp, clipped to layer alpha
           tCtx.save();
           tCtx.globalCompositeOperation = "source-atop";
-          tCtx.globalAlpha = innerShadow.opacity;
+          tCtx.globalAlpha = effect.opacity;
           tCtx.drawImage(shadowCanvas, 0, 0);
           tCtx.restore();
+          continue;
         }
-      }
 
-      // Color overlay: fill clipped to layer alpha via source-atop
-      if (colorOverlay) {
-        tCtx.save();
-        tCtx.globalCompositeOperation = "source-atop";
-        tCtx.globalAlpha = colorOverlay.opacity;
-        tCtx.fillStyle = colorOverlay.color;
-        tCtx.fillRect(0, 0, temp.width, temp.height);
-        tCtx.restore();
+        if (effect.type === "color-overlay") {
+          tCtx.save();
+          tCtx.globalCompositeOperation = "source-atop";
+          tCtx.globalAlpha = effect.opacity;
+          tCtx.fillStyle = effect.color;
+          tCtx.fillRect(0, 0, temp.width, temp.height);
+          tCtx.restore();
+        }
       }
 
       ctx.drawImage(temp, x, y);
@@ -404,6 +662,8 @@ type TransformPreviewCacheKey = {
   rotateDeg: number;
   skewXDeg: number;
   skewYDeg: number;
+  textBoxWidth?: number | null;
+  textBoxHeight?: number | null;
 };
 
 const transformPreviewCache = new WeakMap<TransformDraft, { key: TransformPreviewCacheKey; preview: TransformPreview }>();
@@ -422,6 +682,8 @@ function createTransformPreviewCacheKey(draft: TransformDraft): TransformPreview
     rotateDeg: draft.rotateDeg,
     skewXDeg: draft.skewXDeg,
     skewYDeg: draft.skewYDeg,
+    textBoxWidth: draft.textBoxWidth,
+    textBoxHeight: draft.textBoxHeight,
   };
 }
 
@@ -437,10 +699,15 @@ function isMatchingTransformPreviewCacheKey(left: TransformPreviewCacheKey, righ
     && left.scaleY === right.scaleY
     && left.rotateDeg === right.rotateDeg
     && left.skewXDeg === right.skewXDeg
-    && left.skewYDeg === right.skewYDeg;
+    && left.skewYDeg === right.skewYDeg
+    && left.textBoxWidth === right.textBoxWidth
+    && left.textBoxHeight === right.textBoxHeight;
 }
 
 export function buildTransformPreview(draft: TransformDraft) {
+  if (draft.previewOverride) {
+    return draft.previewOverride;
+  }
   const nextKey = createTransformPreviewCacheKey(draft);
   const cached = transformPreviewCache.get(draft);
   if (cached && isMatchingTransformPreviewCacheKey(cached.key, nextKey)) {
@@ -475,6 +742,43 @@ export function buildTransformPreview(draft: TransformDraft) {
   const preview = { canvas, x: draft.pivotX + minX, y: draft.pivotY + minY, width: canvas.width, height: canvas.height };
   transformPreviewCache.set(draft, { key: nextKey, preview });
   return preview;
+}
+
+export function buildTransformFrameBounds(draft: Pick<TransformDraft, "sourceCanvas" | "frameBounds" | "centerX" | "centerY" | "pivotX" | "pivotY" | "scaleX" | "scaleY" | "rotateDeg" | "skewXDeg" | "skewYDeg" | "previewOverride">) {
+  if (draft.previewOverride) {
+    return {
+      x: draft.previewOverride.x,
+      y: draft.previewOverride.y,
+      width: draft.previewOverride.width,
+      height: draft.previewOverride.height,
+    };
+  }
+  const sourceBounds = draft.frameBounds ?? {
+    x: draft.centerX - draft.sourceCanvas.width / 2,
+    y: draft.centerY - draft.sourceCanvas.height / 2,
+    width: draft.sourceCanvas.width,
+    height: draft.sourceCanvas.height,
+  };
+  const matrix = buildTransformMatrix(draft);
+  const corners = [
+    { x: sourceBounds.x, y: sourceBounds.y },
+    { x: sourceBounds.x + sourceBounds.width, y: sourceBounds.y },
+    { x: sourceBounds.x, y: sourceBounds.y + sourceBounds.height },
+    { x: sourceBounds.x + sourceBounds.width, y: sourceBounds.y + sourceBounds.height },
+  ].map((point) => ({
+    x: draft.pivotX + matrix.a * (point.x - draft.pivotX) + matrix.c * (point.y - draft.pivotY),
+    y: draft.pivotY + matrix.b * (point.x - draft.pivotX) + matrix.d * (point.y - draft.pivotY),
+  }));
+  const minX = Math.min(...corners.map((point) => point.x));
+  const minY = Math.min(...corners.map((point) => point.y));
+  const maxX = Math.max(...corners.map((point) => point.x));
+  const maxY = Math.max(...corners.map((point) => point.y));
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
 }
 
 export function fillLayer(layer: Layer, color: string) {
@@ -554,6 +858,7 @@ export function createBlankDocument(name: string, width: number, height: number,
     selectionPath: null,
     selectionMask: null,
     guides: [],
+    customFonts: [],
   };
 }
 
@@ -567,6 +872,7 @@ export function cloneLayer(layer: Layer): Layer {
     y: layer.y,
     visible: layer.visible,
     opacity: layer.opacity,
+    blendMode: layer.blendMode,
     locked: layer.locked,
     isBackground: layer.isBackground,
     fillColor: layer.fillColor,
@@ -575,7 +881,17 @@ export function cloneLayer(layer: Layer): Layer {
     aiProvenance: layer.aiProvenance ? { ...layer.aiProvenance, warnings: [...layer.aiProvenance.warnings] } : undefined,
   };
   if (layer.type === "text") {
-    return { ...base, type: "text", textData: { ...layer.textData } };
+    return {
+      ...base,
+      type: "text",
+      textData: {
+        ...layer.textData,
+        fill: layer.textData.fill.type === "solid"
+          ? { ...layer.textData.fill }
+          : { ...layer.textData.fill, stops: layer.textData.fill.stops.map((stop) => ({ ...stop })) },
+        stroke: layer.textData.stroke ? { ...layer.textData.stroke } : null,
+      },
+    };
   }
   if (layer.type === "shape") {
     return { ...base, type: "shape", shapeData: { ...layer.shapeData } };
@@ -617,6 +933,7 @@ export function cloneDocument(doc: DocumentState): DocumentState {
     selectionPath: doc.selectionPath ? { points: doc.selectionPath.points.map((p) => ({ ...p })), closed: doc.selectionPath.closed } : null,
     selectionMask: doc.selectionMask ? cloneCanvas(doc.selectionMask) : null,
     guides: doc.guides.map((g) => ({ ...g })),
+    customFonts: doc.customFonts.map((f) => ({ ...f })),
   };
 }
 
@@ -667,6 +984,7 @@ export function serializeDocument(doc: DocumentState): SerializedDocument {
     selectionPath: doc.selectionPath ? { points: doc.selectionPath.points.map((p) => ({ ...p })), closed: doc.selectionPath.closed } : null,
     selectionMaskDataUrl: doc.selectionMask ? serializeMask(doc.selectionMask) : null,
     guides: doc.guides.map((g) => ({ ...g })),
+    customFonts: doc.customFonts.length > 0 ? doc.customFonts.map((f) => ({ ...f })) : undefined,
     layers: doc.layers.map((layer) => ({
       type: layer.type,
       id: layer.id,
@@ -675,6 +993,7 @@ export function serializeDocument(doc: DocumentState): SerializedDocument {
       y: layer.y,
       visible: layer.visible,
       opacity: layer.opacity,
+      blendMode: layer.blendMode,
       locked: layer.locked,
       isBackground: layer.isBackground,
       fillColor: layer.fillColor,
@@ -710,6 +1029,7 @@ export async function deserializeDocument(payload: SerializedDocument, projectPa
       y: item.y,
       visible: item.visible,
       opacity: item.opacity,
+      blendMode: item.blendMode as GlobalCompositeOperation | undefined,
       locked: item.locked,
       isBackground: item.isBackground,
       fillColor: item.fillColor,
@@ -720,7 +1040,36 @@ export async function deserializeDocument(payload: SerializedDocument, projectPa
     };
     let layer: Layer;
     if (item.type === "text" && item.textData) {
-      const textLayer: TextLayer = { ...base, type: "text", textData: { ...item.textData } };
+      // Migrate legacy fillColor → fill for backward compatibility
+      const fill: TextFill = item.textData.fill
+        ?? { type: "solid", color: item.textData.fillColor ?? "#ffffff" };
+      const stroke: TextStroke | null = item.textData.stroke ?? null;
+      const textLayer: TextLayer = {
+        ...base,
+        type: "text",
+        textData: {
+          text: item.textData.text,
+          fontFamily: item.textData.fontFamily,
+          fontSize: item.textData.fontSize,
+          lineHeight: item.textData.lineHeight,
+          kerning: item.textData.kerning,
+          rotationDeg: item.textData.rotationDeg,
+          skewXDeg: item.textData.skewXDeg ?? 0,
+          skewYDeg: item.textData.skewYDeg ?? 0,
+          alignment: item.textData.alignment,
+          fill,
+          stroke,
+          fillColor: getTextFillColor(fill),
+          bold: item.textData.bold,
+          italic: item.textData.italic,
+          underline: item.textData.underline ?? false,
+          strikethrough: item.textData.strikethrough ?? false,
+          boxWidth: item.textData.boxWidth,
+          boxHeight: item.textData.boxHeight ?? null,
+          scaleX: item.textData.scaleX ?? 1,
+          scaleY: item.textData.scaleY ?? 1,
+        },
+      };
       renderTextLayer(textLayer);
       layer = textLayer;
     } else if (item.type === "shape" && item.shapeData) {
@@ -783,7 +1132,14 @@ export async function deserializeDocument(payload: SerializedDocument, projectPa
     selectionPath: payload.selectionPath ? { points: payload.selectionPath.points.map((p) => ({ ...p })), closed: payload.selectionPath.closed } : null,
     selectionMask: null,
     guides: (payload.guides ?? []).map((g) => ({ ...g })),
+    customFonts: (payload.customFonts ?? []).map((f) => ({ ...f })),
   };
+  if (payload.customFonts) {
+    const { registerCustomFont } = await import("../app/customFontRegistry");
+    for (const font of payload.customFonts) {
+      await registerCustomFont(font.family, font.dataUrl, font.fileName);
+    }
+  }
   if (payload.selectionMaskDataUrl) {
     doc.selectionMask = await deserializeMask(payload.selectionMaskDataUrl, payload.width, payload.height);
   }
@@ -814,6 +1170,7 @@ export async function restoreDocumentFromSnapshot(doc: DocumentState, snapshot: 
   doc.selectionPath = restored.selectionPath;
   doc.selectionMask = restored.selectionMask ? cloneCanvas(restored.selectionMask) : null;
   doc.guides = restored.guides.map((g) => ({ ...g }));
+  doc.customFonts = restored.customFonts.map((f) => ({ ...f }));
 }
 
 export function buildStarterDocuments(defaultZoom: number): DocumentState[] {
@@ -874,29 +1231,42 @@ export function createLayerThumb(layer: Layer): HTMLCanvasElement {
   return thumb;
 }
 
-export function compositeDocumentOnto(ctx: CanvasRenderingContext2D, doc: DocumentState, x: number, y: number, scale: number, skipLayerId: string | null = null) {
+export function compositeDocumentOnto(
+  ctx: CanvasRenderingContext2D,
+  doc: DocumentState,
+  x: number,
+  y: number,
+  scale: number,
+  skipLayerIds: string | string[] | null = null,
+  options: { skipAdjustmentLayers?: boolean } = {}
+) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(scale, scale);
+  const skipAdjustmentLayers = options.skipAdjustmentLayers ?? false;
+  const skippedLayerIds = skipLayerIds == null
+    ? null
+    : new Set(Array.isArray(skipLayerIds) ? skipLayerIds : [skipLayerIds]);
 
   // Track whether we need an off-screen buffer for adjustment layers.
   // We only create the temp canvas if there is at least one visible adjustment layer.
   let hasAdjustments = false;
   for (const layer of doc.layers) {
-    if (layer.type === "adjustment" && layer.visible && !(skipLayerId && layer.id === skipLayerId)) {
+    if (layer.type === "adjustment" && layer.visible && !skippedLayerIds?.has(layer.id)) {
       hasAdjustments = true;
       break;
     }
   }
 
-  if (!hasAdjustments) {
+  if (!hasAdjustments || skipAdjustmentLayers) {
     // Fast path: no adjustment layers, draw directly
     for (const layer of doc.layers) {
-      if (skipLayerId && layer.id === skipLayerId) continue;
+      if (skippedLayerIds?.has(layer.id)) continue;
       if (!layer.visible) continue;
-      if (layer.type === "adjustment") continue; // shouldn't happen but guard
+      if (layer.type === "adjustment") continue;
       ctx.save();
       ctx.globalAlpha = layer.opacity;
+      if (layer.blendMode) { ctx.globalCompositeOperation = layer.blendMode; }
       drawLayerOnto(ctx, layer);
       ctx.restore();
     }
@@ -910,7 +1280,7 @@ export function compositeDocumentOnto(ctx: CanvasRenderingContext2D, doc: Docume
     }
 
     for (const layer of doc.layers) {
-      if (skipLayerId && layer.id === skipLayerId) continue;
+      if (skippedLayerIds?.has(layer.id)) continue;
       if (!layer.visible) continue;
 
       if (layer.type === "adjustment") {
@@ -927,6 +1297,7 @@ export function compositeDocumentOnto(ctx: CanvasRenderingContext2D, doc: Docume
       } else {
         tempCtx.save();
         tempCtx.globalAlpha = layer.opacity;
+        if (layer.blendMode) { tempCtx.globalCompositeOperation = layer.blendMode; }
         drawLayerOnto(tempCtx, layer);
         tempCtx.restore();
       }
@@ -953,6 +1324,95 @@ export async function compositeDocumentToBlob(doc: DocumentState, format: "png" 
   });
   if (!blob) throw new Error("Export failed");
   return blob;
+}
+
+function resolveDocumentSelectionMask(doc: Pick<DocumentState, "width" | "height" | "selectionRect" | "selectionShape" | "selectionPath" | "selectionMask" | "selectionInverted">) {
+  const mask = normalizeSelectionToMask(doc.width, doc.height, doc.selectionRect, doc.selectionShape, doc.selectionPath, doc.selectionMask);
+  if (!mask) {
+    return null;
+  }
+  if (doc.selectionInverted) {
+    invertMask(mask);
+  }
+  return isMaskEmpty(mask) ? null : mask;
+}
+
+async function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality?: number) {
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, mimeType, quality);
+  });
+  if (!blob) {
+    throw new Error("Export failed");
+  }
+  return blob;
+}
+
+export interface DocumentClipboardRenderResult {
+  canvas: HTMLCanvasElement;
+  selectionBounds: { x: number; y: number; width: number; height: number } | null;
+}
+
+export function renderDocumentClipboardCanvas(doc: DocumentState): DocumentClipboardRenderResult {
+  const compositeCanvas = createLayerCanvas(doc.width, doc.height);
+  const compositeCtx = compositeCanvas.getContext("2d");
+  if (!compositeCtx) {
+    throw new Error("Failed to create clipboard export context");
+  }
+  compositeDocumentOnto(compositeCtx, doc, 0, 0, 1);
+
+  const effectiveMask = resolveDocumentSelectionMask(doc);
+  if (!effectiveMask) {
+    return { canvas: compositeCanvas, selectionBounds: null };
+  }
+
+  const selectionBounds = maskBoundingRect(effectiveMask);
+  if (!selectionBounds) {
+    return { canvas: compositeCanvas, selectionBounds: null };
+  }
+
+  const maskCtx = effectiveMask.getContext("2d");
+  if (!maskCtx) {
+    throw new Error("Failed to read selection mask");
+  }
+
+  const croppedCanvas = createLayerCanvas(selectionBounds.width, selectionBounds.height);
+  const croppedCtx = croppedCanvas.getContext("2d");
+  if (!croppedCtx) {
+    throw new Error("Failed to create cropped clipboard context");
+  }
+
+  const sourceImage = compositeCtx.getImageData(
+    selectionBounds.x,
+    selectionBounds.y,
+    selectionBounds.width,
+    selectionBounds.height,
+  );
+  const maskImage = maskCtx.getImageData(
+    selectionBounds.x,
+    selectionBounds.y,
+    selectionBounds.width,
+    selectionBounds.height,
+  );
+  const output = croppedCtx.createImageData(selectionBounds.width, selectionBounds.height);
+
+  for (let index = 0; index < output.data.length; index += 4) {
+    const maskAlpha = maskImage.data[index + 3] / 255;
+    if (maskAlpha <= 0) {
+      continue;
+    }
+    output.data[index] = Math.round(sourceImage.data[index] * maskAlpha);
+    output.data[index + 1] = Math.round(sourceImage.data[index + 1] * maskAlpha);
+    output.data[index + 2] = Math.round(sourceImage.data[index + 2] * maskAlpha);
+    output.data[index + 3] = Math.round(sourceImage.data[index + 3] * maskAlpha);
+  }
+
+  croppedCtx.putImageData(output, 0, 0);
+  return { canvas: croppedCanvas, selectionBounds };
+}
+
+export async function renderDocumentClipboardBlob(doc: DocumentState): Promise<Blob> {
+  const { canvas } = renderDocumentClipboardCanvas(doc);
+  return canvasToBlob(canvas, "image/png");
 }
 
 export function resizeCanvasDocument(doc: DocumentState, nextWidth: number, nextHeight: number, offset: { x: number; y: number }) {
@@ -1011,6 +1471,8 @@ export function applyCropToDocument(doc: DocumentState, crop: { x: number; y: nu
 }
 
 export function createTextLayer(name: string, x: number, y: number, overrides: Partial<TextLayerData> = {}): TextLayer {
+  const fill = overrides.fill ?? { type: "solid" as const, color: overrides.fillColor ?? "#ffffff" };
+  const fillColor = getTextFillColor(fill);
   const layer: TextLayer = {
     id: nextId("layer"),
     type: "text",
@@ -1031,11 +1493,20 @@ export function createTextLayer(name: string, x: number, y: number, overrides: P
       kerning: 0,
       rotationDeg: 0,
       alignment: "left",
-      fillColor: "#ffffff",
+      fill,
+      stroke: null,
+      fillColor,
       bold: false,
       italic: false,
+      underline: false,
+      strikethrough: false,
       boxWidth: null,
+      boxHeight: null,
       ...overrides,
+      scaleX: overrides.scaleX ?? 1,
+      scaleY: overrides.scaleY ?? 1,
+      skewXDeg: overrides.skewXDeg ?? 0,
+      skewYDeg: overrides.skewYDeg ?? 0,
     },
   };
   renderTextLayer(layer);

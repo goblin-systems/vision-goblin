@@ -228,9 +228,9 @@ describe("modelDiscovery", () => {
       const byId = new Map(result.models.map((m) => [m.id, m]));
 
       // Both methods → all families (same as generateContent alone)
-      expect(byId.get("gemini-2.0-flash")!.capabilities).toEqual(["captioning", "segmentation", "generation", "inpainting", "enhancement"]);
+      expect(byId.get("gemini-2.0-flash")!.capabilities).toEqual(["captioning", "segmentation", "generation", "inpainting", "enhancement", "text-replacement"]);
       // Only generateContent → all families (generateContent implies full capability)
-      expect(byId.get("gemini-1.5-pro")!.capabilities).toEqual(["captioning", "segmentation", "generation", "inpainting", "enhancement"]);
+      expect(byId.get("gemini-1.5-pro")!.capabilities).toEqual(["captioning", "segmentation", "generation", "inpainting", "enhancement", "text-replacement"]);
       // Only generateImages → generation, inpainting, enhancement (Imagen-style)
       expect(byId.get("imagen-3.0")!.capabilities).toEqual(["generation", "inpainting", "enhancement"]);
       // Neither method → empty

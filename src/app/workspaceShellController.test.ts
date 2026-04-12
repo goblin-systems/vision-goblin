@@ -31,6 +31,7 @@ describe("workspaceShellController helpers", () => {
     const settings = getDefaultSettings();
     const doc = makeNewDocument("Doc", 400, 300, 100, "transparent");
     doc.selectionRect = { x: 10, y: 20, width: 100, height: 80 };
+    doc.selectionMask = document.createElement("canvas");
     doc.dirty = true;
     doc.undoStack.push("undo");
     doc.redoStack.push("redo");
@@ -51,8 +52,25 @@ describe("workspaceShellController helpers", () => {
     expect(state.activeDocMeta).toContain("unsaved");
     expect(state.navDisabled["warp-nav"]).toBe(false);
     expect(state.navDisabled["distribute-h-nav"]).toBe(false);
+    expect(state.navDisabled["ai-replace-raster-text-nav"]).toBe(false);
     expect(state.undoDisabled).toBe(false);
     expect(state.redoDisabled).toBe(false);
+  });
+
+  it("enables AI replace raster text nav even when no selection is available", () => {
+    const settings = getDefaultSettings();
+    const doc = makeNewDocument("Doc", 400, 300, 100, "transparent");
+
+    const state = buildWorkspaceShellState({
+      settings,
+      doc,
+      activeLayer: doc.layers[0] ?? null,
+      selectedLayerCount: 1,
+      quickMaskActive: false,
+      activeShapeKind: "rectangle",
+    });
+
+    expect(state.navDisabled["ai-replace-raster-text-nav"]).toBe(false);
   });
 
   it("clips fractional selection dimensions in document metadata", () => {

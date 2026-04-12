@@ -29,6 +29,7 @@ function makeDoc(overrides: Partial<DocumentState> = {}): DocumentState {
     selectionPath: null,
     selectionMask: null,
     guides: [],
+    customFonts: [],
     ...overrides,
   };
 }

@@ -1,57 +1,37 @@
-import { applyIcons, closeModal, openModal } from "@goblin-systems/goblin-design-system";
+import { closeModal, openModal } from "@goblin-systems/goblin-design-system";
 import { invoke } from "@tauri-apps/api/core";
 import { register, unregisterAll } from "@tauri-apps/plugin-global-shortcut";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { PhysicalPosition, PhysicalSize, getCurrentWindow } from "@tauri-apps/api/window";
 import type { VisionSettings } from "../settings";
-import { byId } from "./dom";
 import { getCaptureGlobalShortcutBindings } from "./capture";
+import {
+  describeCaptureFailure,
+  formatCaptureError,
+  type CaptureDesktopBounds,
+  type CaptureOverlayInitPayload,
+  type CaptureOverlayMode,
+  type CaptureOverlayResult,
+  type CaptureSelection,
+} from "./captureOverlayShared";
 
-export type CaptureOverlayMode = "region" | "picker";
+export {
+  computeCaptureDrawMetrics,
+  computeCaptureHudPosition,
+  computeLensBands,
+  describeCaptureFailure,
+  formatCaptureError,
+  getCaptureSelectionFromDrag,
+  mapClientPointToBitmapPoint,
+} from "./captureOverlayShared";
+export type { CaptureOverlayMode, CaptureSelection } from "./captureOverlayShared";
 
 interface CaptureWindowEntry {
   id: number;
   title: string;
 }
 
-interface CaptureOverlayState {
-  active: boolean;
-  loading: boolean;
-  mode: CaptureOverlayMode;
-  imageUrl: string;
-  imageBitmap: ImageBitmap | null;
-  dragStartX: number;
-  dragStartY: number;
-  dragCurrentX: number;
-  dragCurrentY: number;
-  hoverX: number;
-  hoverY: number;
-  sampledColour: string;
-}
-
-interface CaptureCanvasRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-interface CaptureDrawMetrics {
-  drawX: number;
-  drawY: number;
-  drawWidth: number;
-  drawHeight: number;
-  scale: number;
-}
-
-export interface CaptureSelection {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-export interface CaptureControllerDeps {
+interface CaptureControllerDeps {
   getSettings: () => VisionSettings;
   executeCommand: (commandId: string) => void;
   openDocumentFromBlob: (name: string, blob: Blob, sourcePath: string | null) => Promise<void>;
@@ -72,293 +52,41 @@ export interface CaptureController {
   isOverlayActive(): boolean;
 }
 
-function createCaptureOverlayState(mode: CaptureOverlayMode = "region"): CaptureOverlayState {
-  return {
-    active: false,
-    loading: false,
-    mode,
-    imageUrl: "",
-    imageBitmap: null,
-    dragStartX: 0,
-    dragStartY: 0,
-    dragCurrentX: 0,
-    dragCurrentY: 0,
-    hoverX: 0,
-    hoverY: 0,
-    sampledColour: "#000000",
-  };
-}
+const CAPTURE_OVERLAY_LABEL = "capture-overlay";
+const CAPTURE_RESULT_EVENT = "capture-overlay-result";
+const CAPTURE_INIT_EVENT = "capture-overlay-init";
 
-export function getCaptureSelectionFromDrag(startX: number, startY: number, currentX: number, currentY: number): CaptureSelection {
-  return {
-    left: Math.min(startX, currentX),
-    top: Math.min(startY, currentY),
-    width: Math.abs(currentX - startX),
-    height: Math.abs(currentY - startY),
-  };
-}
-
-export function computeCaptureDrawMetrics(rect: CaptureCanvasRect, dpr: number, bitmap: Pick<ImageBitmap, "width" | "height"> | null): CaptureDrawMetrics {
-  if (!bitmap) {
-    return {
-      drawX: 0,
-      drawY: 0,
-      drawWidth: rect.width,
-      drawHeight: rect.height,
-      scale: 1,
-    };
+function byId<T extends HTMLElement>(id: string): T {
+  const element = document.getElementById(id);
+  if (!element) {
+    throw new Error(`Missing element: ${id}`);
   }
-  const drawWidth = bitmap.width / dpr;
-  const drawHeight = bitmap.height / dpr;
-  return {
-    drawX: (rect.width - drawWidth) / 2,
-    drawY: (rect.height - drawHeight) / 2,
-    drawWidth,
-    drawHeight,
-    scale: drawWidth / bitmap.width,
-  };
+  return element as T;
 }
 
-export function mapClientPointToBitmapPoint(
-  clientX: number,
-  clientY: number,
-  rect: CaptureCanvasRect,
-  metrics: CaptureDrawMetrics,
-): { x: number; y: number } {
-  const localX = Math.max(metrics.drawX, Math.min(clientX - rect.left, metrics.drawX + metrics.drawWidth));
-  const localY = Math.max(metrics.drawY, Math.min(clientY - rect.top, metrics.drawY + metrics.drawHeight));
-  return {
-    x: metrics.scale > 0 ? (localX - metrics.drawX) / metrics.scale : 0,
-    y: metrics.scale > 0 ? (localY - metrics.drawY) / metrics.scale : 0,
-  };
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function formatCaptureError(error: unknown, fallback: string): string {
-  if (typeof error === "string" && error.trim()) return error;
-  if (error instanceof Error && error.message.trim()) return error.message;
-  return fallback;
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to prepare desktop capture"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function dataUrlToBlob(imageDataUrl: string): Promise<Blob> {
+  const response = await fetch(imageDataUrl);
+  return response.blob();
 }
 
 export function createCaptureController(deps: CaptureControllerDeps): CaptureController {
   const currentWindow = getCurrentWindow();
-  let captureOverlay = createCaptureOverlayState();
+  let overlayActive = false;
   let wasMaximizedBeforeCapture = false;
   let wasFullscreenBeforeCapture = false;
-  const sampleCanvas = document.createElement("canvas");
-  sampleCanvas.width = 1;
-  sampleCanvas.height = 1;
-  const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
-
-  function getCaptureSelection() {
-    return getCaptureSelectionFromDrag(
-      captureOverlay.dragStartX,
-      captureOverlay.dragStartY,
-      captureOverlay.dragCurrentX,
-      captureOverlay.dragCurrentY,
-    );
-  }
-
-  function getCaptureCanvasMetrics() {
-    const canvas = byId<HTMLCanvasElement>("capture-overlay-canvas");
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    const width = Math.max(1, Math.round(rect.width * dpr));
-    const height = Math.max(1, Math.round(rect.height * dpr));
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-    }
-    const metrics = computeCaptureDrawMetrics(rect, dpr, captureOverlay.imageBitmap);
-    return { canvas, rect, dpr, ...metrics };
-  }
-
-  function canvasToBitmapPoint(clientX: number, clientY: number) {
-    const { rect, drawX, drawY, drawWidth, drawHeight, scale } = getCaptureCanvasMetrics();
-    return mapClientPointToBitmapPoint(clientX, clientY, rect, { drawX, drawY, drawWidth, drawHeight, scale });
-  }
-
-  function sampleOverlayColourAt(x: number, y: number) {
-    const bitmap = captureOverlay.imageBitmap;
-    if (!bitmap || !sampleContext) {
-      return null;
-    }
-    sampleContext.clearRect(0, 0, 1, 1);
-    sampleContext.drawImage(bitmap, -Math.floor(x), -Math.floor(y));
-    const pixel = sampleContext.getImageData(0, 0, 1, 1).data;
-    return `#${[pixel[0], pixel[1], pixel[2]].map((value) => value.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
-  }
-
-  function drawCaptureMagnifier() {
-    const magnifier = byId<HTMLCanvasElement>("capture-magnifier");
-    const ctx = magnifier.getContext("2d");
-    const bitmap = captureOverlay.imageBitmap;
-    if (!ctx || !bitmap) {
-      return;
-    }
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, magnifier.width, magnifier.height);
-    const sampleSize = 11;
-    const half = Math.floor(sampleSize / 2);
-    const sx = Math.max(0, Math.min(bitmap.width - sampleSize, Math.round(captureOverlay.hoverX) - half));
-    const sy = Math.max(0, Math.min(bitmap.height - sampleSize, Math.round(captureOverlay.hoverY) - half));
-    ctx.drawImage(bitmap, sx, sy, sampleSize, sampleSize, 0, 0, magnifier.width, magnifier.height);
-    const cell = magnifier.width / sampleSize;
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(Math.floor(half * cell) + 0.5, Math.floor(half * cell) + 0.5, Math.ceil(cell), Math.ceil(cell));
-  }
-
-  function drawCaptureOverlayCanvas() {
-    const bitmap = captureOverlay.imageBitmap;
-    const { canvas, dpr, drawX, drawY, drawWidth, drawHeight, scale } = getCaptureCanvasMetrics();
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      return;
-    }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.scale(dpr, dpr);
-    ctx.fillStyle = "rgba(6, 9, 16, 0.96)";
-    ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
-    if (!bitmap) {
-      return;
-    }
-    ctx.drawImage(bitmap, drawX, drawY, drawWidth, drawHeight);
-
-    if (captureOverlay.mode === "region") {
-      const selection = getCaptureSelection();
-      if (selection.width >= 2 && selection.height >= 2) {
-        const x = drawX + selection.left * scale;
-        const y = drawY + selection.top * scale;
-        const width = selection.width * scale;
-        const height = selection.height * scale;
-        ctx.fillStyle = "rgba(5, 8, 14, 0.52)";
-        ctx.fillRect(drawX, drawY, drawWidth, y - drawY);
-        ctx.fillRect(drawX, y, x - drawX, height);
-        ctx.fillRect(x + width, y, drawX + drawWidth - (x + width), height);
-        ctx.fillRect(drawX, y + height, drawWidth, drawY + drawHeight - (y + height));
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([8, 6]);
-        ctx.strokeRect(x + 0.5, y + 0.5, width, height);
-        ctx.setLineDash([]);
-      }
-      return;
-    }
-
-    const x = drawX + captureOverlay.hoverX * scale;
-    const y = drawY + captureOverlay.hoverY * scale;
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(x, y, 12, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x - 18, y);
-    ctx.lineTo(x + 18, y);
-    ctx.moveTo(x, y - 18);
-    ctx.lineTo(x, y + 18);
-    ctx.stroke();
-  }
-
-  function renderCaptureOverlay() {
-    const overlay = byId<HTMLElement>("capture-overlay");
-    const confirmBtn = byId<HTMLButtonElement>("capture-overlay-confirm-btn");
-    const hint = byId<HTMLElement>("capture-overlay-hint");
-    const title = byId<HTMLElement>("capture-overlay-title");
-    const magnifier = byId<HTMLCanvasElement>("capture-magnifier");
-    const colourReadout = byId<HTMLElement>("capture-colour-readout");
-    const colourChip = byId<HTMLElement>("capture-colour-chip");
-    const coords = byId<HTMLElement>("capture-coords");
-    const loadingCard = byId<HTMLElement>("capture-loading-card");
-    const toolbar = byId<HTMLElement>("capture-overlay-toolbar");
-    const canvas = byId<HTMLCanvasElement>("capture-overlay-canvas");
-
-    overlay.hidden = !captureOverlay.active;
-    loadingCard.hidden = !captureOverlay.loading;
-    toolbar.hidden = captureOverlay.loading;
-    canvas.hidden = captureOverlay.loading;
-
-    if (captureOverlay.loading) return;
-
-    title.textContent = captureOverlay.mode === "picker" ? "Global Colour Picker" : "Screen Snip";
-    hint.textContent = captureOverlay.mode === "picker"
-      ? "Move over the screenshot and click to sample a colour."
-      : "Drag to select a region.";
-    coords.textContent = `${Math.round(captureOverlay.hoverX)}, ${Math.round(captureOverlay.hoverY)}`;
-
-    if (captureOverlay.mode === "region") {
-      magnifier.hidden = true;
-      colourReadout.hidden = true;
-      confirmBtn.hidden = true;
-      colourChip.hidden = true;
-    } else {
-      magnifier.hidden = false;
-      colourReadout.hidden = false;
-      colourChip.hidden = false;
-      colourChip.style.background = captureOverlay.sampledColour;
-      colourReadout.textContent = captureOverlay.sampledColour;
-      confirmBtn.hidden = true;
-      drawCaptureMagnifier();
-    }
-    drawCaptureOverlayCanvas();
-  }
-
-  function showCaptureLoading(mode: CaptureOverlayMode) {
-    captureOverlay = {
-      ...createCaptureOverlayState(mode),
-      active: true,
-      loading: true,
-    };
-    renderCaptureOverlay();
-  }
-
-  async function openCaptureOverlay(mode: CaptureOverlayMode, imageUrl: string) {
-    if (captureOverlay.imageUrl && captureOverlay.imageUrl.startsWith("blob:")) {
-      URL.revokeObjectURL(captureOverlay.imageUrl);
-    }
-    await currentWindow.setAlwaysOnTop(true);
-    const blob = await (await fetch(imageUrl)).blob();
-    const imageBitmap = await createImageBitmap(blob);
-    captureOverlay = {
-      ...createCaptureOverlayState(mode),
-      active: true,
-      imageUrl,
-      imageBitmap,
-      hoverX: Math.round(imageBitmap.width / 2),
-      hoverY: Math.round(imageBitmap.height / 2),
-    };
-    captureOverlay.sampledColour = sampleOverlayColourAt(captureOverlay.hoverX, captureOverlay.hoverY) ?? "#000000";
-    renderCaptureOverlay();
-    applyIcons();
-  }
-
-  async function restoreWindowAfterCapture() {
-    await currentWindow.show();
-    await currentWindow.unminimize();
-    await currentWindow.setFocus();
-    if (wasFullscreenBeforeCapture) {
-      await currentWindow.setFullscreen(false);
-    }
-    if (wasMaximizedBeforeCapture) {
-      await currentWindow.maximize();
-    } else {
-      await currentWindow.unmaximize();
-    }
-  }
-
-  async function closeOverlay() {
-    if (captureOverlay.imageUrl && captureOverlay.imageUrl.startsWith("blob:")) {
-      URL.revokeObjectURL(captureOverlay.imageUrl);
-    }
-    await currentWindow.setAlwaysOnTop(false);
-    captureOverlay = createCaptureOverlayState();
-    renderCaptureOverlay();
-    await currentWindow.setFullscreen(false);
-    if (wasMaximizedBeforeCapture) {
-      await currentWindow.maximize();
-    }
-  }
 
   function shouldHideWindowBeforeCapture() {
     return deps.getSettings().captureHideWindow;
@@ -366,6 +94,45 @@ export function createCaptureController(deps: CaptureControllerDeps): CaptureCon
 
   function getCaptureDelaySeconds() {
     return deps.getSettings().captureDelaySeconds;
+  }
+
+  function getCaptureDestination() {
+    return deps.getSettings().captureDestination;
+  }
+
+  async function snapshotWindowStateBeforeCapture() {
+    wasMaximizedBeforeCapture = await currentWindow.isMaximized();
+    wasFullscreenBeforeCapture = await currentWindow.isFullscreen();
+  }
+
+  async function restoreWindowAfterCapture() {
+    await currentWindow.show();
+    await currentWindow.unminimize();
+    if (wasFullscreenBeforeCapture) {
+      await currentWindow.setFullscreen(true);
+    } else {
+      await currentWindow.setFullscreen(false);
+      if (wasMaximizedBeforeCapture) {
+        await currentWindow.maximize();
+      } else {
+        await currentWindow.unmaximize();
+      }
+    }
+    await currentWindow.setFocus();
+  }
+
+  async function closeOverlayWindow() {
+    const overlayWindow = await WebviewWindow.getByLabel(CAPTURE_OVERLAY_LABEL);
+    overlayActive = false;
+    if (!overlayWindow) {
+      return;
+    }
+    await overlayWindow.close().catch(() => undefined);
+  }
+
+  async function closeOverlay() {
+    await closeOverlayWindow();
+    await restoreWindowAfterCapture().catch(() => undefined);
   }
 
   async function runCaptureCountdown() {
@@ -391,11 +158,11 @@ export function createCaptureController(deps: CaptureControllerDeps): CaptureCon
       countdown.once("tauri://error", () => reject(new Error("Failed to create countdown window")));
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await delay(100);
 
-    for (let remaining = seconds; remaining > 0; remaining--) {
+    for (let remaining = seconds; remaining > 0; remaining -= 1) {
       await countdown.emitTo("capture-countdown", "countdown-tick", remaining);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await delay(1000);
     }
 
     await countdown.close();
@@ -404,19 +171,7 @@ export function createCaptureController(deps: CaptureControllerDeps): CaptureCon
   async function hideWindowForCapture() {
     if (!shouldHideWindowBeforeCapture()) return;
     await currentWindow.minimize();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-
-  async function focusWindowForCaptureOverlay() {
-    await currentWindow.setAlwaysOnTop(true);
-    await currentWindow.show();
-    await currentWindow.unminimize();
-    await currentWindow.setFocus();
-    await currentWindow.setFullscreen(true);
-  }
-
-  function getCaptureDestination() {
-    return deps.getSettings().captureDestination;
+    await delay(300);
   }
 
   async function deliverCaptureBlob(name: string, blob: Blob) {
@@ -437,9 +192,13 @@ export function createCaptureController(deps: CaptureControllerDeps): CaptureCon
     await deps.openDocumentFromBlob(name, blob, null);
   }
 
-  async function capturePrimaryMonitorBlob(): Promise<Blob> {
-    const buffer = await invoke<ArrayBuffer>("capture_primary_monitor_png");
+  async function captureVirtualDesktopBlob(): Promise<Blob> {
+    const buffer = await invoke<ArrayBuffer>("capture_virtual_desktop_png");
     return new Blob([buffer], { type: "image/png" });
+  }
+
+  async function getVirtualDesktopBounds(): Promise<CaptureDesktopBounds> {
+    return invoke<CaptureDesktopBounds>("get_virtual_desktop_bounds");
   }
 
   async function captureWindowBlob(id: number): Promise<Blob> {
@@ -447,48 +206,95 @@ export function createCaptureController(deps: CaptureControllerDeps): CaptureCon
     return new Blob([buffer], { type: "image/png" });
   }
 
-  async function confirmCaptureSelection() {
-    if (!captureOverlay.imageBitmap) return;
-    const selection = getCaptureSelection();
-    if (selection.width < 2 || selection.height < 2) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(selection.width));
-    canvas.height = Math.max(1, Math.round(selection.height));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(
-      captureOverlay.imageBitmap,
-      selection.left,
-      selection.top,
-      selection.width,
-      selection.height,
-      0,
-      0,
-      selection.width,
-      selection.height,
-    );
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (blob) {
-      await deliverCaptureBlob(`Snip ${Date.now()}.png`, blob);
+  async function ensureOverlayWindow(bounds: CaptureDesktopBounds) {
+    const existingWindow = await WebviewWindow.getByLabel(CAPTURE_OVERLAY_LABEL);
+    const overlayWindow = existingWindow ?? new WebviewWindow(CAPTURE_OVERLAY_LABEL, {
+      url: "capture-overlay.html",
+      title: "Capture Overlay",
+      width: 1,
+      height: 1,
+      x: 0,
+      y: 0,
+      visible: false,
+      transparent: true,
+      decorations: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      maximizable: false,
+      minimizable: false,
+      closable: false,
+      shadow: false,
+      focus: true,
+    });
+
+    if (!existingWindow) {
+      await new Promise<void>((resolve, reject) => {
+        overlayWindow.once("tauri://created", () => resolve());
+        overlayWindow.once("tauri://error", () => reject(new Error("Failed to create capture overlay")));
+      });
     }
-    await closeOverlay();
+
+    await overlayWindow.setPosition(new PhysicalPosition(bounds.x, bounds.y));
+    await overlayWindow.setSize(new PhysicalSize(bounds.width, bounds.height));
+    await overlayWindow.show();
+    await overlayWindow.setFocus();
+    overlayActive = true;
+    return overlayWindow;
+  }
+
+  async function waitForOverlayResult(overlayWindow: WebviewWindow): Promise<CaptureOverlayResult> {
+    return new Promise<CaptureOverlayResult>(async (resolve) => {
+      let settled = false;
+      const unlistenResult = await currentWindow.listen<CaptureOverlayResult>(CAPTURE_RESULT_EVENT, async (event) => {
+        if (settled) return;
+        settled = true;
+        await unlistenResult();
+        resolve(event.payload);
+      });
+      await overlayWindow.once("tauri://destroyed", async () => {
+        if (settled) return;
+        settled = true;
+        await unlistenResult();
+        resolve({ kind: "cancel" });
+      });
+    });
+  }
+
+  async function openOverlaySession(mode: CaptureOverlayMode, blob: Blob, bounds: CaptureDesktopBounds) {
+    const overlayWindow = await ensureOverlayWindow(bounds);
+    const resultPromise = waitForOverlayResult(overlayWindow);
+    const payload: CaptureOverlayInitPayload = {
+      mode,
+      desktopBounds: bounds,
+      imageDataUrl: await blobToDataUrl(blob),
+    };
+    await overlayWindow.emitTo(CAPTURE_OVERLAY_LABEL, CAPTURE_INIT_EVENT, payload);
+    return resultPromise;
   }
 
   async function runOverlayCapture(mode: CaptureOverlayMode, failureLabel: string, logPrefix: string) {
-    showCaptureLoading(mode);
     try {
-      wasMaximizedBeforeCapture = await currentWindow.isMaximized();
-      wasFullscreenBeforeCapture = await currentWindow.isFullscreen();
+      await snapshotWindowStateBeforeCapture();
       await hideWindowForCapture();
       await runCaptureCountdown();
-      const blob = await capturePrimaryMonitorBlob();
-      await focusWindowForCaptureOverlay();
-      const url = URL.createObjectURL(blob);
-      await openCaptureOverlay(mode, url);
+      const [blob, bounds] = await Promise.all([captureVirtualDesktopBlob(), getVirtualDesktopBounds()]);
+      const result = await openOverlaySession(mode, blob, bounds);
+      await closeOverlayWindow();
+      await restoreWindowAfterCapture();
+      if (result.kind === "cancel") {
+        return;
+      }
+      if (result.kind === "picker") {
+        deps.applyPickedColour(result.colour);
+        deps.showToast(`Sampled ${result.colour}`);
+        return;
+      }
+      await deliverCaptureBlob(`Snip ${Date.now()}.png`, await dataUrlToBlob(result.imageDataUrl));
     } catch (error) {
+      await closeOverlayWindow().catch(() => undefined);
       await restoreWindowAfterCapture().catch(() => undefined);
-      await closeOverlay();
-      const message = formatCaptureError(error, failureLabel);
+      const message = describeCaptureFailure(error, failureLabel);
       deps.log(`${logPrefix}: ${message}`, "ERROR");
       deps.showToast(message, "error");
     }
@@ -532,7 +338,7 @@ export function createCaptureController(deps: CaptureControllerDeps): CaptureCon
         try {
           await captureWindowById(id);
         } catch (error) {
-          const message = formatCaptureError(error, "Window capture failed");
+          const message = describeCaptureFailure(error, "Window capture failed");
           deps.log(`Window capture failed: ${message}`, "ERROR");
           deps.showToast(message, "error");
         }
@@ -545,7 +351,7 @@ export function createCaptureController(deps: CaptureControllerDeps): CaptureCon
         onReject: finish,
       });
     } catch (error) {
-      const message = formatCaptureError(error, "Could not list capturable windows");
+      const message = describeCaptureFailure(error, "Could not list capturable windows");
       deps.log(`Window list failed: ${message}`, "ERROR");
       deps.showToast(message, "error");
     }
@@ -553,111 +359,22 @@ export function createCaptureController(deps: CaptureControllerDeps): CaptureCon
 
   async function captureFullscreen() {
     try {
-      wasMaximizedBeforeCapture = await currentWindow.isMaximized();
-      wasFullscreenBeforeCapture = await currentWindow.isFullscreen();
+      await snapshotWindowStateBeforeCapture();
       await hideWindowForCapture();
       await runCaptureCountdown();
-      const blob = await capturePrimaryMonitorBlob();
+      const blob = await captureVirtualDesktopBlob();
       await restoreWindowAfterCapture();
       await deliverCaptureBlob(`Screen ${Date.now()}.png`, blob);
     } catch (error) {
       await restoreWindowAfterCapture().catch(() => undefined);
-      const message = formatCaptureError(error, "Full screen capture failed");
+      const message = describeCaptureFailure(error, "Full screen capture failed");
       deps.log(`Full screen capture failed: ${message}`, "ERROR");
       deps.showToast(message, "error");
     }
   }
 
   function bindOverlay() {
-    const canvas = byId<HTMLCanvasElement>("capture-overlay-canvas");
-    const coords = byId<HTMLElement>("capture-coords");
-
-    let dragging = false;
-
-    canvas.addEventListener("pointerdown", (event) => {
-      if (!captureOverlay.active) return;
-      const point = canvasToBitmapPoint(event.clientX, event.clientY);
-      captureOverlay.dragStartX = point.x;
-      captureOverlay.dragStartY = point.y;
-      captureOverlay.dragCurrentX = point.x;
-      captureOverlay.dragCurrentY = point.y;
-      captureOverlay.hoverX = point.x;
-      captureOverlay.hoverY = point.y;
-      captureOverlay.sampledColour = sampleOverlayColourAt(point.x, point.y) ?? captureOverlay.sampledColour;
-      dragging = captureOverlay.mode === "region";
-      canvas.setPointerCapture(event.pointerId);
-      renderCaptureOverlay();
-    });
-
-    canvas.addEventListener("pointermove", (event) => {
-      if (!captureOverlay.active) return;
-      const point = canvasToBitmapPoint(event.clientX, event.clientY);
-      if (dragging) {
-        captureOverlay.dragCurrentX = point.x;
-        captureOverlay.dragCurrentY = point.y;
-      }
-      captureOverlay.hoverX = point.x;
-      captureOverlay.hoverY = point.y;
-      coords.textContent = `${Math.round(point.x)}, ${Math.round(point.y)}`;
-      const colour = sampleOverlayColourAt(point.x, point.y);
-      if (colour) {
-        captureOverlay.sampledColour = colour;
-      }
-      if (dragging || captureOverlay.mode === "picker") {
-        renderCaptureOverlay();
-      }
-    });
-
-    canvas.addEventListener("pointerup", () => {
-      if (!dragging) return;
-      dragging = false;
-      if (captureOverlay.active && captureOverlay.mode === "region") {
-        const selection = getCaptureSelection();
-        if (selection.width >= 2 && selection.height >= 2) {
-          void confirmCaptureSelection();
-          return;
-        }
-      }
-      if (captureOverlay.active) {
-        renderCaptureOverlay();
-      }
-    });
-
-    canvas.addEventListener("pointercancel", () => {
-      dragging = false;
-    });
-
-    window.addEventListener("keydown", (event) => {
-      if (!captureOverlay.active) return;
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      void closeOverlay();
-    });
-
-    const cancelButton = byId<HTMLButtonElement>("capture-overlay-cancel-btn");
-    cancelButton.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-    cancelButton.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void closeOverlay();
-    });
-
-    byId<HTMLButtonElement>("capture-overlay-confirm-btn").addEventListener("click", () => {
-      void confirmCaptureSelection();
-    });
-
-    canvas.addEventListener("click", async (event: MouseEvent) => {
-      if (!captureOverlay.active || captureOverlay.mode !== "picker") return;
-      const point = canvasToBitmapPoint(event.clientX, event.clientY);
-      const colour = sampleOverlayColourAt(point.x, point.y);
-      if (!colour) return;
-      deps.applyPickedColour(colour);
-      deps.showToast(`Sampled ${colour}`);
-      await closeOverlay();
-    });
+    // Overlay interaction now lives in the dedicated capture overlay window.
   }
 
   async function refreshGlobalShortcuts() {
@@ -685,6 +402,6 @@ export function createCaptureController(deps: CaptureControllerDeps): CaptureCon
     captureFullscreen,
     beginGlobalColourPick,
     closeOverlay,
-    isOverlayActive: () => captureOverlay.active,
+    isOverlayActive: () => overlayActive,
   };
 }

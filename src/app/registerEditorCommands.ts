@@ -2,6 +2,7 @@ import type { ToolName, VisionSettings } from "../settings";
 import { getSelectedLayerIds } from "../editor/layers";
 import type { CommandDefinition } from "../editor/commands";
 import type { DocumentState, Layer } from "../editor/types";
+import { resolveEffectiveSelectionMask } from "../editor/fillGradientValidation";
 import type { UiTheme } from "./theme";
 
 type AlignmentKind = "left" | "right" | "top" | "bottom" | "center-h" | "center-v" | "distribute-h" | "distribute-v";
@@ -15,6 +16,7 @@ export interface RegisterEditorCommandsDeps {
   handleOpenImage: () => void | Promise<void>;
   handleOpenProject: () => void | Promise<void>;
   duplicateActiveDocument: () => void;
+  copyActiveDocumentToClipboard: () => Promise<boolean>;
   tryPasteImageFromClipboard: () => Promise<boolean>;
   handleSaveProject: (saveAs: boolean) => void | Promise<void>;
   handleExportImage: () => void | Promise<void>;
@@ -81,6 +83,13 @@ export interface RegisterEditorCommandsDeps {
   openAiRestoreModal: () => void | Promise<void>;
   runAiThumbnail: () => void | Promise<void>;
   runAiFreeform: () => void | Promise<void>;
+  runAiAddShadow: () => void | Promise<void>;
+  runAiRemoveShadow: () => void | Promise<void>;
+  runAiAddReflection: () => void | Promise<void>;
+  runAiRemoveReflection: () => void | Promise<void>;
+  runAiCloneObject: () => void | Promise<void>;
+  runAiMoveObject: () => void | Promise<void>;
+  runAiReplaceRasterText: () => void | Promise<void>;
   setTheme: (theme: UiTheme) => void | Promise<void>;
 }
 
@@ -108,7 +117,7 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
   const hasDoc = () => !!deps.getActiveDocument();
   const hasSelection = () => {
     const doc = deps.getActiveDocument();
-    return !!doc?.selectionRect;
+    return !!doc && resolveEffectiveSelectionMask(doc) !== null;
   };
   const getActiveRasterCandidate = () => {
     const doc = deps.getActiveDocument();
@@ -144,6 +153,7 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
       const doc = deps.getActiveDocument();
       return !!(doc && doc.redoStack.length > 0);
     }, execute: () => void deps.handleRedo() },
+    { id: "copy-image", label: "Copy image", shortcut: deps.getSettings().keybindings["copy-image"], category: "edit", enabled: hasDoc, execute: () => void deps.copyActiveDocumentToClipboard() },
 
     { id: "rename-canvas", label: "Rename canvas", category: "canvas", enabled: hasDoc, execute: () => void deps.renameCanvas() },
     { id: "resize-canvas", label: "Resize canvas", category: "canvas", enabled: hasDoc, execute: () => deps.openResizeCanvasModal() },
@@ -188,6 +198,13 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
     { id: "ai-restore-photo", label: "AI: Restore Photo", category: "ai", enabled: hasDoc, execute: () => void deps.openAiRestoreModal() },
     { id: "ai-generate-thumbnail", label: "AI: Generate Thumbnail", category: "ai", enabled: hasDoc, execute: () => void deps.runAiThumbnail() },
     { id: "ai-freeform", label: "AI: Freeform", category: "ai", enabled: hasDoc, execute: () => void deps.runAiFreeform() },
+    { id: "ai-add-shadow", label: "AI: Add Shadow", category: "ai", enabled: hasDoc, execute: () => void deps.runAiAddShadow() },
+    { id: "ai-remove-shadow", label: "AI: Remove Shadow", category: "ai", enabled: hasDoc, execute: () => void deps.runAiRemoveShadow() },
+    { id: "ai-add-reflection", label: "AI: Add Reflection", category: "ai", enabled: hasDoc, execute: () => void deps.runAiAddReflection() },
+    { id: "ai-remove-reflection", label: "AI: Remove Reflection", category: "ai", enabled: hasDoc, execute: () => void deps.runAiRemoveReflection() },
+    { id: "ai-clone-object", label: "AI: Clone Object", category: "ai", enabled: hasDoc, execute: () => void deps.runAiCloneObject() },
+    { id: "ai-move-object", label: "AI: Move Object", category: "ai", enabled: hasDoc, execute: () => void deps.runAiMoveObject() },
+    { id: "ai-replace-raster-text", label: "AI: Replace Raster Text", category: "ai", enabled: hasDoc, execute: () => void deps.runAiReplaceRasterText() },
 
     { id: "add-adj-brightness-contrast", label: "Add Brightness/Contrast layer", category: "layer", enabled: hasDoc, execute: () => deps.handleAddAdjustmentLayer("brightness-contrast") },
     { id: "add-adj-hue-saturation", label: "Add Hue/Saturation layer", category: "layer", enabled: hasDoc, execute: () => deps.handleAddAdjustmentLayer("hue-saturation") },

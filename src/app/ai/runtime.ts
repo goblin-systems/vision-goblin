@@ -10,6 +10,7 @@ import {
 import { createOpenAiCompatibleProvider } from "./providers/openAiCompatibleProvider";
 import { createGeminiProvider } from "./providers/geminiProvider";
 import { createAiProviderRegistry } from "./registry";
+import type { AiProviderDebugInspection } from "./inspection";
 import type { AiTask, AiTaskFamily } from "./types";
 import { AI_PROVIDER_IDS, type AiProviderId, type AiSettings } from "./config";
 
@@ -40,7 +41,11 @@ export interface AiValidationResult {
 export interface AiRuntimeTaskRequest<TTask extends AiTask = AiTask> {
   task: TTask;
   metadata?: Record<string, string>;
+  fallbackPolicy?: "allow" | "forbid";
   signal?: AbortSignal;
+  inspection?: AiProviderDebugInspection;
+  plannedProviderId?: AiProviderId;
+  plannedModel?: string;
 }
 
 export interface AiTaskExecutionResult<TTask extends AiTask = AiTask> {
@@ -89,7 +94,7 @@ const PROVIDERS: Record<AiProviderId, AiProviderDescriptor> = {
   gemini: {
     id: "gemini",
     displayName: "Google Gemini",
-    supportedFamilies: ["segmentation", "inpainting", "enhancement", "generation", "captioning"],
+    supportedFamilies: ["segmentation", "inpainting", "enhancement", "generation", "captioning", "text-replacement"],
     requiresSecureKey: true,
   },
 };
@@ -151,9 +156,11 @@ export function createAiPlatformRuntime(options: AiPlatformRuntimeOptions): AiPl
       const settings = options.getSettings();
       const route = settings.routing[request.task.family];
       const attemptedProviderIds: AiProviderId[] = [];
-      const fallbackProviderIds = route.fallbackProviderIds.filter((providerId) => providerId !== route.primaryProviderId);
-      const providerOrder = [route.primaryProviderId, ...fallbackProviderIds];
-      const preferredModel = route.preferredModel.trim() || undefined;
+      const primaryProviderId = request.plannedProviderId ?? route.primaryProviderId;
+      const fallbackProviderIds = route.fallbackProviderIds.filter((providerId) => providerId !== primaryProviderId);
+      const allowFallbacks = request.fallbackPolicy !== "forbid";
+      const providerOrder = allowFallbacks ? [primaryProviderId, ...fallbackProviderIds] : [primaryProviderId];
+      const preferredModel = request.plannedModel ?? (route.preferredModel.trim() || undefined);
       let lastFailure: AiTaskFailure<typeof request.task> | null = null;
 
       for (const providerId of providerOrder) {

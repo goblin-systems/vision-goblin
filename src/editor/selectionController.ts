@@ -20,6 +20,8 @@ interface SelectionControllerDeps {
   showToast: (message: string, variant?: "success" | "error" | "info") => void;
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
   snapshotDocument: (doc: DocumentState) => string;
+  /** When an AI mask session is active, returns the target canvas for selection results. Null means use doc.selectionMask as normal. */
+  getSelectionMaskTarget: () => HTMLCanvasElement | null;
 }
 
 export function createSelectionController(deps: SelectionControllerDeps) {
@@ -44,8 +46,8 @@ export function createSelectionController(deps: SelectionControllerDeps) {
 
   function getMarqueeModifiers(modifiers: ModifierState) {
     const rotate = modifiers.ctrlPressed && modifiers.shiftPressed;
-    const nonPerfect = modifiers.altPressed && modifiers.shiftPressed;
-    return { rotate, perfect: !nonPerfect };
+    const perfect = modifiers.altPressed && modifiers.shiftPressed;
+    return { rotate, perfect };
   }
 
   function setMarqueeMode(nextMode: SelectionMode) {
@@ -231,6 +233,24 @@ export function createSelectionController(deps: SelectionControllerDeps) {
     const tmpMask = createMaskCanvas(doc.width, doc.height);
     rasterizeFloodFillToMask(tmpMask, mask, width, height, layer.x, layer.y);
 
+    const sessionTarget = deps.getSelectionMaskTarget();
+    if (sessionTarget) {
+      if (mode === "replace") {
+        const ctx = sessionTarget.getContext("2d");
+        if (ctx) {
+          ctx.clearRect(0, 0, sessionTarget.width, sessionTarget.height);
+          ctx.drawImage(tmpMask, 0, 0);
+        }
+      } else {
+        combineMasks(sessionTarget, tmpMask, mode);
+      }
+      clearCapturedSelectionMode();
+      deps.log(`Magic wand applied to AI mask session at tolerance ${tol}`, "INFO");
+      deps.showToast("Magic wand applied to mask", "info");
+      deps.renderEditorState();
+      return;
+    }
+
     const snapshot = deps.snapshotDocument(doc);
 
     if (mode === "replace" || !doc.selectionMask) {
@@ -269,8 +289,29 @@ export function createSelectionController(deps: SelectionControllerDeps) {
       return;
     }
     if (!doc.selectionPath || doc.selectionPath.points.length < 3) {
+      const sessionTarget = deps.getSelectionMaskTarget();
+      if (sessionTarget) {
+        // During AI mask session, ignore lasso with too few points
+        doc.selectionPath = null;
+        deps.log("Lasso cancelled during AI mask session: too few points", "WARN");
+        deps.renderEditorState();
+        return;
+      }
+      const mode = getCapturedOrEffectiveMode();
+      const hadSelection = !!(doc.selectionRect || doc.selectionMask);
+      if (mode === "replace" && hadSelection) {
+        doc.undoStack.push(deps.snapshotDocument(doc));
+        doc.redoStack = [];
+        doc.selectionRect = null;
+        doc.selectionInverted = false;
+        doc.selectionMask = null;
+        pushHistory(doc, "Deselected");
+        deps.log("Selection cleared (lasso click)", "INFO");
+      }
       doc.selectionPath = null;
-      deps.log("Lasso cancelled: too few points", "WARN");
+      if (!(mode === "replace" && hadSelection)) {
+        deps.log("Lasso cancelled: too few points", "WARN");
+      }
       deps.renderEditorState();
       return;
     }
@@ -287,6 +328,26 @@ export function createSelectionController(deps: SelectionControllerDeps) {
     const snapshot = deps.snapshotDocument(doc);
     const tmpMask = createMaskCanvas(doc.width, doc.height);
     rasterizePathToMask(tmpMask, doc.selectionPath);
+
+    const sessionTarget = deps.getSelectionMaskTarget();
+    if (sessionTarget) {
+      if (mode === "replace") {
+        const ctx = sessionTarget.getContext("2d");
+        if (ctx) {
+          ctx.clearRect(0, 0, sessionTarget.width, sessionTarget.height);
+          ctx.drawImage(tmpMask, 0, 0);
+        }
+      } else {
+        combineMasks(sessionTarget, tmpMask, mode);
+      }
+      doc.selectionPath = null;
+      clearCapturedSelectionMode();
+      deps.log("Lasso applied to AI mask session", "INFO");
+      deps.showToast("Lasso applied to mask", "info");
+      deps.renderEditorState();
+      return;
+    }
+
     if (mode === "replace" || !doc.selectionMask) {
       doc.selectionMask = tmpMask;
     } else {

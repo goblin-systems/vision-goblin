@@ -22,6 +22,18 @@ These epics are shipped at MVP or baseline level.
 - `D16` -> `backlog/done/epic-d016-ai-thumbnail-generation.md`
 - `D17` -> `backlog/done/epic-d017-freeform-ai.md`
 - `D18` -> `backlog/done/epic-d018-ui-themes.md`
+- `D19` -> `backlog/done/epic-d019-large-image-handling.md`
+- `D20` -> `backlog/done/epic-d020-global-screen-snipping.md`
+- `D21` -> `backlog/done/epic-d021-global-color-picker.md`
+- `D22` -> `backlog/done/epic-d022-ai-add-shadow.md`
+- `D23` -> `backlog/done/epic-d023-gemini-refusal-text-surfacing.md`
+- `D24` -> `backlog/done/epic-d024-ai-remove-shadow.md`
+- `D25` -> `backlog/done/epic-d025-ai-move-object.md`
+- `D26` -> `backlog/done/epic-d026-ai-reflection-and-glare-workflows.md`
+- `D27` -> `backlog/done/epic-d027-ai-clone-object.md`
+- `D28` -> `backlog/done/epic-d028-unified-ai-mask-session.md`
+- `P2` -> `backlog/epic-p002-core-editing-polish.md` - re-editing, healing responsiveness, and workflow polish for healing, text, shapes, and styles is complete for the bounded P2 scope
+- `P3` -> `backlog/epic-p003-fill-and-gradient-tools.md` - selection-aware fill and gradient tooling is complete for the bounded P3 scope, including shared validation, presets, modal direction editing, and gradient affordance polish
 
 ## Related indexes
 

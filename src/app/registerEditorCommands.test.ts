@@ -16,6 +16,7 @@ function createDeps(overrides: Partial<RegisterEditorCommandsDeps> = {}): Regist
     handleOpenImage: overrides.handleOpenImage ?? vi.fn(),
     handleOpenProject: overrides.handleOpenProject ?? vi.fn(),
     duplicateActiveDocument: overrides.duplicateActiveDocument ?? vi.fn(),
+    copyActiveDocumentToClipboard: overrides.copyActiveDocumentToClipboard ?? vi.fn(async () => true),
     tryPasteImageFromClipboard: overrides.tryPasteImageFromClipboard ?? vi.fn(async () => true),
     handleSaveProject: overrides.handleSaveProject ?? vi.fn(),
     handleExportImage: overrides.handleExportImage ?? vi.fn(),
@@ -82,6 +83,13 @@ function createDeps(overrides: Partial<RegisterEditorCommandsDeps> = {}): Regist
     openAiRestoreModal: overrides.openAiRestoreModal ?? vi.fn(),
     runAiThumbnail: overrides.runAiThumbnail ?? vi.fn(),
     runAiFreeform: overrides.runAiFreeform ?? vi.fn(),
+    runAiAddShadow: overrides.runAiAddShadow ?? vi.fn(),
+    runAiRemoveShadow: overrides.runAiRemoveShadow ?? vi.fn(),
+    runAiAddReflection: overrides.runAiAddReflection ?? vi.fn(),
+    runAiRemoveReflection: overrides.runAiRemoveReflection ?? vi.fn(),
+    runAiCloneObject: overrides.runAiCloneObject ?? vi.fn(),
+    runAiMoveObject: overrides.runAiMoveObject ?? vi.fn(),
+    runAiReplaceRasterText: overrides.runAiReplaceRasterText ?? vi.fn(),
     setTheme: overrides.setTheme ?? vi.fn(),
   };
 }
@@ -118,6 +126,31 @@ describe("buildEditorCommands", () => {
     expect(fill?.category).toBe("tool");
   });
 
+  it("registers copy image with the default shortcut", () => {
+    const settings = getDefaultSettings();
+    const commands = buildEditorCommands(createDeps({ getSettings: () => settings }));
+    const copy = commands.find((command) => command.id === "copy-image");
+
+    expect(copy?.shortcut).toBe("Ctrl+C");
+    expect(copy?.enabled()).toBe(true);
+  });
+
+  it("disables copy image when no document is active", () => {
+    const commands = buildEditorCommands(createDeps({ getActiveDocument: () => null }));
+
+    expect(commands.find((command) => command.id === "copy-image")?.enabled()).toBe(false);
+  });
+
+  it("executes the copy image controller action", async () => {
+    const copyActiveDocumentToClipboard = vi.fn(async () => true);
+    const commands = buildEditorCommands(createDeps({ copyActiveDocumentToClipboard }));
+    const command = commands.find((entry) => entry.id === "copy-image");
+
+    await command?.execute();
+
+    expect(copyActiveDocumentToClipboard).toHaveBeenCalledTimes(1);
+  });
+
   it("registers the gradient tool command with its shortcut", () => {
     const settings = getDefaultSettings();
     const commands = buildEditorCommands(createDeps({ getSettings: () => settings }));
@@ -135,10 +168,113 @@ describe("buildEditorCommands", () => {
     expect(commands.find((command) => command.id === "ai-auto-enhance")?.enabled()).toBe(true);
   });
 
+  it("enables AI shadow whenever a document is open", () => {
+    const doc = makeNewDocument("Doc", 100, 80, 100, "transparent");
+    doc.selectionRect = null;
+    doc.selectionMask = null;
+    doc.selectionPath = null;
+
+    const commands = buildEditorCommands(createDeps({ getActiveDocument: () => doc }));
+
+    expect(commands.find((command) => command.id === "ai-add-shadow")?.enabled()).toBe(true);
+  });
+
+  it("disables AI shadow when no document is open", () => {
+    const commands = buildEditorCommands(createDeps({ getActiveDocument: () => null }));
+
+    expect(commands.find((command) => command.id === "ai-add-shadow")?.enabled()).toBe(false);
+    expect(commands.find((command) => command.id === "ai-remove-shadow")?.enabled()).toBe(false);
+    expect(commands.find((command) => command.id === "ai-add-reflection")?.enabled()).toBe(false);
+    expect(commands.find((command) => command.id === "ai-remove-reflection")?.enabled()).toBe(false);
+  });
+
+  it("enables AI add reflection whenever a document is open and executes the controller action", () => {
+    const runAiAddReflection = vi.fn();
+    const commands = buildEditorCommands(createDeps({ runAiAddReflection }));
+    const command = commands.find((entry) => entry.id === "ai-add-reflection");
+
+    expect(command?.enabled()).toBe(true);
+
+    command?.execute();
+
+    expect(runAiAddReflection).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables AI remove reflection whenever a document is open and executes the controller action", () => {
+    const runAiRemoveReflection = vi.fn();
+    const commands = buildEditorCommands(createDeps({ runAiRemoveReflection }));
+    const command = commands.find((entry) => entry.id === "ai-remove-reflection");
+
+    expect(command?.enabled()).toBe(true);
+
+    command?.execute();
+
+    expect(runAiRemoveReflection).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables AI remove shadow whenever a document is open and executes the controller action", () => {
+    const runAiRemoveShadow = vi.fn();
+    const commands = buildEditorCommands(createDeps({ runAiRemoveShadow }));
+    const command = commands.find((entry) => entry.id === "ai-remove-shadow");
+
+    expect(command?.enabled()).toBe(true);
+
+    command?.execute();
+
+    expect(runAiRemoveShadow).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables AI move object whenever a document is open and executes the controller action", () => {
+    const runAiMoveObject = vi.fn();
+    const commands = buildEditorCommands(createDeps({ runAiMoveObject }));
+    const command = commands.find((entry) => entry.id === "ai-move-object");
+
+    expect(command?.enabled()).toBe(true);
+
+    command?.execute();
+
+    expect(runAiMoveObject).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables AI clone object whenever a document is open and executes the controller action", () => {
+    const runAiCloneObject = vi.fn();
+    const commands = buildEditorCommands(createDeps({ runAiCloneObject }));
+    const command = commands.find((entry) => entry.id === "ai-clone-object");
+
+    expect(command?.enabled()).toBe(true);
+
+    command?.execute();
+
+    expect(runAiCloneObject).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables AI replace raster text when a document exists and executes the controller action", () => {
+    const runAiReplaceRasterText = vi.fn();
+    const doc = makeNewDocument("Doc", 100, 80, 100, "transparent");
+    const commands = buildEditorCommands(createDeps({ getActiveDocument: () => doc, runAiReplaceRasterText }));
+    const command = commands.find((entry) => entry.id === "ai-replace-raster-text");
+
+    expect(command?.enabled()).toBe(true);
+
+    command?.execute();
+
+    expect(runAiReplaceRasterText).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables AI replace raster text when a document exists without selection", () => {
+    const runAiReplaceRasterText = vi.fn();
+    const doc = makeNewDocument("Doc", 100, 80, 100, "transparent");
+    const commands = buildEditorCommands(createDeps({ getActiveDocument: () => doc, runAiReplaceRasterText }));
+    const command = commands.find((entry) => entry.id === "ai-replace-raster-text");
+
+    expect(doc.selectionMask).toBeFalsy();
+    expect(command?.enabled()).toBe(true);
+  });
+
   it("assigns ai category to all AI commands", () => {
     const commands = buildEditorCommands(createDeps());
     const aiCommands = commands.filter((c) => c.id.startsWith("ai-") || c.id.startsWith("open-ai-"));
-    expect(aiCommands.length).toBe(16);
+    expect(aiCommands.length).toBe(23);
     for (const cmd of aiCommands) {
       expect(cmd.category).toBe("ai");
     }

@@ -1,4 +1,4 @@
-import { EFFECT_DEFAULTS } from "./documents";
+import { EFFECT_DEFAULTS, normalizeEffects } from "./documents";
 import type { EffectType, LayerEffect, StylePreset } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -90,6 +90,10 @@ export function createEffect(type: EffectType): LayerEffect {
   return { ...base, enabled: true };
 }
 
+export function cloneEffects(effects: LayerEffect[]): LayerEffect[] {
+  return effects.map((effect) => ({ ...effect }));
+}
+
 // ---------------------------------------------------------------------------
 // Style presets
 // ---------------------------------------------------------------------------
@@ -146,7 +150,14 @@ export function loadCustomPresets(): StylePreset[] {
   try {
     const raw = localStorage.getItem("vision-goblin-style-presets");
     if (!raw) return [];
-    return JSON.parse(raw) as StylePreset[];
+    const parsed = JSON.parse(raw) as Array<StylePreset | null>;
+    return parsed
+      .filter((preset): preset is StylePreset => !!preset && typeof preset.name === "string" && Array.isArray(preset.effects))
+      .map((preset) => ({
+        ...preset,
+        builtIn: false,
+        effects: cloneEffects(normalizeEffects(preset.effects)),
+      }));
   } catch {
     return [];
   }
@@ -154,7 +165,12 @@ export function loadCustomPresets(): StylePreset[] {
 
 /** Save custom presets to localStorage */
 export function saveCustomPresets(presets: StylePreset[]) {
-  localStorage.setItem("vision-goblin-style-presets", JSON.stringify(presets));
+  const sanitized = presets.map((preset) => ({
+    name: preset.name.trim(),
+    builtIn: false,
+    effects: cloneEffects(normalizeEffects(preset.effects)),
+  })).filter((preset) => preset.name.length > 0);
+  localStorage.setItem("vision-goblin-style-presets", JSON.stringify(sanitized));
 }
 
 /** Get all presets (built-in + custom) */
@@ -164,7 +180,37 @@ export function getAllPresets(): StylePreset[] {
 
 /** Apply a preset to a layer's effects (replaces effects with deep-copied preset effects) */
 export function applyPreset(preset: StylePreset): LayerEffect[] {
-  return preset.effects.map((e) => ({ ...e }));
+  return cloneEffects(normalizeEffects(preset.effects));
+}
+
+export function saveCustomPreset(name: string, effects: LayerEffect[]): { preset: StylePreset; replacedExisting: boolean } {
+  const trimmedName = name.trim();
+  if (!trimmedName) {
+    throw new Error("Preset name cannot be empty");
+  }
+  const presets = loadCustomPresets();
+  const normalizedKey = trimmedName.toLowerCase();
+  const preset: StylePreset = {
+    name: trimmedName,
+    builtIn: false,
+    effects: cloneEffects(normalizeEffects(effects)),
+  };
+  const existingIndex = presets.findIndex((item) => item.name.trim().toLowerCase() === normalizedKey);
+  const replacedExisting = existingIndex >= 0;
+  if (replacedExisting) {
+    presets[existingIndex] = preset;
+  } else {
+    presets.push(preset);
+  }
+  saveCustomPresets(presets);
+  return { preset, replacedExisting };
+}
+
+export function summarizeEffectStack(effects?: LayerEffect[]): string {
+  if (!effects || effects.length === 0) return "No effects";
+  const enabled = effects.filter((effect) => effect.enabled);
+  if (enabled.length === 0) return `${effects.length} disabled`;
+  return `${enabled.length} active${effects.length > enabled.length ? `, ${effects.length - enabled.length} disabled` : ""}`;
 }
 
 // ---------------------------------------------------------------------------

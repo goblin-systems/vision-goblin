@@ -4,172 +4,22 @@ import {
   addGradientNode,
   addGradientNodeAtPosition,
   applyGradientToSelection,
+  createDefaultGradientConfig,
   createGradientSampler,
   createDefaultGradientNodes,
+  gradientConfigToTextFill,
+  gradientNodesToStops,
+  gradientStopsToNodes,
   moveGradientNode,
   removeGradientNode,
   sampleGradientColourHex,
   sampleGradientCurveY,
+  textFillToGradientConfig,
   updateGradientNodeColour,
+  type GradientConfig,
 } from "./gradient";
-
-function parseHexColour(colour: string) {
-  const hex = colour.startsWith("#") ? colour.slice(1) : colour;
-  const expanded = hex.length === 3 ? hex.split("").map((value) => `${value}${value}`).join("") : hex;
-  return {
-    r: Number.parseInt(expanded.slice(0, 2), 16),
-    g: Number.parseInt(expanded.slice(2, 4), 16),
-    b: Number.parseInt(expanded.slice(4, 6), 16),
-    a: expanded.length >= 8 ? Number.parseInt(expanded.slice(6, 8), 16) : 255,
-  };
-}
-
-function installPixelCanvasMock() {
-  const originalCreateElement = document.createElement.bind(document);
-
-  const attachPixelContext = (canvas: HTMLCanvasElement) => {
-    let width = 0;
-    let height = 0;
-    let pixels = new Uint8ClampedArray();
-
-    const ensureSize = () => {
-      if (width === canvas.width && height === canvas.height) {
-        return;
-      }
-      width = canvas.width;
-      height = canvas.height;
-      pixels = new Uint8ClampedArray(width * height * 4);
-    };
-
-    const paintPixel = (x: number, y: number, rgba: { r: number; g: number; b: number; a: number }) => {
-      ensureSize();
-      if (x < 0 || y < 0 || x >= width || y >= height) {
-        return;
-      }
-      const index = (y * width + x) * 4;
-      pixels[index] = rgba.r;
-      pixels[index + 1] = rgba.g;
-      pixels[index + 2] = rgba.b;
-      pixels[index + 3] = rgba.a;
-    };
-
-    const readPixel = (x: number, y: number) => {
-      ensureSize();
-      if (x < 0 || y < 0 || x >= width || y >= height) {
-        return { r: 0, g: 0, b: 0, a: 0 };
-      }
-      const index = (y * width + x) * 4;
-      return {
-        r: pixels[index],
-        g: pixels[index + 1],
-        b: pixels[index + 2],
-        a: pixels[index + 3],
-      };
-    };
-
-    const ctx = {
-      fillStyle: "#000000",
-      globalCompositeOperation: "source-over",
-      clearRect: (x: number, y: number, w: number, h: number) => {
-        ensureSize();
-        for (let py = Math.max(0, y); py < Math.min(height, y + h); py++) {
-          for (let px = Math.max(0, x); px < Math.min(width, x + w); px++) {
-            paintPixel(px, py, { r: 0, g: 0, b: 0, a: 0 });
-          }
-        }
-      },
-      fillRect: (x: number, y: number, w: number, h: number) => {
-        ensureSize();
-        const rgba = parseHexColour(String(ctx.fillStyle));
-        for (let py = Math.max(0, y); py < Math.min(height, y + h); py++) {
-          for (let px = Math.max(0, x); px < Math.min(width, x + w); px++) {
-            paintPixel(px, py, rgba);
-          }
-        }
-      },
-      getImageData: (x: number, y: number, w: number, h: number) => {
-        ensureSize();
-        const data = new Uint8ClampedArray(w * h * 4);
-        for (let py = 0; py < h; py++) {
-          for (let px = 0; px < w; px++) {
-            const source = readPixel(x + px, y + py);
-            const index = (py * w + px) * 4;
-            data[index] = source.r;
-            data[index + 1] = source.g;
-            data[index + 2] = source.b;
-            data[index + 3] = source.a;
-          }
-        }
-        return new ImageData(data, w, h);
-      },
-      putImageData: (imageData: ImageData, dx: number, dy: number) => {
-        ensureSize();
-        for (let py = 0; py < imageData.height; py++) {
-          for (let px = 0; px < imageData.width; px++) {
-            const index = (py * imageData.width + px) * 4;
-            paintPixel(dx + px, dy + py, {
-              r: imageData.data[index],
-              g: imageData.data[index + 1],
-              b: imageData.data[index + 2],
-              a: imageData.data[index + 3],
-            });
-          }
-        }
-      },
-      drawImage: (sourceCanvas: HTMLCanvasElement, dx: number, dy: number) => {
-        ensureSize();
-        const sourceGetPixel = (sourceCanvas as HTMLCanvasElement & { __getPixel?: (x: number, y: number) => { r: number; g: number; b: number; a: number } }).__getPixel;
-        if (!sourceGetPixel) {
-          return;
-        }
-        for (let py = 0; py < sourceCanvas.height; py++) {
-          for (let px = 0; px < sourceCanvas.width; px++) {
-            const source = sourceGetPixel(px, py);
-            if (source.a > 0) {
-              paintPixel(dx + px, dy + py, source);
-            }
-          }
-        }
-      },
-      beginPath: () => undefined,
-      moveTo: () => undefined,
-      lineTo: () => undefined,
-      stroke: () => undefined,
-      arc: () => undefined,
-      fill: () => undefined,
-    } as unknown as CanvasRenderingContext2D & { fillStyle: string; globalCompositeOperation: string };
-
-    Object.defineProperty(canvas, "getContext", {
-      value: vi.fn((kind: string) => (kind === "2d" ? ctx : null)),
-      configurable: true,
-    });
-    Object.defineProperty(canvas, "__getPixel", {
-      value: (x: number, y: number) => readPixel(x, y),
-      configurable: true,
-    });
-    Object.defineProperty(canvas, "__setPixel", {
-      value: (x: number, y: number, rgba: { r: number; g: number; b: number; a: number }) => paintPixel(x, y, rgba),
-      configurable: true,
-    });
-  };
-
-  vi.spyOn(document, "createElement").mockImplementation(((tagName: string, options?: ElementCreationOptions) => {
-    const element = originalCreateElement(tagName, options);
-    if (tagName.toLowerCase() === "canvas") {
-      attachPixelContext(element as HTMLCanvasElement);
-    }
-    return element;
-  }) as typeof document.createElement);
-}
-
-function setPixel(canvas: HTMLCanvasElement, x: number, y: number, colour: string) {
-  const rgba = parseHexColour(colour);
-  (canvas as HTMLCanvasElement & { __setPixel: (px: number, py: number, value: { r: number; g: number; b: number; a: number }) => void }).__setPixel(x, y, rgba);
-}
-
-function readPixel(canvas: HTMLCanvasElement, x: number, y: number) {
-  return (canvas as HTMLCanvasElement & { __getPixel: (px: number, py: number) => { r: number; g: number; b: number; a: number } }).__getPixel(x, y);
-}
+import { getFillGradientNoOverlapMessage, getFillGradientSelectionRequiredMessage } from "./fillGradientValidation";
+import { installPixelCanvasMock, readPixel, setPixel } from "../test/pixelCanvasMock";
 
 describe("gradient domain", () => {
   beforeEach(() => {
@@ -244,10 +94,18 @@ describe("gradient domain", () => {
       throw new Error("Expected raster layer");
     }
 
-    const result = applyGradientToSelection(doc, layer, [
-      { id: "start", x: 0, y: 0, color: "#000000" },
-      { id: "end", x: 1, y: 1, color: "#GGGGGG" },
-    ]);
+    const config: GradientConfig = {
+      gradientType: "linear",
+      nodes: [
+        { id: "start", x: 0, y: 0, color: "#000000" },
+        { id: "end", x: 1, y: 1, color: "#GGGGGG" },
+      ],
+      headingDegrees: 0,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+
+    const result = applyGradientToSelection(doc, layer, config, "canvas");
 
     expect(result).toEqual({ ok: false, message: "One or more gradient colours are invalid", variant: "error" });
   });
@@ -259,7 +117,15 @@ describe("gradient domain", () => {
       throw new Error("Expected raster layer");
     }
 
-    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"));
+    const config: GradientConfig = {
+      gradientType: "linear",
+      nodes: createDefaultGradientNodes("#000000", "#FFFFFF"),
+      headingDegrees: 0,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+
+    const result = applyGradientToSelection(doc, layer, config);
 
     expect(result).toEqual({ ok: true, message: "Applied gradient to layer" });
     expect(readPixel(layer.canvas, 0, 0).r).toBe(0);
@@ -285,7 +151,15 @@ describe("gradient domain", () => {
     doc.selectionMask = selectionMask;
     doc.selectionRect = { x: 1, y: 0, width: 3, height: 1 };
 
-    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"), "selection");
+    const config: GradientConfig = {
+      gradientType: "linear",
+      nodes: createDefaultGradientNodes("#000000", "#FFFFFF"),
+      headingDegrees: 0,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+
+    const result = applyGradientToSelection(doc, layer, config, "selection");
 
     expect(result).toEqual({ ok: true, message: "Applied gradient to selection" });
     expect(readPixel(layer.canvas, 0, 0)).toEqual({ r: 17, g: 17, b: 17, a: 255 });
@@ -293,6 +167,61 @@ describe("gradient domain", () => {
     expect(readPixel(layer.canvas, 2, 0).r).toBeGreaterThan(100);
     expect(readPixel(layer.canvas, 3, 0).r).toBe(255);
     expect(readPixel(layer.canvas, 4, 0)).toEqual({ r: 34, g: 34, b: 34, a: 255 });
+  });
+
+  it("does not mutate selection-targeted gradients when there is no effective selection", () => {
+    const doc = makeNewDocument("Doc", 4, 1, 100, "transparent");
+    const layer = doc.layers[1];
+    if (layer.type !== "raster") {
+      throw new Error("Expected raster layer");
+    }
+
+    setPixel(layer.canvas, 0, 0, "#123456");
+
+    const result = applyGradientToSelection(doc, layer, {
+      gradientType: "linear",
+      nodes: createDefaultGradientNodes("#000000", "#FFFFFF"),
+      headingDegrees: 0,
+      centerX: 0.5,
+      centerY: 0.5,
+    }, "selection");
+
+    expect(result).toEqual({ ok: false, message: getFillGradientSelectionRequiredMessage("gradient"), variant: "info" });
+    expect(readPixel(layer.canvas, 0, 0)).toEqual({ r: 18, g: 52, b: 86, a: 255 });
+  });
+
+  it("returns the shared overlap message when the effective selection misses the active layer", () => {
+    const doc = makeNewDocument("Doc", 6, 6, 100, "transparent");
+    const layer = doc.layers[1];
+    if (layer.type !== "raster") {
+      throw new Error("Expected raster layer");
+    }
+
+    layer.x = 4;
+    layer.y = 4;
+    layer.canvas.width = 2;
+    layer.canvas.height = 2;
+
+    const selectionMask = document.createElement("canvas");
+    selectionMask.width = 6;
+    selectionMask.height = 6;
+    setPixel(selectionMask, 0, 0, "#FFFFFF");
+    setPixel(selectionMask, 1, 1, "#FFFFFF");
+
+    setPixel(layer.canvas, 0, 0, "#123456");
+    doc.selectionMask = selectionMask;
+    doc.selectionRect = { x: 0, y: 0, width: 2, height: 2 };
+
+    const result = applyGradientToSelection(doc, layer, {
+      gradientType: "linear",
+      nodes: createDefaultGradientNodes("#000000", "#FFFFFF"),
+      headingDegrees: 0,
+      centerX: 0.5,
+      centerY: 0.5,
+    }, "selection");
+
+    expect(result).toEqual({ ok: false, message: getFillGradientNoOverlapMessage(), variant: "info" });
+    expect(readPixel(layer.canvas, 0, 0)).toEqual({ r: 18, g: 52, b: 86, a: 255 });
   });
 
   it("ignores the active selection when canvas targeting is chosen", () => {
@@ -311,7 +240,15 @@ describe("gradient domain", () => {
     doc.selectionMask = selectionMask;
     doc.selectionRect = { x: 1, y: 0, width: 3, height: 1 };
 
-    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"), "canvas");
+    const config: GradientConfig = {
+      gradientType: "linear",
+      nodes: createDefaultGradientNodes("#000000", "#FFFFFF"),
+      headingDegrees: 0,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+
+    const result = applyGradientToSelection(doc, layer, config, "canvas");
 
     expect(result).toEqual({ ok: true, message: "Applied gradient to layer" });
     expect(readPixel(layer.canvas, 0, 0).r).toBe(0);
@@ -327,7 +264,15 @@ describe("gradient domain", () => {
       throw new Error("Expected raster layer");
     }
 
-    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"), "canvas", 90);
+    const config: GradientConfig = {
+      gradientType: "linear",
+      nodes: createDefaultGradientNodes("#000000", "#FFFFFF"),
+      headingDegrees: 90,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+
+    const result = applyGradientToSelection(doc, layer, config, "canvas");
 
     expect(result).toEqual({ ok: true, message: "Applied gradient to layer" });
     expect(readPixel(layer.canvas, 0, 0).r).toBe(0);
@@ -343,12 +288,265 @@ describe("gradient domain", () => {
       throw new Error("Expected raster layer");
     }
 
-    const result = applyGradientToSelection(doc, layer, createDefaultGradientNodes("#000000", "#FFFFFF"), "canvas", 45);
+    const config: GradientConfig = {
+      gradientType: "linear",
+      nodes: createDefaultGradientNodes("#000000", "#FFFFFF"),
+      headingDegrees: 45,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+
+    const result = applyGradientToSelection(doc, layer, config, "canvas");
 
     expect(result).toEqual({ ok: true, message: "Applied gradient to layer" });
     expect(readPixel(layer.canvas, 0, 0).r).toBe(0);
     expect(readPixel(layer.canvas, 2, 2).r).toBe(255);
     expect(readPixel(layer.canvas, 2, 0).r).toBeGreaterThan(readPixel(layer.canvas, 0, 0).r);
     expect(readPixel(layer.canvas, 0, 2).r).toBeGreaterThan(readPixel(layer.canvas, 0, 0).r);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Conversion function tests
+// ---------------------------------------------------------------------------
+
+describe("gradient conversion functions", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    installPixelCanvasMock();
+  });
+
+  it("gradientNodesToStops with identity curve preserves offsets and colors", () => {
+    const nodes = createDefaultGradientNodes("#000000", "#FFFFFF");
+    const stops = gradientNodesToStops(nodes);
+
+    expect(stops).toHaveLength(2);
+    expect(stops[0].offset).toBe(0);
+    expect(stops[1].offset).toBe(1);
+    expect(stops[0].color).toBe("#000000");
+    expect(stops[1].color).toBe("#FFFFFF");
+  });
+
+  it("gradientNodesToStops bakes curve remapping into colors", () => {
+    const nodes = [
+      { id: "start", x: 0, y: 0, color: "#000000" },
+      { id: "mid", x: 0.5, y: 0.25, color: "#FF0000" },
+      { id: "end", x: 1, y: 1, color: "#FFFFFF" },
+    ];
+    const stops = gradientNodesToStops(nodes);
+
+    expect(stops).toHaveLength(3);
+    expect(stops[0].offset).toBe(0);
+    expect(stops[1].offset).toBe(0.5);
+    expect(stops[2].offset).toBe(1);
+
+    // The mid node has y=0.25 (not 0.5), so sampled color at x=0.5 should be
+    // remapped to position 0.25 on the color ramp (darker than pure midpoint)
+    expect(stops[1].color).toBe(createGradientSampler(nodes).sampleHex(0.5));
+    // First and last should still be endpoint colors
+    expect(stops[0].color).toBe("#000000");
+    expect(stops[2].color).toBe("#FFFFFF");
+  });
+
+  it("gradientStopsToNodes round-trip preserves offset and color", () => {
+    const originalStops = [
+      { offset: 0, color: "#FF0000" },
+      { offset: 0.5, color: "#00FF00" },
+      { offset: 1, color: "#0000FF" },
+    ];
+    const nodes = gradientStopsToNodes(originalStops);
+    const roundTripped = gradientNodesToStops(nodes);
+
+    expect(roundTripped).toHaveLength(3);
+    expect(roundTripped[0].offset).toBe(0);
+    expect(roundTripped[1].offset).toBe(0.5);
+    expect(roundTripped[2].offset).toBe(1);
+    // With identity curve (y=x), colors should pass through unchanged
+    expect(roundTripped[0].color).toBe("#FF0000");
+    expect(roundTripped[1].color).toBe("#00FF00");
+    expect(roundTripped[2].color).toBe("#0000FF");
+  });
+
+  it("gradientConfigToTextFill produces LinearGradientFill with correct angle and stops", () => {
+    const config: GradientConfig = {
+      gradientType: "linear",
+      nodes: createDefaultGradientNodes("#FF0000", "#0000FF"),
+      headingDegrees: 45,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+    const fill = gradientConfigToTextFill(config);
+
+    expect(fill.type).toBe("linear-gradient");
+    if (fill.type === "linear-gradient") {
+      expect(fill.angle).toBe(45);
+      expect(fill.stops).toHaveLength(2);
+      expect(fill.stops[0].offset).toBe(0);
+      expect(fill.stops[1].offset).toBe(1);
+      expect(fill.stops[0].color).toBe("#FF0000");
+      expect(fill.stops[1].color).toBe("#0000FF");
+    }
+  });
+
+  it("gradientConfigToTextFill produces RadialGradientFill with correct stops", () => {
+    const config: GradientConfig = {
+      gradientType: "radial",
+      nodes: createDefaultGradientNodes("#00FF00", "#FF00FF"),
+      headingDegrees: 0,
+      centerX: 0.2,
+      centerY: 0.8,
+    };
+    const fill = gradientConfigToTextFill(config);
+
+    expect(fill.type).toBe("radial-gradient");
+    if (fill.type === "radial-gradient") {
+      expect(fill.stops).toHaveLength(2);
+      expect(fill.stops[0].offset).toBe(0);
+      expect(fill.stops[1].offset).toBe(1);
+      expect(fill.stops[0].color).toBe("#00FF00");
+      expect(fill.stops[1].color).toBe("#FF00FF");
+      expect(fill.centerX).toBe(0.2);
+      expect(fill.centerY).toBe(0.8);
+    }
+  });
+
+  it("textFillToGradientConfig preserves linear fill data through round-trip", () => {
+    const config: GradientConfig = {
+      gradientType: "linear",
+      nodes: createDefaultGradientNodes("#AA0000", "#00AA00"),
+      headingDegrees: 90,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+
+    const fill = gradientConfigToTextFill(config);
+    const restored = textFillToGradientConfig(fill);
+
+    expect(restored.gradientType).toBe("linear");
+    expect(restored.headingDegrees).toBe(90);
+    expect(restored.centerX).toBe(0.5);
+    expect(restored.centerY).toBe(0.5);
+    expect(restored.nodes).toHaveLength(2);
+    expect(restored.nodes[0].color).toBe("#AA0000");
+    expect(restored.nodes[1].color).toBe("#00AA00");
+  });
+
+  it("textFillToGradientConfig handles radial fill", () => {
+    const fill = {
+      type: "radial-gradient" as const,
+      stops: [
+        { offset: 0, color: "#FFFFFF" },
+        { offset: 0.5, color: "#888888" },
+        { offset: 1, color: "#000000" },
+      ],
+      centerX: 0.3,
+      centerY: 0.65,
+    };
+    const config = textFillToGradientConfig(fill);
+
+    expect(config.gradientType).toBe("radial");
+    expect(config.headingDegrees).toBe(0);
+    expect(config.centerX).toBe(0.3);
+    expect(config.centerY).toBe(0.65);
+    expect(config.nodes).toHaveLength(3);
+    expect(config.nodes[0].x).toBe(0);
+    expect(config.nodes[1].x).toBe(0.5);
+    expect(config.nodes[2].x).toBe(1);
+    // Identity curve: y should equal x
+    expect(config.nodes[0].y).toBe(0);
+    expect(config.nodes[1].y).toBe(0.5);
+    expect(config.nodes[2].y).toBe(1);
+  });
+
+  it("createDefaultGradientConfig starts from a linear centered gradient", () => {
+    const config = createDefaultGradientConfig();
+
+    expect(config).toEqual(expect.objectContaining({
+      gradientType: "linear",
+      headingDegrees: 0,
+      centerX: 0.5,
+      centerY: 0.5,
+    }));
+    expect(config.nodes).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Radial gradient application tests
+// ---------------------------------------------------------------------------
+
+describe("radial gradient application", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    installPixelCanvasMock();
+  });
+
+  it("applies a centered radial gradient with center ≈ first stop and corners ≈ last stop", () => {
+    const doc = makeNewDocument("Doc", 5, 5, 100, "transparent");
+    const layer = doc.layers[1];
+    if (layer.type !== "raster") {
+      throw new Error("Expected raster layer");
+    }
+
+    const config: GradientConfig = {
+      gradientType: "radial",
+      nodes: createDefaultGradientNodes("#000000", "#FFFFFF"),
+      headingDegrees: 0,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+
+    const result = applyGradientToSelection(doc, layer, config, "canvas");
+
+    expect(result).toEqual({ ok: true, message: "Applied gradient to layer" });
+
+    // Center pixel (2,2) should be near the first stop color (black)
+    const center = readPixel(layer.canvas, 2, 2);
+    expect(center.r).toBe(0);
+    expect(center.g).toBe(0);
+    expect(center.b).toBe(0);
+
+    // Corner pixels should be near the last stop color (white)
+    const topLeft = readPixel(layer.canvas, 0, 0);
+    const bottomRight = readPixel(layer.canvas, 4, 4);
+    expect(topLeft.r).toBe(255);
+    expect(bottomRight.r).toBe(255);
+  });
+
+  it("applies a radial gradient with off-center origin at top-left", () => {
+    const doc = makeNewDocument("Doc", 5, 5, 100, "transparent");
+    const layer = doc.layers[1];
+    if (layer.type !== "raster") {
+      throw new Error("Expected raster layer");
+    }
+
+    const config: GradientConfig = {
+      gradientType: "radial",
+      nodes: createDefaultGradientNodes("#000000", "#FFFFFF"),
+      headingDegrees: 0,
+      centerX: 0,
+      centerY: 0,
+    };
+
+    const result = applyGradientToSelection(doc, layer, config, "canvas");
+
+    expect(result).toEqual({ ok: true, message: "Applied gradient to layer" });
+
+    // Top-left pixel (0,0) should be position 0 (the center), so first stop color
+    const topLeft = readPixel(layer.canvas, 0, 0);
+    expect(topLeft.r).toBe(0);
+    expect(topLeft.g).toBe(0);
+    expect(topLeft.b).toBe(0);
+
+    // Bottom-right corner should be the farthest from center, so last stop color
+    const bottomRight = readPixel(layer.canvas, 4, 4);
+    expect(bottomRight.r).toBe(255);
+    expect(bottomRight.g).toBe(255);
+    expect(bottomRight.b).toBe(255);
+
+    // Intermediate pixels should be between the two
+    const mid = readPixel(layer.canvas, 2, 2);
+    expect(mid.r).toBeGreaterThan(0);
+    expect(mid.r).toBeLessThan(255);
   });
 });

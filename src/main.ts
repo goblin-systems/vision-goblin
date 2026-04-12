@@ -27,6 +27,7 @@ import { createGradientToolController } from "./app/gradientToolController";
 import { createInspectorController } from "./app/inspectorController";
 import { createIoController } from "./app/io";
 import { createLayerPanelController } from "./app/layerPanelController";
+import { createTextCanvasEditingController } from "./app/textCanvasEditingController";
 import { buildEditorCommands } from "./app/registerEditorCommands";
 import { createSelectionToolsController } from "./app/selectionToolsController";
 import { createWorkspaceShellController, type WorkspaceShellController } from "./app/workspaceShellController";
@@ -34,8 +35,9 @@ import { applyTheme } from "./app/theme";
 import type { UiTheme } from "./app/theme";
 import { createAiController } from "./app/ai/controller";
 import { createAiEditingController } from "./app/ai/editingController";
+import { createAiMaskSessionController } from "./app/ai/aiMaskSession";
 import { configureDebugLogging, debugLog, getDebugLogPath, openDebugLogFolder, saveAiDebugImage } from "./logger";
-import { pushHistory } from "./editor/history";
+import { enforceHistoryBudget, pushHistory } from "./editor/history";
 import { getResizeOffset } from "./editor/geometry";
 import { addLayer, addAdjustmentLayer, addShapeLayer, addTextLayer, getSelectedLayerIds, setBackgroundLayerColor } from "./editor/layers";
 import type { AdjustmentKind, DocumentState, Layer, PointerState, ResizeAnchor } from "./editor/types";
@@ -47,7 +49,7 @@ import { convertToSmartObject } from "./editor/smartObject";
 import { alignLeft, alignRight, alignTop, alignBottom, alignCenterH, alignCenterV, distributeH, distributeV, type AlignTarget } from "./editor/alignment";
 import { togglePalette } from "./editor/commandPalette";
 import { applySelectionClip, type SelectionMode } from "./editor/selection";
-import { registerCommands, executeCommand, applyKeybindings } from "./editor/commands";
+import { registerCommands, executeCommand, applyKeybindings, getCommand, getCommandExecutionStatus } from "./editor/commands";
 import { createSelectionController } from "./editor/selectionController";
 import { createTransformController } from "./editor/transformController";
 import { createGoblinPersonalityController } from "./app/goblin/personalityController";
@@ -58,7 +60,7 @@ const documents = documentSession.documents;
 const currentWindow = getCurrentWindow();
 
 const dom = createAppDom();
-const { editorCanvas, canvasStage, canvasWrap, fileOpenInput } = dom;
+const { editorCanvas, canvasStage, canvasWrap, fileOpenInput, aiMaskSessionMount } = dom;
 const io = createIoController();
 
 let settings = getDefaultSettings();
@@ -68,6 +70,7 @@ let cloneSource: { x: number; y: number } | null = null;
 let workspaceShellController: WorkspaceShellController;
 let layerPanelController: ReturnType<typeof createLayerPanelController>;
 let canvasWorkspaceController: ReturnType<typeof createCanvasWorkspaceController>;
+let textCanvasEditingController: ReturnType<typeof createTextCanvasEditingController>;
 let aiController: ReturnType<typeof createAiController>;
 let aiEditingController: ReturnType<typeof createAiEditingController>;
 let goblinPersonalityController: ReturnType<typeof createGoblinPersonalityController>;
@@ -79,6 +82,7 @@ if (!windowSubtitle) {
 
 function renderEditorState() {
   workspaceShellController.renderEditorState();
+  textCanvasEditingController?.syncOverlayPosition();
 }
 
 function renderShellState() {
@@ -141,6 +145,7 @@ const selectionController = createSelectionController({
   showToast,
   log: debugLog,
   snapshotDocument,
+  getSelectionMaskTarget: () => aiMaskSessionController.getActiveChannelCanvas(),
 });
 
 const transformController = createTransformController({
@@ -177,6 +182,8 @@ let pointerState: PointerState = {
   startRotateDeg: 0,
   startSkewXDeg: 0,
   startSkewYDeg: 0,
+  startTextBoxWidth: 0,
+  startTextBoxHeight: 0,
   cloneOffsetX: 0,
   cloneOffsetY: 0,
   creationLayerId: null,
@@ -199,11 +206,16 @@ function syncTransformInputs() {
 }
 
 function ensureTransformDraft(doc: DocumentState, layer: Layer) {
-  return transformController.ensureDraft(doc, layer);
+  const intent = settings.activeTool === "text" && layer.type === "text" ? "text-layout" : "layer";
+  return transformController.ensureDraft(doc, layer, intent);
 }
 
 function ensureTransformDraftForActiveLayer() {
   return transformController.ensureDraftForActiveLayer();
+}
+
+function ensureTransformDraftForActiveLayerWithIntent(intent: "layer" | "text-layout") {
+  return transformController.ensureDraftForActiveLayerWithIntent(intent);
 }
 
 function cancelTransformDraft(showMessage = true) {
@@ -277,6 +289,20 @@ const documentWorkflowController = createDocumentWorkflowController({
   cancelActiveTransform: cancelTransformDraft,
 });
 
+const aiMaskSessionController = createAiMaskSessionController({
+  mountRoot: aiMaskSessionMount,
+  getActiveTool: () => settings.activeTool,
+  setActiveTool: (tool) => {
+    settings = { ...settings, activeTool: tool };
+    renderEditorState();
+  },
+  setSelectionMode: (mode) => setMarqueeMode(mode),
+  getSelectionMode: () => getCapturedOrEffectiveMode(),
+  renderCanvas,
+  renderEditorState,
+  showToast,
+});
+
 const editorInteractionController = createEditorInteractionController({
   canvasStage,
   getDocuments: () => documents,
@@ -285,6 +311,7 @@ const editorInteractionController = createEditorInteractionController({
   getPointerState: () => pointerState,
   getTransformDraft: () => transformController.getDraft(),
   ensureTransformDraftForActiveLayer,
+  ensureTransformDraftForActiveLayerWithIntent,
   updateTransformDraftInputs,
   commitTransformDraft,
   cancelTransformDraft,
@@ -301,6 +328,13 @@ const editorInteractionController = createEditorInteractionController({
   renderToolState,
   renderBrushUI: updateBrushUI,
   swapPaletteColours: () => paletteController.swapPrimarySecondary(),
+  isAiMaskSessionActive: () => aiMaskSessionController.isActive(),
+  completeAiMaskSession: () => {
+    aiMaskSessionController.complete();
+  },
+  cancelAiMaskSession: () => {
+    aiMaskSessionController.cancel();
+  },
   showToast,
   log: debugLog,
 });
@@ -335,7 +369,9 @@ const canvasPointer = createCanvasPointerController({
   getActiveDocument,
   getActiveLayer,
   getActiveTool: () => settings.activeTool,
+  isTextEditingActive: () => textCanvasEditingController?.isEditing() ?? false,
   commitTransformDraft,
+  cancelTransformDraft,
   getBrushState: () => editorInteractionController.getBrushState(),
   getSelectionMode: () => getCapturedOrEffectiveMode(),
   getMarqueeShape: () => selectionController.getMarqueeSides(),
@@ -365,9 +401,10 @@ const canvasPointer = createCanvasPointerController({
     if (!doc?.selectionPath || doc.selectionPath.closed) return;
     doc.selectionPath.points.push({ x, y });
   },
-  onLassoComplete: completeLassoSelection,
-  getMaskEditTarget: () => maskEditTarget,
-  getQuickMaskCanvas: () => selectionController.getQuickMaskCanvas(),
+    onLassoComplete: completeLassoSelection,
+   getCustomPaintTarget: () => aiMaskSessionController.getPaintTarget(),
+   getMaskEditTarget: () => maskEditTarget,
+   getQuickMaskCanvas: () => selectionController.getQuickMaskCanvas(),
   onCreateTextLayer: (x, y) => {
     const doc = getActiveDocument();
     if (!doc) return null;
@@ -397,8 +434,14 @@ const canvasPointer = createCanvasPointerController({
     goblinPersonalityController.signal({ type: "layer-created" });
     return layer;
   },
+  onLayerCreationCommitted: (layer) => {
+    if (layer.type === "text") {
+      textCanvasEditingController.beginEditingActiveTextLayer();
+    }
+  },
   showToast,
   log: debugLog,
+  getSelectionMaskTarget: () => aiMaskSessionController.getActiveChannelCanvas(),
 });
 
 function getEditorContext(): CanvasRenderingContext2D {
@@ -449,6 +492,7 @@ const inspectorController = createInspectorController({
   renderEditorState,
   showToast,
   log: debugLog,
+  openGradientEditorForText: gradientToolController.openGradientEditorForText,
 });
 
 layerPanelController = createLayerPanelController({
@@ -465,23 +509,45 @@ layerPanelController = createLayerPanelController({
 });
 
 canvasWorkspaceController = createCanvasWorkspaceController({
+  canvasWrap,
   editorCanvas,
   getEditorContext,
   getSettings: () => settings,
   getActiveDocument,
   getActiveLayer,
+  getBrushState: () => editorInteractionController.getBrushState(),
+  adjustBrushSize: (delta) => editorInteractionController.adjustBrushSize(delta),
   getPointerState: () => pointerState,
   getTransformDraft: () => transformController.getDraft(),
   getEffectiveMarqueeMode,
   getMarqueeSides: () => selectionController.getMarqueeSides(),
   getMarqueeModifiers,
   getQuickMaskOverlay: () => selectionController.getQuickMaskOverlay(),
+  getMaskOverlays: () => aiMaskSessionController.getMaskOverlays(),
   renderShellState,
   renderEditorState,
   updateMarqueeModeFromModifiers,
   captureSelectionMode: () => selectionController.captureSelectionMode(),
   canvasPointer,
   resetView: resetCanvasView,
+  showToast,
+  log: debugLog,
+  getHiddenLayerId: () => textCanvasEditingController?.getHiddenLayerId() ?? null,
+  onAfterCanvasRender: () => {
+    textCanvasEditingController?.syncOverlayPosition();
+  },
+});
+
+textCanvasEditingController = createTextCanvasEditingController({
+  editorCanvas,
+  canvasWrap,
+  getActiveDocument,
+  getActiveLayer,
+  getActiveTool: () => settings.activeTool,
+  getTransformDraft: () => transformController.getDraft(),
+  commitTransformDraft,
+  cancelTransformDraft,
+  renderEditorState,
   showToast,
   log: debugLog,
 });
@@ -501,6 +567,7 @@ workspaceShellController = createWorkspaceShellController({
   getMarqueeSides: () => selectionController.getMarqueeSides(),
   getEffectiveMarqueeMode,
   getTransformMode: () => transformController.getMode(),
+  getTransformIntent: () => transformController.getDraft()?.intent ?? null,
   isQuickMaskActive: () => selectionController.isQuickMaskActive(),
   getTransformDraftLayerId: () => transformController.getDraft()?.layerId ?? null,
   syncTransformInputs,
@@ -530,7 +597,17 @@ workspaceShellController = createWorkspaceShellController({
   onAppNavSelect: async (id) => {
     const handled = await documentWorkflowController.handleRecentNavSelection(id);
     if (!handled) {
-      executeCommand(id);
+      const executed = executeCommand(id);
+      if (!executed) {
+        const status = getCommandExecutionStatus(id);
+        if (status === "missing") {
+          debugLog(`App nav command '${id}' is not registered`, "WARN");
+          return;
+        }
+        const command = getCommand(id);
+        debugLog(`App nav command '${id}' is currently disabled`, "WARN");
+        showToast(command ? `${command.label} is unavailable right now.` : "That action is unavailable right now.", "info");
+      }
     }
   },
   getBrushUiState: () => editorInteractionController.getBrushState(),
@@ -548,8 +625,13 @@ function resetDocumentsToStarters() {
 }
 
 async function switchTool(tool: ToolName) {
-  if (transformController.getDraft() && tool !== "transform") {
-    commitTransformDraft();
+  const activeDraft = transformController.getDraft();
+  if (activeDraft) {
+    const keepDraft = (tool === "transform" && activeDraft.intent === "layer")
+      || (tool === "text" && activeDraft.intent === "text-layout");
+    if (!keepDraft) {
+      commitTransformDraft();
+    }
   }
   await persistSettings({ ...settings, activeTool: tool });
   renderEditorState();
@@ -727,6 +809,7 @@ async function handleUndo() {
   }
 
   doc.redoStack.push(current);
+  enforceHistoryBudget(doc);
   await restoreDocumentFromSnapshot(doc, previous);
   doc.historyIndex = Math.min(doc.historyIndex + 1, doc.history.length);
   debugLog(`Undo applied for document '${doc.name}'`, "INFO");
@@ -752,6 +835,7 @@ async function handleRedo() {
   }
 
   doc.undoStack.push(current);
+  enforceHistoryBudget(doc);
   await restoreDocumentFromSnapshot(doc, next);
   doc.historyIndex = Math.max(doc.historyIndex - 1, 0);
   debugLog(`Redo applied for document '${doc.name}'`, "INFO");
@@ -882,6 +966,7 @@ function registerEditorCommands() {
     handleOpenImage: documentWorkflowController.handleOpenImage,
     handleOpenProject: documentWorkflowController.handleOpenProject,
     duplicateActiveDocument: documentWorkflowController.duplicateActiveDocument,
+    copyActiveDocumentToClipboard: documentWorkflowController.copyActiveDocumentToClipboard,
     tryPasteImageFromClipboard: async () => {
       const pasted = await documentWorkflowController.tryPasteImageFromClipboard();
       if (!pasted) showToast("Use Ctrl+V after copying an image if paste is blocked", "info");
@@ -956,6 +1041,13 @@ function registerEditorCommands() {
     openAiRestoreModal: () => aiEditingController.openRestoreModal(),
     runAiThumbnail: () => aiEditingController.generateThumbnail(),
     runAiFreeform: () => aiEditingController.freeformAi(),
+    runAiAddShadow: () => aiEditingController.addShadow(),
+    runAiRemoveShadow: () => aiEditingController.removeShadow(),
+    runAiAddReflection: () => aiEditingController.addReflection(),
+    runAiRemoveReflection: () => aiEditingController.removeReflection(),
+    runAiCloneObject: () => aiEditingController.cloneObject(),
+    runAiMoveObject: () => aiEditingController.moveObject(),
+    runAiReplaceRasterText: () => aiEditingController.replaceRasterText(),
     setTheme,
   }));
   applyKeybindings(settings.keybindings);
@@ -1034,6 +1126,7 @@ async function init() {
   editorInteractionController.bind();
   paletteController.bind();
   inspectorController.bind();
+  textCanvasEditingController.bind();
   captureController.bindOverlay();
   canvasWorkspaceController.bindCanvasInteractions();
   await captureController.refreshGlobalShortcuts();
@@ -1069,6 +1162,9 @@ aiEditingController = createAiEditingController({
   showToast,
   log: debugLog,
   saveDebugImage: saveAiDebugImage,
+  startAiMaskSession: (doc, config) => aiMaskSessionController.start(doc, config),
+  getPrimaryProviderIdForFamily: (family) => settings.ai.routing[family].primaryProviderId,
+  getPreferredModelForFamily: (family) => settings.ai.routing[family].preferredModel.trim() || undefined,
 });
 
 goblinPersonalityController = createGoblinPersonalityController({

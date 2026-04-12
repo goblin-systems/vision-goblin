@@ -15,6 +15,7 @@ import { addBlobAsLayer, duplicateDocument, importDocumentFromBlob, makeNewDocum
 import { byId } from "./dom";
 import type { DocumentSession } from "./documentSession";
 import type { IoController } from "./io";
+import { copyDocumentToClipboard } from "./clipboard";
 import { buildAutosaveTargets, getRecoveryPromptCopy, restoreRecoveryDocuments, trimRecentItems } from "./documentWorkflowHelpers";
 
 export interface NewDocumentValues {
@@ -163,6 +164,7 @@ export interface DocumentWorkflowController {
   handleExportImage: () => Promise<void>;
   handleSaveProject: (saveAs?: boolean) => Promise<void>;
   duplicateActiveDocument: () => void;
+  copyActiveDocumentToClipboard: () => Promise<boolean>;
   tryPasteImageFromClipboard: () => Promise<boolean>;
   handleRecentNavSelection: (id: string) => Promise<boolean>;
   clearRecent: () => Promise<void>;
@@ -413,6 +415,25 @@ export function createDocumentWorkflowController(deps: DocumentWorkflowControlle
     deps.showToast(`Duplicated ${doc.name}`);
   }
 
+  async function copyActiveDocumentToClipboard(): Promise<boolean> {
+    const doc = getActiveDocument();
+    if (!doc) {
+      deps.showToast("No document to copy", "info");
+      return false;
+    }
+
+    const copied = await copyDocumentToClipboard(doc);
+    if (copied) {
+      deps.log(`Copied '${doc.name}' to clipboard`, "INFO");
+      deps.showToast("Copied to clipboard");
+      return true;
+    }
+
+    deps.log("Clipboard image copy failed", "WARN");
+    deps.showToast("Failed to copy to clipboard", "error");
+    return false;
+  }
+
   async function tryPasteImageFromClipboard(): Promise<boolean> {
     try {
       const clipboard = navigator.clipboard as Clipboard & {
@@ -554,6 +575,7 @@ export function createDocumentWorkflowController(deps: DocumentWorkflowControlle
     handleExportImage,
     handleSaveProject,
     duplicateActiveDocument,
+    copyActiveDocumentToClipboard,
     tryPasteImageFromClipboard,
     handleRecentNavSelection,
     clearRecent,

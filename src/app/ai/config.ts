@@ -37,7 +37,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   providers: cloneProviderSettings(DEFAULT_PROVIDER_SETTINGS),
   routing: AI_TASK_FAMILIES.reduce<Record<AiTaskFamily, AiTaskRoutePreferences>>((acc, family) => {
     acc[family] = {
-      primaryProviderId: "openai-compatible",
+      primaryProviderId: family === "text-replacement" ? "gemini" : "openai-compatible",
       fallbackProviderIds: [],
       preferredModel: defaultModelForFamily(family),
     };
@@ -141,6 +141,8 @@ export function defaultModelForFamily(family: AiTaskFamily): string {
     case "segmentation":
     case "captioning":
       return "gpt-4.1-mini";
+    case "text-replacement":
+      return "";
     default:
       return "gpt-4.1-mini";
   }

@@ -2,11 +2,11 @@
 
 These epics remain in scope, but are not current delivery priorities.
 
-## Automation and assistive workflows
+## Standalone AI editing
 
-- `F4.2`, `F4.3` -> `backlog/epic-f420-natural-language-and-automation.md`
-- `F4.4`, `F4.5`, `F4.6`, `F4.8`, `F4.9` -> `backlog/epic-f440-preset-and-scaled-workflows.md`
-- `F4.7`, `F4.10` -> `backlog/epic-f470-assistive-surfaces.md`
+- `F4.3` -> `backlog/epic-f430-ai-relight.md`
+- `F4.5` -> `backlog/epic-f450-ai-smart-recolor.md`
+- `F4.10` -> `backlog/epic-f470-assistive-surfaces.md`
 
 ## History and non-destructive editing
 

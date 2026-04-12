@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeCaptureHudPosition,
   computeCaptureDrawMetrics,
+  computeLensBands,
+  describeCaptureFailure,
   formatCaptureError,
   getCaptureSelectionFromDrag,
   mapClientPointToBitmapPoint,
@@ -48,5 +51,28 @@ describe("captureController helpers", () => {
     expect(formatCaptureError("Permission denied", "fallback")).toBe("Permission denied");
     expect(formatCaptureError(new Error("Window gone"), "fallback")).toBe("Window gone");
     expect(formatCaptureError(new Error("   "), "fallback")).toBe("fallback");
+  });
+
+  it("maps capture permission failures to clearer guidance", () => {
+    expect(describeCaptureFailure("Permission denied by OS", "fallback")).toBe(
+      "Screen capture permission was denied. Allow desktop capture for Vision Goblin, then try again.",
+    );
+    expect(describeCaptureFailure("Window not found", "fallback")).toBe("That window is no longer available to capture.");
+  });
+
+  it("positions the picker hud beside the cursor while staying onscreen", () => {
+    expect(computeCaptureHudPosition(160, 120, 180, 140, 1280, 720)).toEqual({ left: 184, top: 144 });
+    expect(computeCaptureHudPosition(1240, 690, 180, 140, 1280, 720)).toEqual({ left: 1036, top: 526 });
+  });
+
+  it("builds lens bands with a larger centre area", () => {
+    const bands = computeLensBands(120, 11);
+    const lastBand = bands[bands.length - 1];
+    expect(bands).toHaveLength(11);
+    expect(bands[5].size).toBeGreaterThan(bands[0].size);
+    expect(bands[5].size).toBeGreaterThan(bands[10].size);
+    expect(bands.reduce((sum, band) => sum + band.size, 0)).toBe(120);
+    expect(bands[0].start).toBe(0);
+    expect(lastBand.start + lastBand.size).toBe(120);
   });
 });

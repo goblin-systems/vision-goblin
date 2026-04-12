@@ -1,5 +1,7 @@
 import { normalizeAiTaskError, type AiTaskError } from "./contracts";
 import type { AiProviderId } from "./config";
+import type { AiJobInspectionData, AiProviderRequestInspectionSnapshot } from "./inspection";
+import { createInspectionRequestSnapshotFromTask, snapshotAiTaskForInspection } from "./inspection";
 import type { AiPlatformRuntime, AiRuntimeTaskRequest, AiTaskExecutionOutcome, AiValidationResult } from "./runtime";
 import type { AiTask } from "./types";
 
@@ -25,10 +27,11 @@ export interface AiJobRecord {
   validationResult?: AiValidationResult;
   taskResult?: AiTaskExecutionOutcome;
   error?: AiTaskError;
+  inspection?: AiJobInspectionData;
 }
 
 type JobPayload =
-  | { kind: "task"; request: AiRuntimeTaskRequest; title: string }
+  | { kind: "task"; request: AiRuntimeTaskRequest; title: string; inspection: AiJobInspectionData }
   | { kind: "validation"; providerId: AiProviderId; title: string };
 
 export interface AiJobQueue {
@@ -62,7 +65,7 @@ export function createAiJobQueue(runtime: AiPlatformRuntime): AiJobQueue {
       status: "pending",
       createdAt: timestamp,
       updatedAt: timestamp,
-      providerId: payload.kind === "validation" ? payload.providerId : undefined,
+      providerId: payload.kind === "validation" ? payload.providerId : payload.request.plannedProviderId,
       attemptedProviderIds: [],
       family: payload.kind === "task" ? payload.request.task.family : undefined,
       attemptCount,
@@ -70,6 +73,7 @@ export function createAiJobQueue(runtime: AiPlatformRuntime): AiJobQueue {
       canRetry: false,
       canCancel: true,
       message: payload.kind === "validation" ? "Queued provider validation." : "Queued AI task.",
+      inspection: payload.kind === "task" ? payload.inspection : undefined,
     };
 
     jobs.unshift(job);
@@ -148,10 +152,12 @@ export function createAiJobQueue(runtime: AiPlatformRuntime): AiJobQueue {
             canCancel: false,
             canRetry: false,
             taskResult: result,
+            providerId: result.response.providerId as AiProviderId,
             attemptedProviderIds: result.attemptedProviderIds,
             message: result.degradedMessage ?? "AI job completed.",
             degradedMessage: result.degradedMessage,
             estimatedCostMessage: result.estimatedCostMessage,
+            inspection: mergeInspection(payload.inspection, result),
           });
         } else {
           updateJob(nextJob.id, {
@@ -160,9 +166,11 @@ export function createAiJobQueue(runtime: AiPlatformRuntime): AiJobQueue {
             canCancel: false,
             canRetry: result.response.error.retryable,
             taskResult: result,
+            providerId: result.response.providerId as AiProviderId,
             attemptedProviderIds: result.attemptedProviderIds,
             error: result.response.error,
             message: result.response.error.message,
+            inspection: mergeInspection(payload.inspection, result),
           });
         }
       }
@@ -196,6 +204,33 @@ export function createAiJobQueue(runtime: AiPlatformRuntime): AiJobQueue {
     emit();
   }
 
+  function mergeInspection(base: AiJobInspectionData, outcome: AiTaskExecutionOutcome): AiJobInspectionData {
+    const responseInspection = outcome.response.inspection;
+    return {
+      ...base,
+      providerId: outcome.response.providerId ?? base.providerId,
+      model: outcome.response.ok ? outcome.response.model ?? base.model : base.model,
+      request: mergeRequestInspection(base.request, responseInspection?.request),
+      response: responseInspection?.response ?? base.response,
+    };
+  }
+
+  function mergeRequestInspection(
+    base: AiProviderRequestInspectionSnapshot | undefined,
+    incoming: AiProviderRequestInspectionSnapshot | undefined,
+  ): AiProviderRequestInspectionSnapshot | undefined {
+    if (!base) {
+      return incoming;
+    }
+    if (!incoming) {
+      return base;
+    }
+    return {
+      prompt: base.prompt ?? incoming.prompt,
+      assets: base.assets.length > 0 ? base.assets : incoming.assets,
+    };
+  }
+
   return {
     subscribe(listener) {
       listeners.add(listener);
@@ -204,10 +239,24 @@ export function createAiJobQueue(runtime: AiPlatformRuntime): AiJobQueue {
       };
     },
     listJobs() {
-      return jobs.map((job) => ({ ...job, attemptedProviderIds: [...job.attemptedProviderIds] }));
+      return jobs.map((job) => ({
+        ...job,
+        attemptedProviderIds: [...job.attemptedProviderIds],
+        inspection: job.inspection ? structuredClone(job.inspection) : undefined,
+      }));
     },
     enqueueTask(request, title) {
-      return createJob({ kind: "task", request, title });
+      return createJob({
+        kind: "task",
+        request,
+        title,
+        inspection: {
+          task: snapshotAiTaskForInspection(request.task),
+          providerId: request.plannedProviderId,
+          model: request.plannedModel,
+          request: mergeRequestInspection(createInspectionRequestSnapshotFromTask(request.task), request.inspection?.request),
+        },
+      });
     },
     enqueueValidation(providerId, title = `Validate ${providerId}`) {
       return createJob({ kind: "validation", providerId, title });

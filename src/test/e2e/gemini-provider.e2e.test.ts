@@ -1,6 +1,6 @@
 /// <reference types="node" />
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createGeminiProvider } from "../../app/ai/providers/geminiProvider";
 import type { AiProviderResponse, AiTaskSuccess } from "../../app/ai/contracts";
 import type {
@@ -11,7 +11,7 @@ import type {
   AiSegmentationTask,
   AiTask,
 } from "../../app/ai/types";
-import { loadSampleImage, loadSampleMask } from "./helpers";
+import { loadNamedSampleMask, loadSampleImage, loadSampleMask } from "./helpers";
 
 /**
  * E2E tests for the Gemini AI provider.
@@ -22,6 +22,8 @@ import { loadSampleImage, loadSampleMask } from "./helpers";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+const AI_SHADOW_FINISH_MESSAGE = "Unable to show the generated image. The model could not generate the image based on the prompt provided. You will not be charged for this request. Try rephrasing the prompt. If you think this was an error, [send feedback](https://ai.google.dev/gemini-api/docs/troubleshooting).";
+
 /**
  * Asserts that a provider response is a success and narrows the type.
  * Includes the full error payload in the assertion message for debugging.
@@ -31,6 +33,58 @@ function assertSuccess<T extends AiTask>(
 ): asserts result is AiTaskSuccess<T> {
   expect(result.ok, result.ok ? "" : `Provider returned failure: ${JSON.stringify((result as { error?: unknown }).error)}`).toBe(true);
 }
+
+describe("Gemini provider fixture-backed refusal handling", () => {
+  it("surfaces finishMessage for AI shadow inpainting refusals with real image and mask fixtures", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [
+          {
+            finishReason: "IMAGE_OTHER",
+            index: 0,
+            finishMessage: AI_SHADOW_FINISH_MESSAGE,
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 721,
+          candidatesTokenCount: 1,
+          totalTokenCount: 722,
+          promptTokensDetails: [
+            { modality: "TEXT", tokenCount: 205 },
+            { modality: "IMAGE", tokenCount: 516 },
+          ],
+        },
+        modelVersion: "gemini-2.5-flash-image",
+        responseId: "dOPPafiOI_6FkdUPsqKtkQE",
+      }),
+    }));
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const image = { ...loadSampleImage("ai_shadow_selected_layers.png"), width: 1600, height: 1000 };
+    const mask = { ...loadNamedSampleMask("ai_shadow_mask.png"), width: 1600, height: 1000 };
+
+    const task: AiInpaintingTask = {
+      id: "e2e-inp-shadow-refusal",
+      family: "inpainting",
+      prompt: "Add a realistic grounded shadow beneath the selected subject, matching the scene lighting and preserving the rest of the image unchanged.",
+      input: { image, mask },
+      options: { mode: "replace" },
+    };
+
+    const result = await provider.execute({ task });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected failure");
+    }
+
+    expect(result.error.message).toContain(AI_SHADOW_FINISH_MESSAGE);
+    expect(result.error.aiMessage).toBe(AI_SHADOW_FINISH_MESSAGE);
+    expect(result.error.message).not.toBe("Gemini did not return an image. AI response: Finish reason: IMAGE_OTHER");
+  });
+});
 
 describe.skipIf(!GEMINI_API_KEY)("Gemini provider E2E", () => {
   function getProvider() {

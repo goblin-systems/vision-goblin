@@ -1,15 +1,22 @@
 import { beginDocumentOperation, cancelDocumentOperation, commitDocumentOperation, markDocumentOperationChanged, pushHistory } from "./history";
 import { buildCropRect, getDocCoordinates } from "./geometry";
-import type { DocumentState, Layer, PointerState, RasterLayer, Rect, SelectionPath, TransformDraft, TransformHandle } from "./types";
-import { applyCropToDocument, buildTransformPreview, snapshotDocument, createLayerCanvas, compositeDocumentOnto, getLayerContext, refreshLayerCanvas, syncLayerSource } from "./documents";
+import type { BrushState, DocumentState, Layer, PointerState, RasterLayer, Rect, SelectionPath, TextLayer, TransformDraft, TransformHandle, TransformIntent } from "./types";
+import { applyCropToDocument, buildTransformFrameBounds, buildTransformPreview, snapshotDocument, createLayerCanvas, compositeDocumentOnto, getLayerContext, measureTextBoxBounds, refreshLayerCanvas, syncLayerSource } from "./documents";
 import { clamp } from "./utils";
 import { applySelectionClip, combineMasks, createMaskCanvas, defaultPolygonRotation, drawThroughMask, isAxisAlignedRectMarquee, maskBoundingRect, maskContainsRect, rasterizeRectToMask, type SelectionMode } from "./selection";
 import { drawMaskStroke } from "./layerMask";
 import { applyFillToSelection } from "./fill";
+import { getFillGradientTargetError } from "./fillGradientValidation";
+import { selectLayer } from "./layers";
+import { findTopmostPixelBackedLayerAtPoint, findTopmostShapeLayerAtPoint } from "./shapeHitTesting";
+import { createHealingStrokeSession, healingStroke, resetHealingStrokeSession, type HealingStrokeSession } from "./healing";
 
 type TransformMode = "scale" | "rotate";
 type TransformDraftState = {
   layerId: string;
+  intent: TransformIntent;
+   frameBounds?: Rect;
+   previewLayerIds?: string[];
   scaleX: number;
   scaleY: number;
   rotateDeg: number;
@@ -20,7 +27,31 @@ type TransformDraftState = {
   pivotX: number;
   pivotY: number;
   sourceCanvas: HTMLCanvasElement;
+  textBoxWidth?: number | null;
+  textBoxHeight?: number | null;
+  previewOverride?: TransformDraft["previewOverride"];
 };
+
+function getDraftFrameBounds(draft: TransformDraftState, layer: Layer) {
+  return buildTransformFrameBounds({
+    ...draft,
+    frameBounds: draft.frameBounds ?? { x: layer.x, y: layer.y, width: layer.canvas.width, height: layer.canvas.height },
+  });
+}
+
+function createTransformProxyLayer(layer: Layer, bounds: Rect): Layer {
+  if (bounds.width === layer.canvas.width && bounds.height === layer.canvas.height) {
+    return layer;
+  }
+  const proxyCanvas = createLayerCanvas(Math.max(1, Math.round(bounds.width)), Math.max(1, Math.round(bounds.height)));
+  return {
+    ...layer,
+    canvas: proxyCanvas,
+    sourceCanvas: proxyCanvas,
+    x: bounds.x,
+    y: bounds.y,
+  };
+}
 
 function unionRects(a: Rect, b: Rect): Rect {
   const x = Math.min(a.x, b.x);
@@ -101,7 +132,14 @@ function applySelectionMode(current: Rect | null, next: Rect | null, mode: "repl
   return subtractRect(current, next);
 }
 
-function getTransformHandle(layer: Layer, x: number, y: number, mode: TransformMode, boundsOverride?: { x: number; y: number; width: number; height: number }): TransformHandle | null {
+function getTransformHandle(
+  layer: Layer,
+  x: number,
+  y: number,
+  mode: TransformMode,
+  boundsOverride?: { x: number; y: number; width: number; height: number },
+  intent: TransformIntent = "layer",
+): TransformHandle | null {
   const bx = boundsOverride?.x ?? layer.x;
   const by = boundsOverride?.y ?? layer.y;
   const bw = boundsOverride?.width ?? layer.canvas.width;
@@ -110,10 +148,20 @@ function getTransformHandle(layer: Layer, x: number, y: number, mode: TransformM
   const bottom = by + bh;
   const centerX = bx + bw / 2;
   const centerY = by + bh / 2;
-  const handles: Array<[TransformHandle, number, number]> = mode === "rotate"
+  const handles: Array<[TransformHandle, number, number]> = intent === "text-layout"
+    ? [["nw", bx, by], ["ne", right, by], ["sw", bx, bottom], ["se", right, bottom], ["n", centerX, by], ["e", right, centerY], ["s", centerX, bottom], ["w", bx, centerY]]
+    : mode === "rotate"
     ? [["nw", bx, by], ["ne", right, by], ["sw", bx, bottom], ["se", right, bottom]]
     : [["nw", bx, by], ["ne", right, by], ["sw", bx, bottom], ["se", right, bottom], ["n", centerX, by], ["e", right, centerY], ["s", centerX, bottom], ["w", bx, centerY]];
   return handles.find(([, cx, cy]) => Math.abs(x - cx) <= 12 && Math.abs(y - cy) <= 12)?.[0] ?? null;
+}
+
+function isPointInsideLayerFrame(layer: Layer, x: number, y: number, boundsOverride?: { x: number; y: number; width: number; height: number }) {
+  const bx = boundsOverride?.x ?? layer.x;
+  const by = boundsOverride?.y ?? layer.y;
+  const bw = boundsOverride?.width ?? layer.canvas.width;
+  const bh = boundsOverride?.height ?? layer.canvas.height;
+  return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
 }
 
 function applyTransformedCanvas(
@@ -233,6 +281,145 @@ function skewDraft(
   draft.skewYDeg = baseSkewYDeg + ((handle === "e" || handle === "w")
     ? clamp((handle === "w" ? -dy : dy) / Math.max(1, startWidth), -1.5, 1.5) * 45
     : 0);
+}
+
+function isTextBoxResizeHandle(handle: TransformHandle) {
+  return handle === "n" || handle === "s";
+}
+
+function isTextHorizontalResizeHandle(handle: TransformHandle) {
+  return handle === "e" || handle === "w";
+}
+
+function isTextCornerResizeHandle(handle: TransformHandle) {
+  return handle === "nw" || handle === "ne" || handle === "sw" || handle === "se";
+}
+
+function buildTextLayoutPreviewLayer(
+  draft: TransformDraftState,
+  layer: TextLayer,
+  overrides: Partial<Pick<TextLayer["textData"], "boxWidth" | "boxHeight">>,
+) {
+  const previewLayer: TextLayer = {
+    ...layer,
+    canvas: layer.canvas,
+    sourceCanvas: layer.sourceCanvas,
+    textData: {
+      ...layer.textData,
+      boxWidth: draft.textBoxWidth ?? layer.textData.boxWidth,
+      boxHeight: draft.textBoxHeight ?? layer.textData.boxHeight,
+      ...overrides,
+    },
+  };
+  refreshLayerCanvas(previewLayer);
+  return previewLayer;
+}
+
+function applyTextLayoutPreview(
+  draft: TransformDraftState,
+  handle: TransformHandle,
+  startX: number,
+  startY: number,
+  startWidth: number,
+  startHeight: number,
+  previewLayer: TextLayer,
+) {
+  draft.scaleX = 1;
+  draft.scaleY = 1;
+  draft.skewXDeg = 0;
+  draft.skewYDeg = 0;
+  draft.rotateDeg = 0;
+  draft.previewOverride = {
+    canvas: previewLayer.canvas,
+    x: handle.endsWith("e") || handle === "n" || handle === "s"
+      ? startX
+      : startX + startWidth - previewLayer.canvas.width,
+    y: handle.startsWith("s") || handle === "e" || handle === "w"
+      ? startY
+      : startY + startHeight - previewLayer.canvas.height,
+    width: previewLayer.canvas.width,
+    height: previewLayer.canvas.height,
+  };
+  draft.centerX = draft.previewOverride.x + draft.previewOverride.width / 2;
+  draft.centerY = draft.previewOverride.y + draft.previewOverride.height / 2;
+  draft.pivotX = draft.centerX;
+  draft.pivotY = draft.centerY;
+}
+
+function updateTextDraftFromSideHandle(
+  draft: TransformDraftState,
+  layer: TextLayer,
+  handle: TransformHandle,
+  x: number,
+  startX: number,
+  startY: number,
+  startWidth: number,
+  startHeight: number,
+  startTextBoxWidth: number,
+) {
+  const initialBoxWidth = Math.max(1, Math.round(startTextBoxWidth || layer.textData.boxWidth || measureTextBoxBounds(layer.textData).width));
+  const left = handle === "w" ? Math.min(x, startX + startWidth - 1) : startX;
+  const right = handle === "w" ? startX + startWidth : Math.max(x, startX + 1);
+  const nextFrameWidth = Math.max(1, Math.round(right - left));
+  const widthRatio = nextFrameWidth / Math.max(1, startWidth);
+  const nextTextBoxWidth = Math.max(24, Math.round(initialBoxWidth * widthRatio));
+  const previewLayer = buildTextLayoutPreviewLayer(draft, layer, { boxWidth: nextTextBoxWidth });
+  draft.textBoxWidth = nextTextBoxWidth;
+  applyTextLayoutPreview(draft, handle, startX, startY, startWidth, startHeight, previewLayer);
+}
+
+function updateTextDraftFromVerticalHandle(
+  draft: TransformDraftState,
+  layer: TextLayer,
+  handle: TransformHandle,
+  y: number,
+  startX: number,
+  startY: number,
+  startWidth: number,
+  startHeight: number,
+  startTextBoxHeight: number,
+) {
+  const initialBoxHeight = Math.max(1, Math.round(startTextBoxHeight || layer.textData.boxHeight || measureTextBoxBounds(layer.textData).height));
+  const top = handle === "n" ? Math.min(y, startY + startHeight - 1) : startY;
+  const bottom = handle === "n" ? startY + startHeight : Math.max(y, startY + 1);
+  const nextFrameHeight = Math.max(1, Math.round(bottom - top));
+  const heightRatio = nextFrameHeight / Math.max(1, startHeight);
+  const nextTextBoxHeight = Math.max(24, Math.round(initialBoxHeight * heightRatio));
+  const previewLayer = buildTextLayoutPreviewLayer(draft, layer, { boxHeight: nextTextBoxHeight });
+  draft.textBoxHeight = nextTextBoxHeight;
+  applyTextLayoutPreview(draft, handle, startX, startY, startWidth, startHeight, previewLayer);
+}
+
+function updateTextDraftFromCornerHandle(
+  draft: TransformDraftState,
+  layer: TextLayer,
+  handle: TransformHandle,
+  x: number,
+  y: number,
+  startX: number,
+  startY: number,
+  startWidth: number,
+  startHeight: number,
+  startTextBoxWidth: number,
+  startTextBoxHeight: number,
+) {
+  const initialBoxWidth = Math.max(1, Math.round(startTextBoxWidth || layer.textData.boxWidth || measureTextBoxBounds(layer.textData).width));
+  const initialBoxHeight = Math.max(1, Math.round(startTextBoxHeight || layer.textData.boxHeight || measureTextBoxBounds(layer.textData).height));
+  const left = handle.endsWith("w") ? Math.min(x, startX + startWidth - 1) : startX;
+  const right = handle.endsWith("w") ? startX + startWidth : Math.max(x, startX + 1);
+  const top = handle.startsWith("n") ? Math.min(y, startY + startHeight - 1) : startY;
+  const bottom = handle.startsWith("n") ? startY + startHeight : Math.max(y, startY + 1);
+  const nextFrameWidth = Math.max(1, Math.round(right - left));
+  const nextFrameHeight = Math.max(1, Math.round(bottom - top));
+  const nextTextBoxWidth = Math.max(24, Math.round(initialBoxWidth * (nextFrameWidth / Math.max(1, startWidth))));
+  const nextTextBoxHeight = Math.max(24, Math.round(initialBoxHeight * (nextFrameHeight / Math.max(1, startHeight))));
+  const previewLayer = buildTextLayoutPreviewLayer(draft, layer, {
+    boxWidth: nextTextBoxWidth,
+    boxHeight: nextTextBoxHeight,
+  });
+  draft.textBoxWidth = nextTextBoxWidth;
+  draft.textBoxHeight = nextTextBoxHeight;
+  applyTextLayoutPreview(draft, handle, startX, startY, startWidth, startHeight, previewLayer);
 }
 
 export function drawStroke(
@@ -466,93 +653,6 @@ export function cloneStampStroke(
   ctx.putImageData(destData, tsx, tsy);
 }
 
-export function healingStroke(
-  layer: RasterLayer,
-  x: number,
-  y: number,
-  brushSize: number,
-  strength: number,
-  selectionRect?: Rect | null,
-  selectionInverted = false,
-  selectionShape: "rect" | "ellipse" = "rect"
-) {
-  const radius = Math.max(1, brushSize / 2);
-  const sampleRadius = radius * 2.4;
-  const sx = Math.max(0, Math.floor(x - layer.x - sampleRadius));
-  const sy = Math.max(0, Math.floor(y - layer.y - sampleRadius));
-  const ex = Math.min(layer.canvas.width, Math.ceil(x - layer.x + sampleRadius));
-  const ey = Math.min(layer.canvas.height, Math.ceil(y - layer.y + sampleRadius));
-  const sw = ex - sx;
-  const sh = ey - sy;
-  if (sw < 1 || sh < 1) return;
-
-  const ctx = getLayerContext(layer);
-  const source = ctx.getImageData(sx, sy, sw, sh);
-  const dest = ctx.getImageData(sx, sy, sw, sh);
-  const src = source.data;
-  const dst = dest.data;
-  const centerX = x - layer.x - sx;
-  const centerY = y - layer.y - sy;
-
-  function getPixel(px: number, py: number) {
-    const i = (py * sw + px) * 4;
-    return [src[i], src[i + 1], src[i + 2], src[i + 3]] as const;
-  }
-
-  const baseCenterX = Math.max(0, Math.min(sw - 1, Math.round(centerX)));
-  const baseCenterY = Math.max(0, Math.min(sh - 1, Math.round(centerY)));
-  const centerPixel = getPixel(baseCenterX, baseCenterY);
-
-  for (let py = 0; py < sh; py++) {
-    for (let px = 0; px < sw; px++) {
-      const docPx = sx + px + layer.x;
-      const docPy = sy + py + layer.y;
-      if (selectionRect) {
-        const inSel = isInSelection(docPx, docPy, selectionRect, selectionShape);
-        if (selectionInverted ? inSel : !inSel) continue;
-      }
-      const dx = px - centerX;
-      const dy = py - centerY;
-      const dist = Math.hypot(dx, dy);
-      if (dist > radius) continue;
-      const feather = Math.pow(1 - dist / radius, 1.6) * strength;
-      let r = 0, g = 0, b = 0, a = 0, totalWeight = 0;
-      for (let oy = -3; oy <= 3; oy++) {
-        for (let ox = -3; ox <= 3; ox++) {
-          const nx = px + ox;
-          const ny = py + oy;
-          if (nx < 0 || ny < 0 || nx >= sw || ny >= sh) continue;
-          const ringDist = Math.hypot(ox, oy);
-          if (ringDist < 1.75 || ringDist > 3.75) continue;
-          const [sr, sg, sb, sa] = getPixel(nx, ny);
-          const colorDistance = Math.abs(sr - centerPixel[0]) + Math.abs(sg - centerPixel[1]) + Math.abs(sb - centerPixel[2]);
-          const alphaWeight = sa / 255;
-          const colorWeight = Math.max(0.08, 1 - colorDistance / 180);
-          const radialWeight = 1 - Math.abs(ringDist - 2.8) / 1.2;
-          const weight = colorWeight * radialWeight * alphaWeight;
-          r += sr * weight;
-          g += sg * weight;
-          b += sb * weight;
-          a += sa * weight;
-          totalWeight += weight;
-        }
-      }
-      if (totalWeight <= 0) continue;
-      const i = (py * sw + px) * 4;
-      const meanR = r / totalWeight;
-      const meanG = g / totalWeight;
-      const meanB = b / totalWeight;
-      const meanA = a / totalWeight;
-      const preserveWeight = Math.max(0.18, 1 - feather * 0.82);
-      dst[i] = Math.round(dst[i] * preserveWeight + meanR * (1 - preserveWeight));
-      dst[i + 1] = Math.round(dst[i + 1] * preserveWeight + meanG * (1 - preserveWeight));
-      dst[i + 2] = Math.round(dst[i + 2] * preserveWeight + meanB * (1 - preserveWeight));
-      dst[i + 3] = Math.round(dst[i + 3] * preserveWeight + meanA * (1 - preserveWeight));
-    }
-  }
-  ctx.putImageData(dest, sx, sy);
-}
-
 function isInSelection(x: number, y: number, rect: Rect, shape: "rect" | "ellipse"): boolean {
   if (shape === "ellipse") {
     const cx = rect.x + rect.width / 2;
@@ -573,20 +673,50 @@ export function pickColourAt(doc: DocumentState, docX: number, docY: number): st
   return `#${[pixel[0], pixel[1], pixel[2]].map((value) => value.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
 }
 
+function drawEphemeralMaskStroke(
+  mask: HTMLCanvasElement,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  brushSize: number,
+  brushOpacity: number,
+  mode: "reveal" | "hide",
+) {
+  const ctx = mask.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = brushSize;
+  ctx.globalAlpha = brushOpacity;
+  ctx.globalCompositeOperation = mode === "hide" ? "destination-out" : "source-over";
+  ctx.strokeStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.moveTo(fromX, fromY);
+  ctx.lineTo(toX, toY);
+  ctx.stroke();
+  ctx.restore();
+}
+
 interface CanvasPointerDeps {
   editorCanvas: HTMLCanvasElement;
   canvasWrap: HTMLElement;
   getActiveDocument: () => DocumentState | null;
   getActiveLayer: (doc: DocumentState) => Layer | null;
   getActiveTool: () => string;
+  isTextEditingActive: () => boolean;
   commitTransformDraft: () => void;
+  cancelTransformDraft: (showMessage?: boolean) => void;
   getSelectionMode: () => "replace" | "add" | "subtract" | "intersect";
   getMarqueeShape: () => number;
   getTransformMode: () => TransformMode;
-  ensureTransformDraft: (doc: DocumentState, layer: Layer) => TransformDraftState | null;
+  ensureTransformDraft: (doc: DocumentState, layer: Layer, intent?: TransformIntent) => TransformDraftState | null;
   getTransformDraft: () => TransformDraftState | null;
   syncTransformInputs: () => void;
-  getBrushState: () => { brushSize: number; brushOpacity: number; activeColour: string };
+  getBrushState: () => BrushState;
   getSpacePressed: () => boolean;
   getMarqueeModifiers: () => { rotate: boolean; perfect: boolean };
   snapLayerPosition: (layer: Layer, x: number, y: number) => { x: number; y: number };
@@ -601,12 +731,22 @@ interface CanvasPointerDeps {
   onLassoComplete: () => void;
   onCreateTextLayer: (x: number, y: number) => Layer | null;
   onCreateShapeLayer: (x: number, y: number) => Layer | null;
+  onLayerCreationCommitted?: (layer: Layer) => void;
+  getCustomPaintTarget: () => {
+    canvas: HTMLCanvasElement;
+    exclusiveCanvas?: HTMLCanvasElement;
+    historyMode: "document" | "ephemeral";
+    paintLabel: string;
+    logLabel: string;
+  } | null;
   /** Returns the layer ID whose mask is being edited, or null if not in mask-edit mode. */
   getMaskEditTarget: () => string | null;
   /** Returns the quick mask canvas when quick mask mode is active, or null. */
   getQuickMaskCanvas: () => HTMLCanvasElement | null;
   showToast: (message: string, variant?: "success" | "error" | "info") => void;
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
+  /** When an AI mask session is active, returns the target canvas for selection results. Null means use doc.selectionMask as normal. */
+  getSelectionMaskTarget: () => HTMLCanvasElement | null;
 }
 
 function shouldCommitPendingTransformBeforePointerAction(tool: string) {
@@ -629,10 +769,45 @@ function shouldCommitPendingTransformBeforePointerAction(tool: string) {
   ].includes(tool);
 }
 
+function shouldAltPickLayer(tool: string) {
+  return [
+    "move",
+    "transform",
+    "brush",
+    "eraser",
+    "fill",
+    "gradient",
+    "eyedropper",
+    "smudge",
+    "healing-brush",
+  ].includes(tool);
+}
+
+function toolOwnsTransformDraft(tool: string, draft: TransformDraftState | null) {
+  if (!draft) {
+    return false;
+  }
+  return (tool === "transform" && draft.intent === "layer")
+    || (tool === "text" && draft.intent === "text-layout");
+}
+
+function isTransformInteractiveTool(tool: string) {
+  return tool === "transform" || tool === "text";
+}
+
 export function createCanvasPointerController(deps: CanvasPointerDeps) {
   let polygonLastClickTime = 0;
+  let healingSession: HealingStrokeSession | null = null;
+
+  function clearHealingSession() {
+    if (healingSession) {
+      resetHealingStrokeSession(healingSession);
+      healingSession = null;
+    }
+  }
 
   function handlePointerDown(event: PointerEvent) {
+    clearHealingSession();
     const doc = deps.getActiveDocument();
     if (!doc) return;
     const activeTool = deps.getActiveTool();
@@ -653,11 +828,29 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.getTransformDraft() && activeTool !== "transform" && shouldCommitPendingTransformBeforePointerAction(activeTool)) {
+    if (deps.getTransformDraft() && !toolOwnsTransformDraft(activeTool, deps.getTransformDraft()) && shouldCommitPendingTransformBeforePointerAction(activeTool)) {
       deps.commitTransformDraft();
     }
 
-    const layer = deps.getActiveLayer(doc);
+    let layer = deps.getActiveLayer(doc);
+    if (event.altKey && shouldAltPickLayer(activeTool)) {
+      const hitLayer = findTopmostPixelBackedLayerAtPoint(doc, x, y);
+      if (hitLayer) {
+        if (hitLayer.id !== layer?.id) {
+          selectLayer(doc, hitLayer.id);
+          deps.log(`Alt-picked layer '${hitLayer.name}'`, "INFO");
+        }
+        deps.renderEditorState();
+        return;
+      }
+    }
+    if (activeTool === "move" || activeTool === "transform" || activeTool === "text") {
+      const hitShapeLayer = findTopmostShapeLayerAtPoint(doc, x, y);
+      if (hitShapeLayer && hitShapeLayer.id !== layer?.id) {
+        selectLayer(doc, hitShapeLayer.id);
+        layer = hitShapeLayer;
+      }
+    }
     deps.pointerState.startLayerX = layer?.x ?? 0;
     deps.pointerState.startLayerY = layer?.y ?? 0;
     deps.pointerState.startSelectionRect = doc.selectionRect ? { ...doc.selectionRect } : null;
@@ -704,6 +897,53 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     }
 
     if (activeTool === "text") {
+      if (deps.isTextEditingActive()) {
+        return;
+      }
+
+      if (layer?.type === "text") {
+        const activeTextLayoutDraft = (() => {
+          const draft = deps.getTransformDraft();
+          return draft?.layerId === layer.id && draft.intent === "text-layout" ? draft : null;
+        })();
+        const previewBounds = activeTextLayoutDraft?.previewOverride ?? undefined;
+        const handle = getTransformHandle(layer, x, y, deps.getTransformMode(), previewBounds, "text-layout");
+        if (handle || isPointInsideLayerFrame(layer, x, y, previewBounds)) {
+          const draft = activeTextLayoutDraft ?? deps.ensureTransformDraft(doc, layer, "text-layout");
+          if (draft) {
+            deps.pointerState.mode = "move-layer";
+            deps.pointerState.transformHandle = handle;
+            deps.pointerState.startLayerX = layer.x;
+            deps.pointerState.startLayerY = layer.y;
+            deps.pointerState.startLayerWidth = (previewBounds?.width ?? layer.canvas.width);
+            deps.pointerState.startLayerHeight = (previewBounds?.height ?? layer.canvas.height);
+            deps.pointerState.startScaleX = draft.scaleX;
+            deps.pointerState.startScaleY = draft.scaleY;
+            deps.pointerState.startCenterX = draft.centerX;
+            deps.pointerState.startCenterY = draft.centerY;
+            deps.pointerState.startPivotX = draft.pivotX;
+            deps.pointerState.startPivotY = draft.pivotY;
+            deps.pointerState.startRotateDeg = draft.rotateDeg;
+            deps.pointerState.startSkewXDeg = draft.skewXDeg;
+            deps.pointerState.startSkewYDeg = draft.skewYDeg;
+            deps.pointerState.startTextBoxWidth = Math.max(
+              1,
+              Math.round(draft.textBoxWidth ?? layer.textData.boxWidth ?? measureTextBoxBounds(layer.textData).width),
+            );
+            deps.pointerState.startTextBoxHeight = Math.max(
+              1,
+              Math.round(draft.textBoxHeight ?? layer.textData.boxHeight ?? measureTextBoxBounds(layer.textData).height),
+            );
+            deps.canvasWrap.classList.add("is-dragging");
+            deps.log(handle ? `Text layout transform started on layer '${layer.name}'` : `Text layout move started on layer '${layer.name}'`, "INFO");
+            return;
+          }
+        }
+        if (activeTextLayoutDraft) {
+          deps.cancelTransformDraft(false);
+          return;
+        }
+      }
       beginDocumentOperation(snapshotDocument(doc));
       const created = deps.onCreateTextLayer(x, y);
       if (created) {
@@ -736,19 +976,19 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     }
 
     if (activeTool === "fill") {
-      if (!layer) {
-        deps.showToast("Select a raster layer to fill", "error");
-        deps.log("Fill aborted because there was no active layer", "WARN");
+      const targetError = getFillGradientTargetError("fill", layer);
+      if (targetError) {
+        deps.showToast(targetError, "error");
+        if (!layer) {
+          deps.log("Fill aborted because there was no active layer", "WARN");
+        } else if (layer.locked) {
+          deps.log(`Fill aborted because layer '${layer.name}' is locked`, "WARN");
+        } else {
+          deps.log(`Fill aborted because layer '${layer.name}' is ${layer.type}`, "WARN");
+        }
         return;
       }
-      if (layer.locked) {
-        deps.showToast("Unlock the active layer before filling", "error");
-        deps.log(`Fill aborted because layer '${layer.name}' is locked`, "WARN");
-        return;
-      }
-      if (layer.type !== "raster") {
-        deps.showToast("Select a raster layer to fill", "error");
-        deps.log(`Fill aborted because layer '${layer.name}' is ${layer.type}`, "WARN");
+      if (!layer || layer.locked || layer.type !== "raster") {
         return;
       }
 
@@ -766,6 +1006,26 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       commitDocumentOperation(doc, "Filled selection");
       deps.showToast(result.message, "success");
       deps.log(`Filled selection on layer '${layer.name}'`, "INFO");
+      deps.renderEditorState();
+      return;
+    }
+
+    const customPaintTarget = (activeTool === "brush" || activeTool === "eraser")
+      ? deps.getCustomPaintTarget()
+      : null;
+    if (customPaintTarget) {
+      if (customPaintTarget.historyMode === "document") {
+        beginDocumentOperation(snapshotDocument(doc));
+        markDocumentOperationChanged();
+      }
+      deps.pointerState.mode = "paint";
+      const brush = deps.getBrushState();
+      const maskMode = activeTool === "brush" ? "reveal" : "hide";
+      if (maskMode === "reveal" && customPaintTarget.exclusiveCanvas) {
+        drawEphemeralMaskStroke(customPaintTarget.exclusiveCanvas, x, y, x, y, brush.brushSize, brush.brushOpacity, "hide");
+      }
+      drawEphemeralMaskStroke(customPaintTarget.canvas, x, y, x, y, brush.brushSize, brush.brushOpacity, maskMode);
+      deps.log(`${customPaintTarget.logLabel} ${maskMode} stroke started`, "INFO");
       deps.renderEditorState();
       return;
     }
@@ -809,13 +1069,14 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       }
       const draftHasTransform = Math.abs(draft.scaleX - 1) > 0.001 || Math.abs(draft.scaleY - 1) > 0.001 || Math.abs(draft.rotateDeg) > 0.001 || Math.abs(draft.skewXDeg) > 0.001 || Math.abs(draft.skewYDeg) > 0.001;
       const previewBounds = draftHasTransform ? buildTransformPreview(draft as TransformDraft) : undefined;
-      const handle = getTransformHandle(layer, x, y, deps.getTransformMode(), previewBounds);
+      const frameBounds = previewBounds ?? getDraftFrameBounds(draft, layer);
+      const handle = getTransformHandle(layer, x, y, deps.getTransformMode(), frameBounds, draft.intent);
       deps.pointerState.mode = "move-layer";
       deps.pointerState.transformHandle = handle;
-      deps.pointerState.startLayerX = layer.x;
-      deps.pointerState.startLayerY = layer.y;
-      deps.pointerState.startLayerWidth = layer.canvas.width;
-      deps.pointerState.startLayerHeight = layer.canvas.height;
+      deps.pointerState.startLayerX = frameBounds.x;
+      deps.pointerState.startLayerY = frameBounds.y;
+      deps.pointerState.startLayerWidth = frameBounds.width;
+      deps.pointerState.startLayerHeight = frameBounds.height;
       deps.pointerState.startScaleX = draft.scaleX;
       deps.pointerState.startScaleY = draft.scaleY;
       deps.pointerState.startCenterX = draft.centerX;
@@ -928,7 +1189,20 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         beginDocumentOperation(snapshotDocument(doc));
         deps.pointerState.mode = "paint";
         const brush = deps.getBrushState();
-        healingStroke(layer, x, y, brush.brushSize, brush.brushOpacity, doc.selectionRect, doc.selectionInverted, doc.selectionShape);
+        healingSession = createHealingStrokeSession();
+        healingStroke(layer, {
+          x,
+          y,
+          brushSize: brush.brushSize,
+          strength: brush.brushOpacity,
+          sampleSpread: brush.healingSampleSpread,
+          blend: brush.healingBlend,
+          selectionRect: doc.selectionRect,
+          selectionInverted: doc.selectionInverted,
+          selectionShape: doc.selectionShape,
+          selectionPath: doc.selectionPath,
+          selectionMask: doc.selectionMask,
+        }, healingSession);
         markDocumentOperationChanged();
         deps.log(`Healing stroke started on layer '${layer.name}'`, "INFO");
         deps.renderEditorState();
@@ -969,14 +1243,15 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     }
 
     if (deps.pointerState.mode === "move-layer" && layer) {
-      if (deps.getActiveTool() === "transform") {
+      const activeTool = deps.getActiveTool();
+      if (isTransformInteractiveTool(activeTool) && toolOwnsTransformDraft(activeTool, deps.getTransformDraft())) {
         const draft = deps.getTransformDraft();
         if (!draft) {
           return;
         }
         const transformLayer = doc.layers.find((item) => item.id === draft.layerId) ?? layer;
         if (deps.pointerState.transformHandle) {
-          if (deps.getTransformMode() === "rotate") {
+          if (draft.intent === "layer" && deps.getTransformMode() === "rotate") {
             rotateDraft(
               draft,
               coords.x,
@@ -986,7 +1261,59 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
               deps.pointerState.startRotateDeg,
               event.shiftKey
             );
+            draft.previewOverride = null;
+          } else if (draft.intent === "text-layout" && transformLayer.type === "text" && isTextHorizontalResizeHandle(deps.pointerState.transformHandle)) {
+            updateTextDraftFromSideHandle(
+              draft,
+              transformLayer,
+              deps.pointerState.transformHandle,
+              coords.x,
+              deps.pointerState.startLayerX,
+              deps.pointerState.startLayerY,
+              deps.pointerState.startLayerWidth,
+              deps.pointerState.startLayerHeight,
+              deps.pointerState.startTextBoxWidth,
+            );
+          } else if (draft.intent === "text-layout" && transformLayer.type === "text" && isTextBoxResizeHandle(deps.pointerState.transformHandle)) {
+            updateTextDraftFromVerticalHandle(
+              draft,
+              transformLayer,
+              deps.pointerState.transformHandle,
+              coords.y,
+              deps.pointerState.startLayerX,
+              deps.pointerState.startLayerY,
+              deps.pointerState.startLayerWidth,
+              deps.pointerState.startLayerHeight,
+              deps.pointerState.startTextBoxHeight,
+            );
+          } else if (draft.intent === "text-layout" && transformLayer.type === "text" && isTextCornerResizeHandle(deps.pointerState.transformHandle)) {
+            updateTextDraftFromCornerHandle(
+              draft,
+              transformLayer,
+              deps.pointerState.transformHandle,
+              coords.x,
+              coords.y,
+              deps.pointerState.startLayerX,
+              deps.pointerState.startLayerY,
+              deps.pointerState.startLayerWidth,
+              deps.pointerState.startLayerHeight,
+              deps.pointerState.startTextBoxWidth,
+              deps.pointerState.startTextBoxHeight,
+            );
+          } else if (transformLayer.type === "shape" && ["n", "e", "s", "w"].includes(deps.pointerState.transformHandle)) {
+            const centerX = draft.centerX;
+            const centerY = draft.centerY;
+            draft.scaleX = deps.pointerState.transformHandle === "e" || deps.pointerState.transformHandle === "w"
+              ? Math.max(0.01, Math.abs(coords.x - centerX) / Math.max(1, deps.pointerState.startLayerWidth / 2))
+              : 1;
+            draft.scaleY = deps.pointerState.transformHandle === "n" || deps.pointerState.transformHandle === "s"
+              ? Math.max(0.01, Math.abs(coords.y - centerY) / Math.max(1, deps.pointerState.startLayerHeight / 2))
+              : 1;
+            draft.skewXDeg = 0;
+            draft.skewYDeg = 0;
+            draft.previewOverride = null;
           } else if (["n", "e", "s", "w"].includes(deps.pointerState.transformHandle)) {
+            draft.previewOverride = null;
             skewDraft(
               draft,
               deps.pointerState.transformHandle,
@@ -1005,20 +1332,25 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
             let scaleX = Math.max(0.01, Math.abs(coords.x - centerX) / Math.max(1, deps.pointerState.startLayerWidth / 2));
             let scaleY = Math.max(0.01, Math.abs(coords.y - centerY) / Math.max(1, deps.pointerState.startLayerHeight / 2));
             if (event.ctrlKey || event.metaKey) {
-              const uniform = Math.max(scaleX, scaleY);
-              scaleX = uniform;
-              scaleY = uniform;
+                const uniform = Math.max(scaleX, scaleY);
+                scaleX = uniform;
+                scaleY = uniform;
+              }
+              draft.scaleX = scaleX;
+              draft.scaleY = scaleY;
+              draft.previewOverride = null;
             }
-            draft.scaleX = scaleX;
-            draft.scaleY = scaleY;
-          }
           deps.syncTransformInputs();
           deps.scheduleCanvasRender();
           return;
         }
         const rawX = Math.round(deps.pointerState.startLayerX + (event.clientX - deps.pointerState.startClientX) / coords.bounds.scale);
         const rawY = Math.round(deps.pointerState.startLayerY + (event.clientY - deps.pointerState.startClientY) / coords.bounds.scale);
-        const snapped = deps.snapLayerPosition(transformLayer, rawX, rawY);
+        const snapped = deps.snapLayerPosition(
+          createTransformProxyLayer(transformLayer, getDraftFrameBounds(draft, transformLayer)),
+          rawX,
+          rawY
+        );
         const dx = snapped.x - deps.pointerState.startLayerX;
         const dy = snapped.y - deps.pointerState.startLayerY;
         draft.centerX = deps.pointerState.startCenterX + dx;
@@ -1067,6 +1399,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
         created.x = Math.round(left);
         created.y = Math.round(top);
         created.textData.boxWidth = draggedFarEnough ? Math.max(40, Math.round(width)) : null;
+        created.textData.boxHeight = draggedFarEnough ? Math.max(24, Math.round(height)) : null;
         refreshLayerCanvas(created);
       }
       if (created.type === "shape") {
@@ -1077,7 +1410,35 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       return;
     }
 
-    if (deps.pointerState.mode === "paint" && layer) {
+    if (deps.pointerState.mode === "paint") {
+      const customPaintTarget = deps.getCustomPaintTarget();
+      if (customPaintTarget) {
+        const brush = deps.getBrushState();
+        const maskMode = deps.getActiveTool() === "brush" ? "reveal" : "hide";
+        if (maskMode === "reveal" && customPaintTarget.exclusiveCanvas) {
+          drawEphemeralMaskStroke(
+            customPaintTarget.exclusiveCanvas,
+            deps.pointerState.lastDocX,
+            deps.pointerState.lastDocY,
+            coords.x,
+            coords.y,
+            brush.brushSize,
+            brush.brushOpacity,
+            "hide",
+          );
+        }
+        drawEphemeralMaskStroke(customPaintTarget.canvas, deps.pointerState.lastDocX, deps.pointerState.lastDocY, coords.x, coords.y, brush.brushSize, brush.brushOpacity, maskMode);
+        deps.pointerState.lastDocX = coords.x;
+        deps.pointerState.lastDocY = coords.y;
+        if (customPaintTarget.historyMode === "document") {
+          markDocumentOperationChanged();
+        }
+        deps.scheduleCanvasRender();
+        return;
+      }
+      if (!layer) {
+        return;
+      }
       // Quick mask painting path
       const qmCanvas = deps.getQuickMaskCanvas();
       if (qmCanvas) {
@@ -1112,7 +1473,20 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
           smudgeStroke(layer, deps.pointerState.lastDocX, deps.pointerState.lastDocY, coords.x, coords.y, brush.brushSize, brush.brushOpacity, doc.selectionRect, doc.selectionInverted, doc.selectionShape);
         } else if (deps.getActiveTool() === "healing-brush") {
           const brush = deps.getBrushState();
-          healingStroke(layer, coords.x, coords.y, brush.brushSize, brush.brushOpacity, doc.selectionRect, doc.selectionInverted, doc.selectionShape);
+          healingSession ??= createHealingStrokeSession();
+          healingStroke(layer, {
+            x: coords.x,
+            y: coords.y,
+            brushSize: brush.brushSize,
+            strength: brush.brushOpacity,
+            sampleSpread: brush.healingSampleSpread,
+            blend: brush.healingBlend,
+            selectionRect: doc.selectionRect,
+            selectionInverted: doc.selectionInverted,
+            selectionShape: doc.selectionShape,
+            selectionPath: doc.selectionPath,
+            selectionMask: doc.selectionMask,
+          }, healingSession);
         } else {
           const brush = deps.getBrushState();
           drawStroke(layer, deps.pointerState.lastDocX, deps.pointerState.lastDocY, coords.x, coords.y, deps.getActiveTool() === "eraser" ? "eraser" : "brush", brush.brushSize, brush.brushOpacity, brush.activeColour, doc.selectionRect, doc.selectionInverted, doc.selectionShape, doc.selectionPath, doc.selectionMask);
@@ -1166,7 +1540,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     if (doc && deps.pointerState.mode === "pivot-drag") {
       deps.log("Pivot repositioned", "INFO");
     } else if (doc && deps.pointerState.mode === "move-layer") {
-      if (deps.getActiveTool() === "transform") {
+      if (toolOwnsTransformDraft(deps.getActiveTool(), deps.getTransformDraft())) {
         deps.log("Transform gesture updated", "INFO");
       } else {
         const entry = "Moved active layer";
@@ -1175,14 +1549,18 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       }
     } else if (doc && deps.pointerState.mode === "paint") {
       const layer = deps.getActiveLayer(doc);
+      const customPaintTarget = deps.getCustomPaintTarget();
       const qmCanvas = deps.getQuickMaskCanvas();
       const maskTarget = deps.getMaskEditTarget();
+      const isCustomPaint = !!customPaintTarget;
       const isMaskPaint = maskTarget && layer && layer.id === maskTarget && layer.mask;
       const isQuickMaskPaint = !!qmCanvas;
-      if (layer && !isMaskPaint && !isQuickMaskPaint) {
+      if (layer && !isCustomPaint && !isMaskPaint && !isQuickMaskPaint) {
         syncLayerSource(layer);
       }
-      const paintLabel = isQuickMaskPaint
+      const paintLabel = isCustomPaint
+        ? customPaintTarget.paintLabel
+        : isQuickMaskPaint
         ? "Painted quick mask"
         : isMaskPaint
           ? "Painted mask"
@@ -1195,8 +1573,12 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
                 : deps.getActiveTool() === "brush"
                   ? "Painted stroke"
                   : "Erased pixels";
-      commitDocumentOperation(doc, paintLabel);
-      deps.log(`${isQuickMaskPaint ? "Quick mask paint" : isMaskPaint ? "Mask paint" : deps.getActiveTool()} stroke committed`, "INFO");
+      if (isCustomPaint) {
+        cancelDocumentOperation();
+      } else {
+        commitDocumentOperation(doc, paintLabel);
+      }
+      deps.log(`${isCustomPaint ? customPaintTarget.logLabel : isQuickMaskPaint ? "Quick mask paint" : isMaskPaint ? "Mask paint" : deps.getActiveTool()} stroke committed`, "INFO");
     } else if (doc && deps.pointerState.mode === "create-layer") {
       const created = doc.layers.find((item) => item.id === deps.pointerState.creationLayerId);
       if (created) {
@@ -1205,6 +1587,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
           created.x = Math.round(deps.pointerState.startDocX);
           created.y = Math.round(deps.pointerState.startDocY);
           created.textData.boxWidth = null;
+          created.textData.boxHeight = null;
           refreshLayerCanvas(created);
         }
         if (created.type === "shape" && !draggedFarEnough && created.shapeData.kind !== "line") {
@@ -1213,6 +1596,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
           refreshLayerCanvas(created);
         }
         commitDocumentOperation(doc, created.type === "text" ? "Created text layer" : "Created shape layer");
+        deps.onLayerCreationCommitted?.(created);
         deps.log(`${created.type} creation committed`, "INFO");
       } else {
         cancelDocumentOperation();
@@ -1235,29 +1619,35 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
       deps.onLassoComplete();
       cancelDocumentOperation();
     } else if (doc && deps.pointerState.mode === "marquee") {
+      const sessionTarget = deps.getSelectionMaskTarget();
       if (!doc.selectionRect || doc.selectionRect.width < 2 || doc.selectionRect.height < 2) {
-        const mode = deps.getSelectionMode();
-        if (mode === "replace") {
-          // Click without drag in replace mode clears the selection
-          const hadSelection = !!(doc.selectionRect || doc.selectionMask);
-          if (hadSelection) {
-            doc.undoStack.push(snapshotDocument(doc));
-            doc.redoStack = [];
-          }
+        if (sessionTarget) {
+          // During AI mask session, ignore tiny/click marquees — don't clear the session mask
           doc.selectionRect = null;
-          doc.selectionMask = null;
-          doc.selectionPath = null;
-          doc.selectionInverted = false;
-          deps.log("Selection cleared (click)", "INFO");
-          if (hadSelection) {
-            pushHistory(doc, "Deselected");
-          }
-        } else if (doc.selectionMask) {
-          // Non-replace mode: restore bounding rect, ignore the tiny marquee
-          doc.selectionRect = maskBoundingRect(doc.selectionMask);
         } else {
-          doc.selectionRect = null;
-          doc.selectionPath = null;
+          const mode = deps.getSelectionMode();
+          if (mode === "replace") {
+            // Click without drag in replace mode clears the selection
+            const hadSelection = !!(doc.selectionRect || doc.selectionMask);
+            if (hadSelection) {
+              doc.undoStack.push(snapshotDocument(doc));
+              doc.redoStack = [];
+            }
+            doc.selectionRect = null;
+            doc.selectionMask = null;
+            doc.selectionPath = null;
+            doc.selectionInverted = false;
+            deps.log("Selection cleared (click)", "INFO");
+            if (hadSelection) {
+              pushHistory(doc, "Deselected");
+            }
+          } else if (doc.selectionMask) {
+            // Non-replace mode: restore bounding rect, ignore the tiny marquee
+            doc.selectionRect = maskBoundingRect(doc.selectionMask);
+          } else {
+            doc.selectionRect = null;
+            doc.selectionPath = null;
+          }
         }
       } else {
         const mode = deps.getSelectionMode();
@@ -1274,42 +1664,59 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
           rotation = Math.atan2(dy, dx);
         }
 
-        // Snapshot before mutating selection state
-        doc.undoStack.push(snapshotDocument(doc));
-        doc.redoStack = [];
-
         // Rasterize the new marquee shape into a temp mask
         const tmpMask = createMaskCanvas(doc.width, doc.height);
         rasterizeRectToMask(tmpMask, newRect, sides, rotation, mods.perfect, axisAlignedRect);
 
-        if (mode === "replace" || !doc.selectionMask) {
-          doc.selectionMask = tmpMask;
+        if (sessionTarget) {
+          // Write to AI mask session canvas instead of doc.selectionMask
+          if (mode === "replace") {
+            const ctx = sessionTarget.getContext("2d");
+            if (ctx) {
+              ctx.clearRect(0, 0, sessionTarget.width, sessionTarget.height);
+              ctx.drawImage(tmpMask, 0, 0);
+            }
+          } else {
+            combineMasks(sessionTarget, tmpMask, mode);
+          }
+          deps.log("Marquee applied to AI mask session", "INFO");
+          // Reset the selection rect visual but don't touch doc.selectionMask
+          doc.selectionRect = null;
+          deps.renderCanvas();
         } else {
-          combineMasks(doc.selectionMask, tmpMask, mode);
+          // Snapshot before mutating selection state
+          doc.undoStack.push(snapshotDocument(doc));
+          doc.redoStack = [];
+
+          if (mode === "replace" || !doc.selectionMask) {
+            doc.selectionMask = tmpMask;
+          } else {
+            combineMasks(doc.selectionMask, tmpMask, mode);
+          }
+
+          // Keep the dragged marquee bounds when they still contain selected pixels so
+          // the committed selection does not visually jump away from the marquee the
+          // user just drew. Fall back to mask bounds for compound operations that move
+          // or shrink the actual selected area outside the live drag rect.
+          const maskBounds = maskBoundingRect(doc.selectionMask);
+          const committedRect = mode === "replace" && maskContainsRect(doc.selectionMask, newRect)
+            ? newRect
+            : maskBounds;
+          doc.selectionRect = committedRect;
+          doc.selectionInverted = false;
+          doc.selectionPath = null;
+          doc.selectionShape = sides > 10 ? "ellipse" : "rect";
+
+          if (committedRect) {
+            deps.log(`Selection committed ${committedRect.width}x${committedRect.height}`, "INFO");
+          } else {
+            doc.selectionMask = null;
+            deps.log("Selection cleared after marquee operation", "INFO");
+          }
+
+          const historyLabel = mode === "replace" ? "Marquee selection" : `Marquee selection (${mode})`;
+          pushHistory(doc, historyLabel);
         }
-
-        // Keep the dragged marquee bounds when they still contain selected pixels so
-        // the committed selection does not visually jump away from the marquee the
-        // user just drew. Fall back to mask bounds for compound operations that move
-        // or shrink the actual selected area outside the live drag rect.
-        const maskBounds = maskBoundingRect(doc.selectionMask);
-        const committedRect = mode === "replace" && maskContainsRect(doc.selectionMask, newRect)
-          ? newRect
-          : maskBounds;
-        doc.selectionRect = committedRect;
-        doc.selectionInverted = false;
-        doc.selectionPath = null;
-        doc.selectionShape = sides > 10 ? "ellipse" : "rect";
-
-        if (committedRect) {
-          deps.log(`Selection committed ${committedRect.width}x${committedRect.height}`, "INFO");
-        } else {
-          doc.selectionMask = null;
-          deps.log("Selection cleared after marquee operation", "INFO");
-        }
-
-        const historyLabel = mode === "replace" ? "Marquee selection" : `Marquee selection (${mode})`;
-        pushHistory(doc, historyLabel);
       }
       cancelDocumentOperation();
     } else {
@@ -1318,6 +1725,7 @@ export function createCanvasPointerController(deps: CanvasPointerDeps) {
     deps.pointerState.mode = "none";
     deps.pointerState.transformHandle = null;
     deps.pointerState.creationLayerId = null;
+    clearHealingSession();
     deps.canvasWrap.classList.remove("is-dragging", "is-panning");
     if (hadActiveMode) deps.renderEditorState();
   }

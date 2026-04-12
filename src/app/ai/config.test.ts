@@ -20,9 +20,14 @@ describe("normalizeAiSettings", () => {
 
     const result = normalizeAiSettings(persisted);
 
-    for (const family of Object.keys(result.routing) as (keyof typeof result.routing)[]) {
-      expect(result.routing[family].primaryProviderId).toBe("openai-compatible");
-    }
+    // Families that were "stub-local" in persisted data should migrate to "openai-compatible"
+    expect(result.routing.generation.primaryProviderId).toBe("openai-compatible");
+    expect(result.routing.captioning.primaryProviderId).toBe("openai-compatible");
+    expect(result.routing.segmentation.primaryProviderId).toBe("openai-compatible");
+    expect(result.routing.inpainting.primaryProviderId).toBe("openai-compatible");
+    expect(result.routing.enhancement.primaryProviderId).toBe("openai-compatible");
+    // Families not in persisted data get their defaults
+    expect(result.routing["text-replacement"].primaryProviderId).toBe("gemini");
   });
 
   it("strips stub-local from fallbackProviderIds", () => {
@@ -105,6 +110,7 @@ describe("normalizeAiSettings", () => {
   it("defaults produce openai-compatible as the primary provider", () => {
     expect(DEFAULT_AI_SETTINGS.routing.generation.primaryProviderId).toBe("openai-compatible");
     expect(DEFAULT_AI_SETTINGS.routing.captioning.primaryProviderId).toBe("openai-compatible");
+    expect(DEFAULT_AI_SETTINGS.routing["text-replacement"].primaryProviderId).toBe("gemini");
   });
 
   it("clears stub- prefixed model names during migration", () => {
@@ -175,6 +181,10 @@ describe("defaultModelForFamily", () => {
 
   it("returns gpt-4.1-mini for captioning", () => {
     expect(defaultModelForFamily("captioning")).toBe("gpt-4.1-mini");
+  });
+
+  it("returns empty string for text-replacement (provider uses its own fallback)", () => {
+    expect(defaultModelForFamily("text-replacement")).toBe("");
   });
 });
 

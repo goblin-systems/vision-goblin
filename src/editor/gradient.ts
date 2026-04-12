@@ -1,7 +1,8 @@
+import { clamp01, normalizeHexColour, parseHexColour, blendChannel, interpolateChannel, rgbaToHex, type Rgba } from "./colorUtils";
 import { getLayerContext, syncLayerSource } from "./documents";
-import { resolveEffectiveSelectionMask } from "./fill";
+import { getFillGradientNoOverlapMessage, getFillGradientSelectionRequiredMessage, resolveEffectiveSelectionMask } from "./fillGradientValidation";
 import { maskBoundingRect } from "./selection";
-import type { DocumentState, RasterLayer } from "./types";
+import type { DocumentState, GradientStop, GradientType, LinearGradientFill, RadialGradientFill, RasterLayer } from "./types";
 
 export interface GradientCurveNode {
   id: string;
@@ -14,22 +15,26 @@ export type GradientTargetScope = "selection" | "canvas";
 
 export const DEFAULT_GRADIENT_HEADING_DEGREES = 0;
 
-interface GradientRgba {
-  r: number;
-  g: number;
-  b: number;
-  a: number;
+export interface GradientConfig {
+  gradientType: GradientType;
+  nodes: GradientCurveNode[];
+  /** Linear: heading angle in degrees (0–359). Ignored for radial. */
+  headingDegrees: number;
+  /** Radial: normalized center X (0–1). Defaults to 0.5. */
+  centerX: number;
+  /** Radial: normalized center Y (0–1). Defaults to 0.5. */
+  centerY: number;
 }
 
 interface GradientParsedStop {
   x: number;
-  rgba: GradientRgba;
+  rgba: Rgba;
 }
 
 export interface GradientSampler {
   normalizedNodes: GradientCurveNode[];
   sampleCurveY: (position: number) => number;
-  sampleRgba: (position: number) => GradientRgba | null;
+  sampleRgba: (position: number) => Rgba | null;
   sampleHex: (position: number) => string;
 }
 
@@ -42,50 +47,6 @@ const gradientSamplerCache = new WeakMap<GradientCurveNode[], GradientSampler>()
 
 function nextGradientNodeId() {
   return `gradient-node-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function clamp01(value: number) {
-  return Math.max(0, Math.min(1, value));
-}
-
-function normalizeHexColour(colour: string) {
-  const normalized = colour.trim();
-  return normalized.startsWith("#") ? normalized : `#${normalized}`;
-}
-
-function parseHexColour(colour: string) {
-  const hex = normalizeHexColour(colour).slice(1);
-  if (hex.length === 3) {
-    const [r, g, b] = hex.split("");
-    return {
-      r: Number.parseInt(`${r}${r}`, 16),
-      g: Number.parseInt(`${g}${g}`, 16),
-      b: Number.parseInt(`${b}${b}`, 16),
-      a: 255,
-    };
-  }
-  if (hex.length === 6 || hex.length === 8) {
-    const r = Number.parseInt(hex.slice(0, 2), 16);
-    const g = Number.parseInt(hex.slice(2, 4), 16);
-    const b = Number.parseInt(hex.slice(4, 6), 16);
-    const a = hex.length === 8 ? Number.parseInt(hex.slice(6, 8), 16) : 255;
-    if ([r, g, b, a].some((value) => Number.isNaN(value))) {
-      return null;
-    }
-    return { r, g, b, a };
-  }
-  return null;
-}
-
-function blendChannel(source: number, destination: number, sourceAlpha: number, destinationAlpha: number, outAlpha: number) {
-  if (outAlpha <= 0) {
-    return 0;
-  }
-  return Math.round(((source * sourceAlpha) + (destination * destinationAlpha * (1 - sourceAlpha))) / outAlpha);
-}
-
-function interpolateChannel(start: number, end: number, t: number) {
-  return Math.round(start + (end - start) * t);
 }
 
 function sampleGradientCurveYNormalized(nodes: GradientCurveNode[], position: number): number {
@@ -123,7 +84,7 @@ function parseGradientStops(nodes: GradientCurveNode[]): GradientParsedStop[] | 
   return stops;
 }
 
-function sampleGradientStopsRgba(stops: GradientParsedStop[], position: number): GradientRgba {
+function sampleGradientStopsRgba(stops: GradientParsedStop[], position: number): Rgba {
   if (position <= stops[0].x) {
     return stops[0].rgba;
   }
@@ -148,10 +109,6 @@ function sampleGradientStopsRgba(stops: GradientParsedStop[], position: number):
   }
 
   return stops[stops.length - 1].rgba;
-}
-
-function rgbaToHex(rgba: GradientRgba) {
-  return `#${[rgba.r, rgba.g, rgba.b].map((value) => value.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
 }
 
 function normalizeGradientHeadingDegrees(headingDegrees: number) {
@@ -198,6 +155,30 @@ function sampleGradientDirectionPosition(
   }
   const dot = pixelX * projection.dirX + pixelY * projection.dirY;
   return clamp01((dot - projection.min) / span);
+}
+
+interface RadialDistanceProjection {
+  centerPixelX: number;
+  centerPixelY: number;
+  maxDistance: number;
+}
+
+function createRadialDistanceProjection(width: number, height: number, centerX: number, centerY: number): RadialDistanceProjection {
+  const centerPixelX = centerX * Math.max(width - 1, 0);
+  const centerPixelY = centerY * Math.max(height - 1, 0);
+  const cornerDistances = [
+    Math.hypot(centerPixelX, centerPixelY),
+    Math.hypot(width - 1 - centerPixelX, centerPixelY),
+    Math.hypot(centerPixelX, height - 1 - centerPixelY),
+    Math.hypot(width - 1 - centerPixelX, height - 1 - centerPixelY),
+  ];
+  const maxDistance = Math.max(...cornerDistances, Number.EPSILON);
+  return { centerPixelX, centerPixelY, maxDistance };
+}
+
+function sampleRadialPosition(projection: RadialDistanceProjection, pixelX: number, pixelY: number): number {
+  const distance = Math.hypot(pixelX - projection.centerPixelX, pixelY - projection.centerPixelY);
+  return clamp01(distance / projection.maxDistance);
 }
 
 export function normalizeGradientNodes(nodes: GradientCurveNode[]): GradientCurveNode[] {
@@ -344,15 +325,103 @@ export function sampleGradientColourHex(nodes: GradientCurveNode[], position: nu
   return createGradientSampler(nodes).sampleHex(position);
 }
 
+// ---------------------------------------------------------------------------
+// Conversion between GradientCurveNode[] and GradientStop[]
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert GradientCurveNode[] → GradientStop[].
+ * For each node, uses `x` as offset and samples the curve-remapped color at that position.
+ * This "bakes" the curve remapping into the resulting stops.
+ */
+export function gradientNodesToStops(nodes: GradientCurveNode[]): GradientStop[] {
+  const sampler = createGradientSampler(nodes);
+  return sampler.normalizedNodes.map((node) => ({
+    offset: node.x,
+    color: sampler.sampleHex(node.x),
+  }));
+}
+
+/**
+ * Convert GradientStop[] → GradientCurveNode[].
+ * Each stop becomes a node with y = offset (identity curve — no remapping), generating unique ids.
+ */
+export function gradientStopsToNodes(stops: GradientStop[]): GradientCurveNode[] {
+  return normalizeGradientNodes(
+    stops.map((stop) => ({
+      id: nextGradientNodeId(),
+      x: stop.offset,
+      y: stop.offset,
+      color: normalizeHexColour(stop.color),
+    })),
+  );
+}
+
+/**
+ * Convert a full GradientConfig to a TextFill (LinearGradientFill or RadialGradientFill).
+ * Uses gradientNodesToStops for the stops.
+ */
+export function gradientConfigToTextFill(config: GradientConfig): LinearGradientFill | RadialGradientFill {
+  const stops = gradientNodesToStops(config.nodes);
+  if (config.gradientType === "radial") {
+    return {
+      type: "radial-gradient",
+      stops,
+      centerX: clamp01(config.centerX),
+      centerY: clamp01(config.centerY),
+    };
+  }
+  return { type: "linear-gradient", angle: config.headingDegrees, stops };
+}
+
+/**
+ * Convert a gradient TextFill back to a GradientConfig for editing.
+ * Uses gradientStopsToNodes for the nodes.
+ */
+export function textFillToGradientConfig(fill: LinearGradientFill | RadialGradientFill): GradientConfig {
+  if (fill.type === "linear-gradient") {
+    return {
+      gradientType: "linear",
+      nodes: gradientStopsToNodes(fill.stops),
+      headingDegrees: fill.angle,
+      centerX: 0.5,
+      centerY: 0.5,
+    };
+  }
+  return {
+    gradientType: "radial",
+    nodes: gradientStopsToNodes(fill.stops),
+    headingDegrees: 0,
+    centerX: clamp01(fill.centerX ?? 0.5),
+    centerY: clamp01(fill.centerY ?? 0.5),
+  };
+}
+
+export function createDefaultGradientConfig(startColour = "#6C63FF", endColour = "#FFFFFF"): GradientConfig {
+  return {
+    gradientType: "linear",
+    nodes: createDefaultGradientNodes(startColour, endColour),
+    headingDegrees: DEFAULT_GRADIENT_HEADING_DEGREES,
+    centerX: 0.5,
+    centerY: 0.5,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Gradient application
+// ---------------------------------------------------------------------------
+
 export function applyGradientToSelection(
   doc: Pick<DocumentState, "width" | "height" | "selectionRect" | "selectionShape" | "selectionPath" | "selectionMask" | "selectionInverted">,
   layer: RasterLayer,
-  nodes: GradientCurveNode[],
-  targetScope: GradientTargetScope = "selection",
-  headingDegrees = DEFAULT_GRADIENT_HEADING_DEGREES,
+  config: GradientConfig,
+  targetScope: GradientTargetScope = "canvas",
 ): GradientApplicationResult {
-  const sampler = createGradientSampler(nodes);
+  const sampler = createGradientSampler(config.nodes);
   const effectiveMask = targetScope === "selection" ? resolveEffectiveSelectionMask(doc) : null;
+  if (targetScope === "selection" && !effectiveMask) {
+    return { ok: false, message: getFillGradientSelectionRequiredMessage("gradient"), variant: "info" };
+  }
   const selectionBounds = effectiveMask ? maskBoundingRect(effectiveMask) : null;
   const targetLeft = selectionBounds ? Math.max(layer.x, selectionBounds.x) : layer.x;
   const targetTop = selectionBounds ? Math.max(layer.y, selectionBounds.y) : layer.y;
@@ -360,7 +429,7 @@ export function applyGradientToSelection(
   const targetBottom = selectionBounds ? Math.min(layer.y + layer.canvas.height, selectionBounds.y + selectionBounds.height) : layer.y + layer.canvas.height;
 
   if (targetRight <= targetLeft || targetBottom <= targetTop) {
-    return { ok: false, message: "Selection does not overlap the active layer", variant: "info" };
+    return { ok: false, message: getFillGradientNoOverlapMessage(), variant: "info" };
   }
 
   const sampleColour = sampler.sampleRgba(0.5);
@@ -378,7 +447,16 @@ export function applyGradientToSelection(
   const maskCtx = effectiveMask?.getContext("2d") ?? null;
   const maskImage = maskCtx ? maskCtx.getImageData(targetLeft, targetTop, width, height) : null;
   const maskPixels = maskImage?.data ?? null;
-  const directionProjection = createGradientDirectionProjection(width, height, headingDegrees);
+
+  let samplePosition: (pixelX: number, pixelY: number) => number;
+  if (config.gradientType === "radial") {
+    const radialProjection = createRadialDistanceProjection(width, height, config.centerX, config.centerY);
+    samplePosition = (px, py) => sampleRadialPosition(radialProjection, px, py);
+  } else {
+    const linearProjection = createGradientDirectionProjection(width, height, config.headingDegrees);
+    samplePosition = (px, py) => sampleGradientDirectionPosition(linearProjection, px, py);
+  }
+
   let changed = false;
   let hasSelectedOverlap = !effectiveMask;
 
@@ -391,7 +469,7 @@ export function applyGradientToSelection(
       }
       hasSelectedOverlap = true;
 
-      const position = sampleGradientDirectionPosition(directionProjection, pixelX, pixelY);
+      const position = samplePosition(pixelX, pixelY);
       const rgba = sampler.sampleRgba(position);
       if (!rgba) {
         return { ok: false, message: "One or more gradient colours are invalid", variant: "error" };
@@ -421,7 +499,7 @@ export function applyGradientToSelection(
   }
 
   if (!hasSelectedOverlap) {
-    return { ok: false, message: "Selection does not overlap the active layer", variant: "info" };
+    return { ok: false, message: getFillGradientNoOverlapMessage(), variant: "info" };
   }
 
   if (!changed) {

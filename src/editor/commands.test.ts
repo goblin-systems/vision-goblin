@@ -4,6 +4,7 @@ import {
   registerCommands,
   executeCommand,
   getCommand,
+  getCommandExecutionStatus,
   isCommandEnabled,
   getAllCommands,
   getCommandsByCategory,
@@ -49,6 +50,15 @@ describe("command registry", () => {
 
   it("returns false for unknown command id", () => {
     expect(executeCommand("nonexistent")).toBe(false);
+  });
+
+  it("reports whether a command is missing, disabled, or executable", () => {
+    registerCommand(makeCommand({ id: "status-enabled" }));
+    registerCommand(makeCommand({ id: "status-disabled", enabled: () => false }));
+
+    expect(getCommandExecutionStatus("status-enabled")).toBe("executed");
+    expect(getCommandExecutionStatus("status-disabled")).toBe("disabled");
+    expect(getCommandExecutionStatus("status-missing")).toBe("missing");
   });
 
   it("isCommandEnabled reflects enabled state", () => {

@@ -1,6 +1,6 @@
 import { createLayerThumb } from "./documents";
 import { canDeleteLayer } from "./layers";
-import { hasEnabledEffects } from "./layerStyles";
+import { hasEnabledEffects, summarizeEffectStack } from "./layerStyles";
 import type { DocumentState } from "./types";
 
 interface LayerListActions {
@@ -90,7 +90,7 @@ export function renderLayerList(layerList: HTMLElement, doc: DocumentState, acti
 
     const meta = document.createElement("span");
     meta.className = "layer-meta";
-    meta.textContent = `${Math.round(layer.opacity * 100)}% opacity - ${layer.x}, ${layer.y}`;
+    meta.textContent = `${Math.round(layer.opacity * 100)}% opacity - ${layer.x}, ${layer.y} - ${summarizeEffectStack(layer.effects)}`;
     row.appendChild(meta);
 
     const actionsWrap = document.createElement("div");

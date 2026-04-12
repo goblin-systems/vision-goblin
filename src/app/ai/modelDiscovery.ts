@@ -245,7 +245,7 @@ function classifyGeminiModel(methods: string[]): readonly AiTaskFamily[] {
   const hasGenerateImages = methods.includes("generateImages");
 
   if (hasGenerateContent) {
-    families.push("captioning", "segmentation", "generation", "inpainting", "enhancement");
+    families.push("captioning", "segmentation", "generation", "inpainting", "enhancement", "text-replacement");
   } else if (hasGenerateImages) {
     families.push("generation", "inpainting", "enhancement");
   }

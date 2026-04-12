@@ -1,10 +1,22 @@
 import { bindPaintControls as bindPaintControlsView } from "./bindings";
 import { byId } from "./dom";
 import { dispatchKeyboardEvent } from "../editor/commands";
+import { clamp } from "../editor/utils";
 import type { ToolName } from "../settings";
-import type { DocumentState, PointerState, ShapeKind } from "../editor/types";
+import type { BrushState, DocumentState, PointerState, ShapeKind } from "../editor/types";
 import type { TransformMode } from "../editor/transformController";
 import { closePalette, isPaletteOpen } from "../editor/commandPalette";
+
+const MIN_BRUSH_SIZE = 1;
+const MAX_BRUSH_SIZE = 96;
+
+export function isBrushCursorTool(tool: ToolName) {
+  return tool === "brush"
+    || tool === "eraser"
+    || tool === "healing-brush"
+    || tool === "clone-stamp"
+    || tool === "smudge";
+}
 
 type ModifierState = {
   spacePressed: boolean;
@@ -13,17 +25,21 @@ type ModifierState = {
   altPressed: boolean;
 };
 
-export function shouldDispatchEditorShortcut(target: EventTarget | null, event: Pick<KeyboardEvent, "ctrlKey" | "metaKey" | "altKey">) {
+function isEditableTarget(target: EventTarget | null) {
   const element = target as HTMLElement | null;
   if (!element) {
-    return true;
+    return false;
   }
-  const isInput = element.tagName === "INPUT"
+  return element.tagName === "INPUT"
     || element.tagName === "TEXTAREA"
     || element.tagName === "SELECT"
-    || element.isContentEditable;
-  const hasModifier = event.ctrlKey || event.metaKey || event.altKey;
-  return !isInput || hasModifier;
+    || element.isContentEditable
+    || element.contentEditable === "true";
+}
+
+export function shouldDispatchEditorShortcut(target: EventTarget | null, event: Pick<KeyboardEvent, "ctrlKey" | "metaKey" | "altKey">) {
+  void event;
+  return !isEditableTarget(target);
 }
 
 export interface EditorInteractionControllerDeps {
@@ -35,6 +51,7 @@ export interface EditorInteractionControllerDeps {
   swapPaletteColours?: () => void;
   getTransformDraft: () => object | null;
   ensureTransformDraftForActiveLayer: () => object | null;
+  ensureTransformDraftForActiveLayerWithIntent?: (intent: "layer" | "text-layout") => object | null;
   updateTransformDraftInputs: () => void;
   commitTransformDraft: () => void;
   cancelTransformDraft: (showMessage?: boolean) => void;
@@ -50,14 +67,18 @@ export interface EditorInteractionControllerDeps {
   renderEditorState: () => void;
   renderToolState: () => void;
   renderBrushUI: () => void;
+  isAiMaskSessionActive?: () => boolean;
+  completeAiMaskSession?: () => void;
+  cancelAiMaskSession?: () => void;
   showToast: (message: string, variant?: "success" | "error" | "info") => void;
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
 }
 
 export interface EditorInteractionController {
   bind: () => void;
-  getBrushState: () => { brushSize: number; brushOpacity: number; activeColour: string };
+  getBrushState: () => BrushState;
   setActiveColour: (colour: string) => void;
+  adjustBrushSize: (delta: number) => number;
   getActiveShapeKind: () => ShapeKind;
   getModifierState: () => ModifierState;
 }
@@ -66,6 +87,8 @@ export function createEditorInteractionController(deps: EditorInteractionControl
   let activeColour = "#6C63FF";
   let brushSize = 24;
   let brushOpacity = 1;
+  let healingSampleSpread = 2.4;
+  let healingBlend = 0.8;
   let activeShapeKind: ShapeKind = "rectangle";
   const modifierState: ModifierState = {
     spacePressed: false,
@@ -75,12 +98,26 @@ export function createEditorInteractionController(deps: EditorInteractionControl
   };
 
   function getBrushState() {
-    return { brushSize, brushOpacity, activeColour };
+    return { brushSize, brushOpacity, activeColour, healingSampleSpread, healingBlend };
   }
 
   function setActiveColour(colour: string) {
     activeColour = colour;
     deps.renderBrushUI();
+  }
+
+  function setBrushSize(value: number) {
+    const nextBrushSize = clamp(Math.round(value), MIN_BRUSH_SIZE, MAX_BRUSH_SIZE);
+    if (nextBrushSize === brushSize) {
+      return brushSize;
+    }
+    brushSize = nextBrushSize;
+    deps.renderBrushUI();
+    return brushSize;
+  }
+
+  function adjustBrushSize(delta: number) {
+    return setBrushSize(brushSize + delta);
   }
 
   function getActiveShapeKind() {
@@ -126,9 +163,14 @@ export function createEditorInteractionController(deps: EditorInteractionControl
 
       // Let input elements handle their own keyboard events (Delete, Enter, Escape, etc.)
       // Modified keys (Ctrl/Meta/Alt) still pass through for shortcuts like Ctrl+Z.
-      const el = event.target instanceof HTMLElement ? event.target : null;
-      const isInputFocused = el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || el?.tagName === "SELECT" || el?.isContentEditable === true || el?.contentEditable === "true";
-      if (isInputFocused && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const isInputFocused = isEditableTarget(event.target);
+      if (isInputFocused) {
+        return;
+      }
+
+      if (deps.isAiMaskSessionActive?.() && event.key === "Enter") {
+        event.preventDefault();
+        deps.completeAiMaskSession?.();
         return;
       }
 
@@ -148,6 +190,11 @@ export function createEditorInteractionController(deps: EditorInteractionControl
       }
 
       if (event.key === "Escape") {
+        if (deps.isAiMaskSessionActive?.()) {
+          event.preventDefault();
+          deps.cancelAiMaskSession?.();
+          return;
+        }
         if (deps.getTransformDraft()) {
           event.preventDefault();
           deps.cancelTransformDraft();
@@ -261,13 +308,25 @@ export function createEditorInteractionController(deps: EditorInteractionControl
   function bindPaintControls() {
     bindPaintControlsView(
       (value) => {
-        brushSize = value;
+        setBrushSize(value);
       },
       (value) => {
         brushOpacity = value;
+        deps.renderBrushUI();
       },
       deps.showToast,
     );
+
+    byId<HTMLInputElement>("healing-sample-range").addEventListener("input", (event) => {
+      healingSampleSpread = Number((event.currentTarget as HTMLInputElement).value) / 100;
+      deps.renderBrushUI();
+      deps.showToast(`Healing sample ${Math.round(healingSampleSpread * 100)}%`);
+    });
+    byId<HTMLInputElement>("healing-blend-range").addEventListener("input", (event) => {
+      healingBlend = Number((event.currentTarget as HTMLInputElement).value) / 100;
+      deps.renderBrushUI();
+      deps.showToast(`Healing blend ${Math.round(healingBlend * 100)}%`);
+    });
   }
 
   function bindTransformControls() {
@@ -281,7 +340,8 @@ export function createEditorInteractionController(deps: EditorInteractionControl
 
     inputIds.forEach((id) => {
       byId<HTMLInputElement>(id).addEventListener("input", () => {
-        const draft = deps.ensureTransformDraftForActiveLayer();
+        const intent = deps.getActiveTool() === "text" ? "text-layout" : "layer";
+        const draft = deps.ensureTransformDraftForActiveLayerWithIntent?.(intent) ?? deps.ensureTransformDraftForActiveLayer();
         if (!draft) {
           return;
         }
@@ -319,6 +379,7 @@ export function createEditorInteractionController(deps: EditorInteractionControl
     bind,
     getBrushState,
     setActiveColour,
+    adjustBrushSize,
     getActiveShapeKind,
     getModifierState,
   };

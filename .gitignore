@@ -31,3 +31,7 @@ Thumbs.db
 *.tmp
 
 NUL
+**/NUL
+
+node_modules/
+dist/

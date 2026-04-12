@@ -1,5 +1,21 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { shouldDispatchEditorShortcut, createEditorInteractionController, type EditorInteractionControllerDeps } from "./editorInteractionController";
+vi.mock("../editor/commands", () => ({
+  dispatchKeyboardEvent: vi.fn(),
+}));
+
+import { shouldDispatchEditorShortcut, createEditorInteractionController, isBrushCursorTool, type EditorInteractionControllerDeps } from "./editorInteractionController";
+import { dispatchKeyboardEvent } from "../editor/commands";
+
+describe("isBrushCursorTool", () => {
+  it("includes smudge alongside the paint cursor tools", () => {
+    expect(isBrushCursorTool("brush")).toBe(true);
+    expect(isBrushCursorTool("eraser")).toBe(true);
+    expect(isBrushCursorTool("healing-brush")).toBe(true);
+    expect(isBrushCursorTool("clone-stamp")).toBe(true);
+    expect(isBrushCursorTool("smudge")).toBe(true);
+    expect(isBrushCursorTool("move")).toBe(false);
+  });
+});
 
 describe("shouldDispatchEditorShortcut", () => {
   it("blocks plain shortcuts while typing in inputs", () => {
@@ -8,10 +24,17 @@ describe("shouldDispatchEditorShortcut", () => {
     expect(shouldDispatchEditorShortcut(input, { ctrlKey: false, metaKey: false, altKey: false })).toBe(false);
   });
 
-  it("allows modified shortcuts from inputs", () => {
+  it("blocks modified shortcuts from text inputs", () => {
     const input = document.createElement("textarea");
 
-    expect(shouldDispatchEditorShortcut(input, { ctrlKey: true, metaKey: false, altKey: false })).toBe(true);
+    expect(shouldDispatchEditorShortcut(input, { ctrlKey: true, metaKey: false, altKey: false })).toBe(false);
+  });
+
+  it("blocks modified shortcuts from contenteditable elements", () => {
+    const div = document.createElement("div");
+    div.contentEditable = "true";
+
+    expect(shouldDispatchEditorShortcut(div, { ctrlKey: false, metaKey: true, altKey: false })).toBe(false);
   });
 
   it("allows shortcuts from non-input targets", () => {
@@ -68,7 +91,7 @@ function setupControllerFixture() {
   container.appendChild(swatch);
 
   // Paint controls stubs (bindPaintControlsView uses byId internally)
-  for (const id of ["brush-size-range", "brush-opacity-range"]) {
+  for (const id of ["brush-size-range", "brush-opacity-range", "healing-sample-range", "healing-blend-range"]) {
     const el = document.createElement("input");
     el.id = id;
     container.appendChild(el);
@@ -101,6 +124,8 @@ function setupControllerFixture() {
       startPivotX: 0, startPivotY: 0,
       startRotateDeg: 0,
       startSkewXDeg: 0, startSkewYDeg: 0,
+      startTextBoxWidth: 0,
+      startTextBoxHeight: 0,
       cloneOffsetX: 0, cloneOffsetY: 0,
       creationLayerId: null,
     })),
@@ -121,6 +146,9 @@ function setupControllerFixture() {
     renderEditorState: vi.fn(),
     renderToolState: vi.fn(),
     renderBrushUI: vi.fn(),
+    isAiMaskSessionActive: vi.fn(() => false),
+    completeAiMaskSession: vi.fn(),
+    cancelAiMaskSession: vi.fn(),
     showToast: vi.fn(),
     log: vi.fn(),
   };
@@ -160,6 +188,7 @@ describe("keydown handler — input field guard", () => {
     const fixture = setupControllerFixture();
     deps = fixture.deps;
     teardown = fixture.teardown;
+    vi.mocked(dispatchKeyboardEvent).mockClear();
   });
 
   afterEach(() => {
@@ -249,6 +278,20 @@ describe("keydown handler — input field guard", () => {
     expect(deps.commitTransformDraft).toHaveBeenCalledOnce();
   });
 
+  it("completes the shadow guide session before other Enter handlers", () => {
+    (deps.isAiMaskSessionActive as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (deps.getTransformDraft as ReturnType<typeof vi.fn>).mockReturnValue({ scale: 1 });
+
+    const div = document.createElement("div");
+    document.body.appendChild(div);
+    const event = fireKeydown(div, "Enter");
+    div.remove();
+
+    expect(deps.completeAiMaskSession).toHaveBeenCalledOnce();
+    expect(deps.commitTransformDraft).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   // --- Escape ---
 
   it("does NOT cancel transform draft when Escape is pressed inside an input", () => {
@@ -286,6 +329,22 @@ describe("keydown handler — input field guard", () => {
     expect(deps.cancelTransformDraft).toHaveBeenCalledOnce();
   });
 
+  it("cancels the shadow guide session before clearing selections", () => {
+    (deps.isAiMaskSessionActive as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (deps.getActiveDocument as ReturnType<typeof vi.fn>).mockReturnValue({
+      selectionRect: { x: 0, y: 0, width: 10, height: 10 },
+    });
+
+    const div = document.createElement("div");
+    document.body.appendChild(div);
+    const event = fireKeydown(div, "Escape");
+    div.remove();
+
+    expect(deps.cancelAiMaskSession).toHaveBeenCalledOnce();
+    expect(deps.clearSelection).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   // --- contentEditable ---
 
   it("does NOT trigger editor actions when typing in a contentEditable element", () => {
@@ -306,9 +365,9 @@ describe("keydown handler — input field guard", () => {
     expect(deps.clearSelection).not.toHaveBeenCalled();
   });
 
-  // --- Modified keys still pass through from inputs ---
+  // --- Modified shortcuts stay native inside editable controls ---
 
-  it("allows Ctrl+modified keys through even when an input is focused", () => {
+  it("does NOT commit transform draft when Ctrl+Enter is pressed inside an input", () => {
     (deps.getTransformDraft as ReturnType<typeof vi.fn>).mockReturnValue({ scale: 1 });
 
     const input = document.createElement("input");
@@ -316,8 +375,37 @@ describe("keydown handler — input field guard", () => {
     fireKeydown(input, "Enter", { ctrlKey: true });
     input.remove();
 
-    // Ctrl+Enter with an active transform draft should still commit
-    expect(deps.commitTransformDraft).toHaveBeenCalledOnce();
+    expect(deps.commitTransformDraft).not.toHaveBeenCalled();
+  });
+
+  it("does NOT dispatch editor select-all behavior when Ctrl+A is pressed inside an input", () => {
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    const event = fireKeydown(input, "a", { ctrlKey: true, code: "KeyA" });
+    input.remove();
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(dispatchKeyboardEvent).not.toHaveBeenCalled();
+  });
+
+  it("does NOT dispatch editor select-all behavior when Cmd+A is pressed inside a contenteditable element", () => {
+    const div = document.createElement("div");
+    div.contentEditable = "true";
+    document.body.appendChild(div);
+    const event = fireKeydown(div, "a", { metaKey: true, code: "KeyA" });
+    div.remove();
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(dispatchKeyboardEvent).not.toHaveBeenCalled();
+  });
+
+  it("still allows Ctrl+A editor shortcuts outside editable controls", () => {
+    const div = document.createElement("div");
+    document.body.appendChild(div);
+    fireKeydown(div, "a", { ctrlKey: true, code: "KeyA" });
+    div.remove();
+
+    expect(dispatchKeyboardEvent).toHaveBeenCalled();
   });
 
   // --- Modifier state tracking still works when input is focused ---
@@ -331,5 +419,37 @@ describe("keydown handler — input field guard", () => {
     // so updateMarqueeModeFromModifiers should still be called.
     expect(deps.updateMarqueeModeFromModifiers).toHaveBeenCalled();
     input.remove();
+  });
+});
+
+describe("brush size state", () => {
+  it("adjusts and clamps brush size while updating the brush UI", () => {
+    const fixture = setupControllerFixture();
+
+    fixture.controller.adjustBrushSize(10);
+    fixture.controller.adjustBrushSize(1000);
+    fixture.controller.adjustBrushSize(-2000);
+
+    expect(fixture.controller.getBrushState().brushSize).toBe(1);
+    expect(fixture.deps.renderBrushUI).toHaveBeenCalledTimes(3);
+
+    fixture.teardown();
+  });
+
+  it("tracks healing sample and blend controls alongside brush state", () => {
+    const fixture = setupControllerFixture();
+    const sampleInput = document.getElementById("healing-sample-range") as HTMLInputElement;
+    const blendInput = document.getElementById("healing-blend-range") as HTMLInputElement;
+
+    sampleInput.value = "320";
+    sampleInput.dispatchEvent(new Event("input", { bubbles: true }));
+    blendInput.value = "35";
+    blendInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(fixture.controller.getBrushState().healingSampleSpread).toBe(3.2);
+    expect(fixture.controller.getBrushState().healingBlend).toBe(0.35);
+    expect(fixture.deps.renderBrushUI).toHaveBeenCalledTimes(2);
+
+    fixture.teardown();
   });
 });

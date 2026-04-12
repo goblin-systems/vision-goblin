@@ -48,6 +48,15 @@ export interface ScopedThumbnailPromptResult extends ThumbnailPromptResult {
   inputScope: AiInputScope;
 }
 
+export interface ReviewTextResult {
+  text: string;
+}
+
+export interface ReviewTextPieceResult {
+  id: string;
+  text: string;
+}
+
 const AI_INPUT_SCOPE_OPTIONS: Array<{ value: AiInputScope; label: string }> = [
   { value: "selected-layers", label: "selected layers" },
   { value: "visible-content", label: "visible content" },
@@ -236,6 +245,113 @@ export function aiPromptSelect(
       onAccept: () => {
         const select = backdrop.querySelector<HTMLSelectElement>(`#${selectId}`);
         settle(select?.value ?? null);
+      },
+      onReject: () => settle(null),
+    });
+  });
+}
+
+export function aiPromptReviewText(
+  title: string,
+  message: string,
+  defaultValue: string,
+): Promise<ReviewTextResult | null> {
+  const id = `ai-prompt-review-text-${++modalCounter}`;
+  const inputId = `${id}-input`;
+
+  const backdrop = createBackdrop(
+    id,
+    `<div class="modal-card">
+      <div class="modal-header">
+        <h3>${escapeHtml(title)}</h3>
+        <button class="icon-btn modal-close-btn modal-btn-reject" aria-label="Close">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <p class="modal-body-text">${escapeHtml(message)}</p>
+      <div class="modal-body">
+        <label class="field-block" for="${inputId}">
+          <span>Replacement text</span>
+          <textarea id="${inputId}" class="input" rows="8">${escapeHtml(defaultValue)}</textarea>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-btn modal-btn-reject">Cancel</button>
+        <button class="modal-btn-accept">Apply</button>
+      </div>
+    </div>`,
+  );
+
+  return new Promise<ReviewTextResult | null>((resolve) => {
+    const settle = (value: ReviewTextResult | null) => {
+      removeBackdrop(backdrop);
+      resolve(value);
+    };
+
+    openModal({
+      backdrop,
+      onAccept: () => {
+        const input = backdrop.querySelector<HTMLTextAreaElement>(`#${inputId}`);
+        const text = input?.value.trim() ?? "";
+        settle(text ? { text } : null);
+      },
+      onReject: () => settle(null),
+    });
+  });
+}
+
+export function aiPromptReviewTextPieces(
+  title: string,
+  message: string,
+  pieces: ReviewTextPieceResult[],
+): Promise<ReviewTextPieceResult[] | null> {
+  const id = `ai-prompt-review-text-pieces-${++modalCounter}`;
+
+  const fieldsHtml = pieces
+    .map((piece, index) => {
+      const inputId = `${id}-input-${index}`;
+      return `<label class="field-block" for="${inputId}">
+        <span>Text piece ${index + 1}</span>
+        <textarea id="${inputId}" class="input" rows="4" data-piece-id="${escapeAttr(piece.id)}">${escapeHtml(piece.text)}</textarea>
+      </label>`;
+    })
+    .join("");
+
+  const backdrop = createBackdrop(
+    id,
+    `<div class="modal-card">
+      <div class="modal-header">
+        <h3>${escapeHtml(title)}</h3>
+        <button class="icon-btn modal-close-btn modal-btn-reject" aria-label="Close">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <p class="modal-body-text">${escapeHtml(message)}</p>
+      <div class="modal-body">${fieldsHtml}</div>
+      <div class="modal-footer">
+        <button class="secondary-btn modal-btn-reject">Cancel</button>
+        <button class="modal-btn-accept">Apply</button>
+      </div>
+    </div>`,
+  );
+
+  return new Promise<ReviewTextPieceResult[] | null>((resolve) => {
+    const settle = (value: ReviewTextPieceResult[] | null) => {
+      removeBackdrop(backdrop);
+      resolve(value);
+    };
+
+    openModal({
+      backdrop,
+      onAccept: () => {
+        const inputs = Array.from(backdrop.querySelectorAll<HTMLTextAreaElement>("textarea[data-piece-id]"));
+        const reviewed = inputs
+          .map((input) => ({
+            id: input.dataset.pieceId ?? "",
+            text: input.value.trim(),
+          }))
+          .filter((piece) => piece.id && piece.text);
+        settle(reviewed.length > 0 ? reviewed : null);
       },
       onReject: () => settle(null),
     });

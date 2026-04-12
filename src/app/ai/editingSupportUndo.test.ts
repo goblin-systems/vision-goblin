@@ -57,6 +57,7 @@ function makeDocument(layer: RasterLayer): DocumentState {
     selectionPath: null,
     selectionMask: null,
     guides: [],
+    customFonts: [],
   };
 }
 

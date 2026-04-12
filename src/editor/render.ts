@@ -1,7 +1,7 @@
 import type { VisionSettings } from "../settings";
 import { getCanvasBounds } from "./geometry";
 import { traceMaskContours, traceMarqueeShape } from "./selection";
-import type { ActiveTool, DocumentState, EffectType, Layer, LayerEffect, Rect } from "./types";
+import { getTextFillColor, type ActiveTool, type DocumentState, type EffectType, type Layer, type LayerEffect, type Rect, type TransformIntent } from "./types";
 import { compositeDocumentOnto, createLayerThumb } from "./documents";
 import { EFFECT_META, getEffectMeta } from "./layerStyles";
 
@@ -11,8 +11,11 @@ export function renderCanvas(params: {
   doc: DocumentState | null;
   activeTool?: ActiveTool;
   activeLayer?: Layer | null;
+  skipLayerId?: string | null;
   marqueePreview?: { baseRect: Rect | null; previewRect: Rect | null; mode: "replace" | "add" | "subtract" | "intersect"; sides: number; rotation: number; perfect: boolean; axisAlignedRect?: boolean } | null;
-  transformPreview?: { layerId: string; canvas: HTMLCanvasElement; x: number; y: number; width: number; height: number } | null;
+  transformPreview?: { layerId: string; layerIds?: string[]; canvas: HTMLCanvasElement; x: number; y: number; width: number; height: number } | null;
+  transformFrame?: { x: number; y: number; width: number; height: number } | null;
+  transformIntent?: TransformIntent | null;
   pivotPoint?: { x: number; y: number } | null;
   guides?: Array<{ orientation: "horizontal" | "vertical"; position: number }>;
   snapLines?: Array<{ orientation: "horizontal" | "vertical"; position: number }>;
@@ -21,6 +24,19 @@ export function renderCanvas(params: {
   gridSize?: number;
   /** When set, draws a semi-transparent overlay for the quick mask. */
   quickMaskOverlay?: { canvas: HTMLCanvasElement; color: string } | null;
+  maskOverlays?: Array<{
+    canvas: HTMLCanvasElement;
+    color: string;
+    outlineColor: string;
+    active: boolean;
+  }>;
+  degradedRendering?: {
+    active: boolean;
+    skipAdjustmentLayers: boolean;
+    skipSelectionOverlays: boolean;
+    skipQuickMaskOverlay: boolean;
+    skipPixelGrid: boolean;
+  } | null;
 }) {
   const { editorCanvas, getEditorContext, doc, activeTool, activeLayer, marqueePreview, transformPreview } = params;
   const ctx = getEditorContext();
@@ -47,7 +63,15 @@ export function renderCanvas(params: {
   ctx.save();
   ctx.fillStyle = "rgba(255,255,255,0.04)";
   ctx.fillRect(bounds.originX - 1, bounds.originY - 1, bounds.width + 2, bounds.height + 2);
-  compositeDocumentOnto(ctx, doc, bounds.originX, bounds.originY, bounds.scale, transformPreview?.layerId ?? null);
+  compositeDocumentOnto(
+    ctx,
+    doc,
+    bounds.originX,
+    bounds.originY,
+    bounds.scale,
+    transformPreview?.layerIds ?? transformPreview?.layerId ?? params.skipLayerId ?? null,
+    { skipAdjustmentLayers: params.degradedRendering?.skipAdjustmentLayers ?? false }
+  );
   if (transformPreview) {
     ctx.save();
     ctx.translate(bounds.originX, bounds.originY);
@@ -63,7 +87,7 @@ export function renderCanvas(params: {
   ctx.restore();
 
   // Quick mask overlay: semi-transparent color on non-selected (black/transparent) areas
-  if (params.quickMaskOverlay) {
+  if (params.quickMaskOverlay && !params.degradedRendering?.skipQuickMaskOverlay) {
     const qm = params.quickMaskOverlay;
     ctx.save();
     // Build an overlay canvas: fill with color, then cut out where mask is white (selected)
@@ -81,6 +105,46 @@ export function renderCanvas(params: {
     // Draw scaled overlay on the editor canvas
     ctx.drawImage(overlayCanvas, 0, 0, ow, oh, bounds.originX, bounds.originY, bounds.width, bounds.height);
     ctx.restore();
+  }
+
+  if (params.maskOverlays && params.maskOverlays.length > 0 && !params.degradedRendering?.skipSelectionOverlays) {
+    for (const overlay of params.maskOverlays) {
+      if (!overlay.canvas || overlay.canvas.width === 0 || overlay.canvas.height === 0) {
+        continue;
+      }
+
+      const overlayCanvas = document.createElement("canvas");
+      overlayCanvas.width = doc.width;
+      overlayCanvas.height = doc.height;
+      const overlayContext = overlayCanvas.getContext("2d");
+      if (!overlayContext) {
+        continue;
+      }
+
+      overlayContext.fillStyle = overlay.color;
+      overlayContext.fillRect(0, 0, doc.width, doc.height);
+      overlayContext.globalCompositeOperation = "destination-in";
+      overlayContext.drawImage(overlay.canvas, 0, 0);
+
+      ctx.save();
+      ctx.drawImage(overlayCanvas, 0, 0, doc.width, doc.height, bounds.originX, bounds.originY, bounds.width, bounds.height);
+      const contours = traceMaskContours(overlay.canvas);
+      if (contours.length > 0) {
+        for (const contour of contours) {
+          ctx.beginPath();
+          ctx.moveTo(bounds.originX + contour[0].x * bounds.scale, bounds.originY + contour[0].y * bounds.scale);
+          for (let i = 1; i < contour.length; i++) {
+            ctx.lineTo(bounds.originX + contour[i].x * bounds.scale, bounds.originY + contour[i].y * bounds.scale);
+          }
+          ctx.closePath();
+          ctx.strokeStyle = overlay.outlineColor;
+          ctx.lineWidth = overlay.active ? 2 : 1;
+          ctx.setLineDash([]);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
   }
 
   if (params.showGrid && params.gridSize && params.gridSize > 0) {
@@ -107,7 +171,7 @@ export function renderCanvas(params: {
   }
 
   // Pixel grid overlay at high zoom (when each pixel >= 8 screen pixels)
-  if (isHighZoom && bounds.scale >= 8) {
+  if (isHighZoom && bounds.scale >= 8 && !params.degradedRendering?.skipPixelGrid) {
     const viewW = rect.width;
     const viewH = rect.height;
     const startDocX = Math.max(1, Math.floor(-bounds.originX / bounds.scale));
@@ -156,7 +220,7 @@ export function renderCanvas(params: {
   }
 
   // Mask-based marching ants (compound selections, magic wand, lasso)
-  if (doc.selectionMask) {
+  if (doc.selectionMask && !params.degradedRendering?.skipSelectionOverlays) {
     const contours = traceMaskContours(doc.selectionMask);
 
     if (contours.length > 0) {
@@ -214,7 +278,7 @@ export function renderCanvas(params: {
         ctx.restore();
       }
     }
-  } else if (doc.selectionRect && !marqueePreview?.previewRect) {
+  } else if (doc.selectionRect && !marqueePreview?.previewRect && !params.degradedRendering?.skipSelectionOverlays) {
     const selectionX = bounds.originX + doc.selectionRect.x * bounds.scale;
     const selectionY = bounds.originY + doc.selectionRect.y * bounds.scale;
     const selectionW = doc.selectionRect.width * bounds.scale;
@@ -365,25 +429,37 @@ export function renderCanvas(params: {
     ctx.restore();
   }
 
-  if (doc && activeTool === "transform" && activeLayer && !activeLayer.isBackground) {
-    const frameX = transformPreview?.x ?? activeLayer.x;
-    const frameY = transformPreview?.y ?? activeLayer.y;
-    const frameW = transformPreview?.width ?? activeLayer.canvas.width;
-    const frameH = transformPreview?.height ?? activeLayer.canvas.height;
+  const showTransformChrome = !!params.transformIntent && !!activeLayer && !activeLayer.isBackground;
+  if (doc && showTransformChrome && activeLayer) {
+    const frameX = transformPreview?.x ?? params.transformFrame?.x ?? activeLayer.x;
+    const frameY = transformPreview?.y ?? params.transformFrame?.y ?? activeLayer.y;
+    const frameW = transformPreview?.width ?? params.transformFrame?.width ?? activeLayer.canvas.width;
+    const frameH = transformPreview?.height ?? params.transformFrame?.height ?? activeLayer.canvas.height;
     const layerX = bounds.originX + frameX * bounds.scale;
     const layerY = bounds.originY + frameY * bounds.scale;
     const layerW = frameW * bounds.scale;
     const layerH = frameH * bounds.scale;
-    const handles = [
-      [layerX, layerY],
-      [layerX + layerW, layerY],
-      [layerX, layerY + layerH],
-      [layerX + layerW, layerY + layerH],
-      [layerX + layerW / 2, layerY],
-      [layerX + layerW, layerY + layerH / 2],
-      [layerX + layerW / 2, layerY + layerH],
-      [layerX, layerY + layerH / 2],
-    ];
+    const handles = params.transformIntent === "text-layout"
+      ? [
+        [layerX, layerY],
+        [layerX + layerW, layerY],
+        [layerX, layerY + layerH],
+        [layerX + layerW, layerY + layerH],
+        [layerX + layerW / 2, layerY],
+        [layerX + layerW, layerY + layerH / 2],
+        [layerX + layerW / 2, layerY + layerH],
+        [layerX, layerY + layerH / 2],
+      ]
+      : [
+        [layerX, layerY],
+        [layerX + layerW, layerY],
+        [layerX, layerY + layerH],
+        [layerX + layerW, layerY + layerH],
+        [layerX + layerW / 2, layerY],
+        [layerX + layerW, layerY + layerH / 2],
+        [layerX + layerW / 2, layerY + layerH],
+        [layerX, layerY + layerH / 2],
+      ];
 
     ctx.save();
     ctx.strokeStyle = "#7c73ff";
@@ -399,7 +475,7 @@ export function renderCanvas(params: {
       ctx.stroke();
     });
 
-    if (params.pivotPoint) {
+    if (params.pivotPoint && params.transformIntent === "layer") {
       const px = bounds.originX + params.pivotPoint.x * bounds.scale;
       const py = bounds.originY + params.pivotPoint.y * bounds.scale;
       ctx.strokeStyle = "#7c73ff";
@@ -579,25 +655,34 @@ export function updateBrushUI(params: {
   brushSize: number;
   brushOpacity: number;
   activeColour: string;
+  healingSampleSpread: number;
+  healingBlend: number;
   brushSizeInput: HTMLInputElement;
   brushOpacityInput: HTMLInputElement;
+  healingSampleInput: HTMLInputElement;
+  healingBlendInput: HTMLInputElement;
   brushColourValue: HTMLElement;
   primarySwatch: HTMLElement;
 }) {
   params.brushSizeInput.value = String(params.brushSize);
   params.brushOpacityInput.value = String(Math.round(params.brushOpacity * 100));
+  params.healingSampleInput.value = String(Math.round(params.healingSampleSpread * 100));
+  params.healingBlendInput.value = String(Math.round(params.healingBlend * 100));
   params.primarySwatch.style.background = params.activeColour;
   params.brushColourValue.textContent = params.activeColour;
 }
 
 export function renderToolState(params: {
   activeTool: ActiveTool;
+  transformIntent?: TransformIntent | null;
   toolCopy: Record<ActiveTool, string>;
   canvasWrap: HTMLElement;
   activeToolCopy: HTMLElement;
   brushSizeField: HTMLElement;
   brushOpacityField: HTMLElement;
   brushColourField: HTMLElement;
+  healingSampleField: HTMLElement;
+  healingBlendField: HTMLElement;
   healingToolHint: HTMLElement;
   gradientToolHint: HTMLElement;
   textToolHint: HTMLElement;
@@ -630,7 +715,8 @@ export function renderToolState(params: {
   const showText = params.activeTool === "text";
   const showShape = params.activeTool === "shape";
   const showMarquee = params.activeTool === "marquee";
-  const showTransform = params.activeTool === "transform";
+  const showTransform = params.activeTool === "transform"
+    || (params.activeTool === "text" && params.transformIntent === "text-layout");
   const showCrop = params.activeTool === "crop";
   const showLasso = params.activeTool === "lasso";
   const showPolygonLasso = params.activeTool === "polygon-lasso";
@@ -639,6 +725,8 @@ export function renderToolState(params: {
   params.brushSizeField.toggleAttribute("hidden", !showBrushControls);
   params.brushOpacityField.toggleAttribute("hidden", !showBrushControls);
   params.brushColourField.toggleAttribute("hidden", !showBrushColour);
+  params.healingSampleField.toggleAttribute("hidden", !showHealing);
+  params.healingBlendField.toggleAttribute("hidden", !showHealing);
   params.healingToolHint.toggleAttribute("hidden", !showHealing);
   params.gradientToolHint.toggleAttribute("hidden", !showGradient);
   params.textToolHint.toggleAttribute("hidden", !showText);
@@ -669,7 +757,7 @@ export function renderInspector(params: {
   backgroundColourInput: HTMLInputElement;
   inspectorMode: HTMLElement;
   inspectorSelection: HTMLElement;
-  inspectorBlend: HTMLElement;
+  inspectorBlendSelect: HTMLSelectElement;
   inspectorOpacity: HTMLElement;
   inspectorPosition: HTMLElement;
   inspectorLayer: HTMLElement;
@@ -685,10 +773,13 @@ export function renderInspector(params: {
   textLineHeight: HTMLInputElement;
   textKerning: HTMLInputElement;
   textBoxWidth: HTMLInputElement;
+  textBoxHeight: HTMLInputElement;
   textAlignment: HTMLSelectElement;
   textFill: HTMLInputElement;
   textBold: HTMLInputElement;
   textItalic: HTMLInputElement;
+  textUnderline: HTMLInputElement;
+  textStrikethrough: HTMLInputElement;
   shapeKind: HTMLSelectElement;
   shapeWidth: HTMLInputElement;
   shapeHeight: HTMLInputElement;
@@ -696,7 +787,7 @@ export function renderInspector(params: {
   shapeStroke: HTMLInputElement;
   shapeStrokeWidth: HTMLInputElement;
   shapeCornerRadius: HTMLInputElement;
-  /** Called when any effect field changes or an effect is toggled/deleted via the dynamic effects list */
+  /** Reserved for inspector-owned dynamic effect wiring. */
   onEffectChange: () => void;
   // Adjustment layer inspector fields
   adjKindBadge: HTMLElement;
@@ -736,7 +827,7 @@ export function renderInspector(params: {
   const backgroundLayer = doc.layers[0];
   params.inspectorMode.textContent = activeLayer?.type ?? "Raster";
   params.inspectorSelection.textContent = doc.cropRect ? "Crop active" : doc.selectionRect ? (doc.selectionInverted ? "Selection inverted" : "Selection active") : "None";
-  params.inspectorBlend.textContent = "Normal";
+  params.inspectorBlendSelect.value = activeLayer?.blendMode ?? "";
   params.inspectorOpacity.textContent = `${Math.round((activeLayer?.opacity ?? 1) * 100)}%`;
   params.inspectorPosition.textContent = activeLayer ? `${Math.round(activeLayer.x)}, ${Math.round(activeLayer.y)}` : "0, 0";
   params.inspectorLayer.textContent = activeLayer?.name ?? "None";
@@ -754,10 +845,13 @@ export function renderInspector(params: {
     params.textLineHeight.value = String(activeLayer.textData.lineHeight);
     params.textKerning.value = String(activeLayer.textData.kerning);
     params.textBoxWidth.value = activeLayer.textData.boxWidth ? String(activeLayer.textData.boxWidth) : "";
+    params.textBoxHeight.value = activeLayer.textData.boxHeight ? String(activeLayer.textData.boxHeight) : "";
     params.textAlignment.value = activeLayer.textData.alignment;
-    params.textFill.value = activeLayer.textData.fillColor;
+    params.textFill.value = getTextFillColor(activeLayer.textData.fill);
     params.textBold.checked = activeLayer.textData.bold;
     params.textItalic.checked = activeLayer.textData.italic;
+    params.textUnderline.checked = activeLayer.textData.underline;
+    params.textStrikethrough.checked = activeLayer.textData.strikethrough;
   }
 
   if (activeLayer?.type === "shape") {
@@ -842,6 +936,7 @@ export function renderInspector(params: {
  * Changes call `onChange` which triggers the main inspector apply + re-render loop.
  */
 function renderEffectsList(container: HTMLElement, effects: LayerEffect[], onChange: () => void) {
+  void onChange;
   container.innerHTML = "";
   if (effects.length === 0) {
     const empty = document.createElement("div");
@@ -851,12 +946,18 @@ function renderEffectsList(container: HTMLElement, effects: LayerEffect[], onCha
     return;
   }
 
+  const typeCounts = new Map<EffectType, number>();
+
   effects.forEach((effect, index) => {
     const meta = getEffectMeta(effect.type as EffectType);
     if (!meta) return;
+    const ordinal = (typeCounts.get(effect.type) ?? 0) + 1;
+    typeCounts.set(effect.type, ordinal);
 
     const entry = document.createElement("div");
     entry.className = "effect-entry";
+    entry.dataset.effectIndex = String(index);
+    entry.dataset.effectType = effect.type;
     entry.style.cssText = "margin-bottom:6px; padding:4px 0; border-bottom:1px solid var(--c-border, #333)";
 
     // Header row: checkbox + label + delete
@@ -868,12 +969,11 @@ function renderEffectsList(container: HTMLElement, effects: LayerEffect[], onCha
     checkbox.checked = effect.enabled;
     checkbox.dataset.effectIndex = String(index);
     checkbox.dataset.effectField = "enabled";
-    checkbox.addEventListener("change", onChange);
     header.appendChild(checkbox);
 
     const label = document.createElement("span");
     label.style.cssText = "flex:1; font-size:12px; font-weight:600";
-    label.textContent = meta.label;
+    label.textContent = ordinal > 1 ? `${meta.label} ${ordinal}` : meta.label;
     header.appendChild(label);
 
     const deleteBtn = document.createElement("button");
@@ -882,7 +982,6 @@ function renderEffectsList(container: HTMLElement, effects: LayerEffect[], onCha
     deleteBtn.innerHTML = `<i data-lucide="x"></i>`;
     deleteBtn.title = "Remove effect";
     deleteBtn.dataset.effectDeleteIndex = String(index);
-    deleteBtn.addEventListener("click", onChange);
     header.appendChild(deleteBtn);
 
     entry.appendChild(header);
@@ -921,8 +1020,6 @@ function renderEffectsList(container: HTMLElement, effects: LayerEffect[], onCha
         input.value = String(raw ?? 0);
       }
 
-      input.addEventListener("input", onChange);
-      input.addEventListener("change", onChange);
       fieldWrap.appendChild(input);
       grid.appendChild(fieldWrap);
     }

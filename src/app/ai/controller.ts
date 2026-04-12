@@ -8,6 +8,7 @@ import { AI_TASK_FAMILIES, type AiTask, type AiTaskFamily } from "./types";
 import type { VisionSettings } from "../../settings";
 import { createCredentialStatusStore } from "./credentialStatus";
 import { createModelDiscoveryService, type ModelDiscoveryService } from "./modelDiscovery";
+import { openAiJobInspectionModal } from "./inspectionModal";
 
 export interface AiControllerDeps {
   getSettings: () => VisionSettings;
@@ -258,6 +259,9 @@ export function createAiController(deps: AiControllerDeps): AiController {
 
       const actions = document.createElement("div");
       actions.className = "ai-job-actions";
+      if (shouldShowInspectButton(job)) {
+        actions.appendChild(buildJobActionButton(job.id, "inspect", "Inspect", "info"));
+      }
       if (job.canCancel) {
         actions.appendChild(buildJobActionButton(job.id, "cancel", "Cancel", "square"));
       }
@@ -276,7 +280,7 @@ export function createAiController(deps: AiControllerDeps): AiController {
     }
   }
 
-  function buildJobActionButton(jobId: string, action: "cancel" | "retry", label: string, icon: string) {
+  function buildJobActionButton(jobId: string, action: "cancel" | "retry" | "inspect", label: string, icon: string) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "secondary-btn slim-btn";
@@ -284,6 +288,10 @@ export function createAiController(deps: AiControllerDeps): AiController {
     button.dataset.aiJobAction = action;
     button.innerHTML = `<i data-lucide="${icon}"></i><span>${label}</span>`;
     return button;
+  }
+
+  function shouldShowInspectButton(job: AiJobRecord): boolean {
+    return deps.getSettings().debugLoggingEnabled && job.kind === "task" && !!job.inspection && job.family !== undefined;
   }
 
   function ensureJobsStatusButtonContent(button: HTMLButtonElement) {
@@ -387,7 +395,12 @@ export function createAiController(deps: AiControllerDeps): AiController {
   }
 
   function queueTask<TTask extends AiTask>(request: AiRuntimeTaskRequest<TTask>, title: string) {
-    const job = queue.enqueueTask(request, title);
+    const route = deps.getSettings().ai.routing[request.task.family];
+    const job = queue.enqueueTask({
+      ...request,
+      plannedProviderId: request.plannedProviderId ?? route.primaryProviderId,
+      plannedModel: request.plannedModel ?? (route.preferredModel.trim() || undefined),
+    }, title);
     render();
     return job;
   }
@@ -489,6 +502,13 @@ export function createAiController(deps: AiControllerDeps): AiController {
       }
       if (action === "retry") {
         queue.retryJob(jobId);
+      }
+      if (action === "inspect") {
+        const job = queue.listJobs().find((candidate) => candidate.id === jobId);
+        if (job?.inspection) {
+          const artifacts = job.taskResult?.response.ok ? job.taskResult.response.artifacts : [];
+          openAiJobInspectionModal(job.title, job.inspection, artifacts);
+        }
       }
     });
   }

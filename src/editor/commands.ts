@@ -13,6 +13,8 @@ export interface CommandDefinition {
   execute: () => void | Promise<void>;
 }
 
+export type CommandExecutionStatus = "executed" | "disabled" | "missing";
+
 const registry = new Map<string, CommandDefinition>();
 
 export function registerCommand(command: CommandDefinition) {
@@ -26,11 +28,19 @@ export function registerCommands(commands: CommandDefinition[]) {
 }
 
 export function executeCommand(id: string): boolean {
+  const status = getCommandExecutionStatus(id);
+  if (status !== "executed") return false;
   const command = registry.get(id);
   if (!command) return false;
-  if (!command.enabled()) return false;
   void command.execute();
   return true;
+}
+
+export function getCommandExecutionStatus(id: string): CommandExecutionStatus {
+  const command = registry.get(id);
+  if (!command) return "missing";
+  if (!command.enabled()) return "disabled";
+  return "executed";
 }
 
 export function getCommand(id: string): CommandDefinition | undefined {

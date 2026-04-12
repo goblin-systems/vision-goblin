@@ -8,19 +8,34 @@ import {
   type AiProviderResponse,
   type AiTaskUsage,
 } from "../contracts";
+import {
+  createInspectionImageAsset,
+  createInspectionMaskAsset,
+  createInspectionRequestSnapshot,
+  createInspectionResponseSnapshot,
+} from "../inspection";
 import type {
   AiArtifact,
   AiCaptioningTask,
   AiEnhancementTask,
   AiGenerationTask,
-  AiImageAsset,
   AiImageArtifact,
   AiInpaintingTask,
   AiSegmentationTask,
   AiTask,
   AiTaskFamily,
 } from "../types";
-import { buildEnhancementPromptContract } from "./enhancementPrompt";
+import {
+  defaultCaptionPrompt,
+  defaultSegmentationUserPrompt,
+  buildSegmentationSystemPrompt,
+  buildSizeGuidance,
+  getEnhancementTargetSize,
+  enhancementPurpose,
+  buildGenerationPrompt,
+  buildInpaintingPromptContract,
+  buildEnhancementPromptContract,
+} from "../prompts";
 
 interface OpenAiCompatibleFetch {
   (input: string, init?: RequestInit): Promise<{
@@ -91,6 +106,10 @@ async function executeGeneration(
     const model = request.preferredModel ?? options.modelByFamily?.generation ?? "";
     const hasReferenceImages = (request.task.input?.referenceImages?.length ?? 0) > 0;
     const prompt = buildGenerationPrompt(request.task);
+    const requestInspection = createInspectionRequestSnapshot(
+      prompt,
+      (request.task.input?.referenceImages ?? []).map((asset, index) => createInspectionImageAsset(`reference ${index + 1}`, asset)),
+    );
 
     let response;
 
@@ -147,6 +166,10 @@ async function executeGeneration(
       return createAiFailureResponse(request, {
         providerId,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
@@ -166,6 +189,10 @@ async function executeGeneration(
             estimatedCostUsd: estimateGenerationCostUsd(request),
           }
         : { estimatedCostUsd: estimateGenerationCostUsd(request) },
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -188,6 +215,7 @@ async function executeCaptioning(
 ): Promise<AiProviderResponse<AiCaptioningTask>> {
   try {
     const prompt = request.task.prompt ?? defaultCaptionPrompt(request.task.options?.detail);
+    const requestInspection = createInspectionRequestSnapshot(prompt, [createInspectionImageAsset("input image", request.task.input.image)]);
     const body = JSON.stringify({
       model: request.preferredModel ?? options.modelByFamily?.captioning,
       input: [
@@ -215,6 +243,10 @@ async function executeCaptioning(
       return createAiFailureResponse(request, {
         providerId,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
@@ -230,6 +262,10 @@ async function executeCaptioning(
             estimatedCostUsd: estimateCaptioningCostUsd(parsed.usage),
           }
         : undefined,
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload, parsed.artifacts.find((artifact) => artifact.kind === "text")?.text),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -253,8 +289,9 @@ async function executeSegmentation(
   try {
     const mode = request.task.options?.mode ?? "subject";
     const systemPrompt = buildSegmentationSystemPrompt(mode, request.task.input.subjectHint);
-    const userPrompt = request.task.prompt ?? "Generate the segmentation mask for this image.";
+    const userPrompt = request.task.prompt ?? defaultSegmentationUserPrompt();
     const prompt = `${systemPrompt}${buildSizeGuidance(request.task.input.image.width, request.task.input.image.height, request.task.input.image.width, request.task.input.image.height)}\n\n${userPrompt}`;
+    const requestInspection = createInspectionRequestSnapshot(prompt, [createInspectionImageAsset("input image", request.task.input.image)]);
 
     const formData = new FormData();
     const imageBlob = dataUrlToBlob(request.task.input.image.data);
@@ -284,6 +321,10 @@ async function executeSegmentation(
       return createAiFailureResponse(request, {
         providerId,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
@@ -308,6 +349,10 @@ async function executeSegmentation(
             estimatedCostUsd: estimateSegmentationCostUsd(parsed.usage),
           }
         : undefined,
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -320,24 +365,6 @@ async function executeSegmentation(
   }
 }
 
-function buildSegmentationSystemPrompt(
-  mode: NonNullable<AiSegmentationTask["options"]>["mode"],
-  subjectHint?: string,
-): string {
-  switch (mode) {
-    case "subject":
-      return "You are an image segmentation assistant. Generate a binary black-and-white mask image where white pixels represent the main subject of the image and black pixels represent everything else. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.";
-    case "background":
-      return "You are an image segmentation assistant. Generate a binary black-and-white mask image where white pixels represent the background of the image and black pixels represent the foreground subject. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.";
-    case "object":
-      return `You are an image segmentation assistant. Generate a binary black-and-white mask image that isolates a specific object in the image. ${subjectHint ? `The object to isolate: "${subjectHint}".` : "Identify the most prominent object."} White pixels represent the object and black pixels represent everything else. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.`;
-    case "background-removal":
-      return "You are an image segmentation assistant. Generate a binary black-and-white mask image where white pixels represent the main subject of the image suitable for background removal. Black pixels represent the background to be removed. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.";
-    default:
-      return "You are an image segmentation assistant. Generate a binary black-and-white mask image of the main subject. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.";
-  }
-}
-
 // ── Inpainting ──────────────────────────────────────────────────────────
 
 async function executeInpainting(
@@ -347,7 +374,15 @@ async function executeInpainting(
   request: AiProviderRequest<AiInpaintingTask>,
 ): Promise<AiProviderResponse<AiInpaintingTask>> {
   try {
-    const prompt = buildInpaintingPrompt(request.task);
+    const inpaintingPromptContract = buildInpaintingPromptContract({
+      guideMode: request.task.options?.guideMode,
+      image: request.task.input.image,
+    });
+    const prompt = `${inpaintingPromptContract.systemPrompt}\n\n${inpaintingPromptContract.inputOrder}\n\n${request.task.prompt}`;
+    const requestInspection = createInspectionRequestSnapshot(prompt, [
+      createInspectionImageAsset("input image", request.task.input.image),
+      createInspectionMaskAsset("mask", request.task.input.mask),
+    ]);
     const formData = new FormData();
     const imageBlob = dataUrlToBlob(request.task.input.image.data);
     const maskBlob = dataUrlToBlob(request.task.input.mask.data);
@@ -379,6 +414,10 @@ async function executeInpainting(
       return createAiFailureResponse(request, {
         providerId,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
@@ -397,6 +436,10 @@ async function executeInpainting(
             estimatedCostUsd: estimateInpaintingCostUsd(parsed.usage),
           }
         : undefined,
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -445,6 +488,10 @@ async function executeEnhancement(
       buildSizeGuidance,
     });
     const prompt = promptContract.combinedPrompt;
+    const requestInspection = createInspectionRequestSnapshot(prompt, [
+      createInspectionImageAsset("input image", sourceImage),
+      ...(referenceImages ?? []).map((asset, index) => createInspectionImageAsset(`reference ${index + 1}`, asset)),
+    ]);
 
     const formData = new FormData();
     const imageBlob = dataUrlToBlob(sourceImage.data);
@@ -474,6 +521,10 @@ async function executeEnhancement(
       return createAiFailureResponse(request, {
         providerId,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
@@ -492,6 +543,10 @@ async function executeEnhancement(
             estimatedCostUsd: estimateEnhancementCostUsd(parsed.usage),
           }
         : undefined,
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -504,90 +559,12 @@ async function executeEnhancement(
   }
 }
 
-function buildGenerationPrompt(task: AiGenerationTask): string {
-  const sourceSize = getReferenceSourceSize(task.input?.referenceImages);
-  const width = task.options?.width;
-  const height = task.options?.height;
-  const hasReferenceImages = (task.input?.referenceImages?.length ?? 0) > 0;
-  const sizeGuidance = buildSizeGuidance(sourceSize?.width, sourceSize?.height, width, height, hasReferenceImages);
-  return `${task.prompt}${sizeGuidance}`;
-}
-
-function buildInpaintingPrompt(task: AiInpaintingTask): string {
-  const sizeGuidance = buildSizeGuidance(
-    task.input.image.width,
-    task.input.image.height,
-    task.input.image.width,
-    task.input.image.height,
-    true,
-  );
-  return `${task.prompt}${sizeGuidance}`;
-}
-
-function buildSizeGuidance(
-  sourceWidth?: number,
-  sourceHeight?: number,
-  targetWidth?: number,
-  targetHeight?: number,
-  preserveAlignment = false,
-): string {
-  const parts: string[] = [];
-  if (sourceWidth && sourceHeight) {
-    parts.push(`Source image size: ${sourceWidth}x${sourceHeight}px.`);
-  }
-  if (targetWidth && targetHeight) {
-    parts.push(`Output image must be exactly ${targetWidth}x${targetHeight}px.`);
-  }
-  if (preserveAlignment) {
-    parts.push("Preserve the original framing and keep all content aligned 1:1 with the source image; do not crop, pad, shift, or re-center the result.");
-  }
-  return parts.length ? `\n\nLayout requirements: ${parts.join(" ")}` : "";
-}
-
-function getReferenceSourceSize(referenceImages?: AiImageAsset[]) {
-  const firstReference = referenceImages?.[0];
-  if (!firstReference?.width || !firstReference?.height) {
-    return undefined;
-  }
-  return {
-    width: firstReference.width,
-    height: firstReference.height,
-  };
-}
-
-function getEnhancementTargetSize(task: AiEnhancementTask): { width?: number; height?: number } {
-  const width = task.input.image.width;
-  const height = task.input.image.height;
-  if (task.options?.operation === "upscale" && width && height) {
-    const factor = task.options.scaleFactor ?? 2;
-    return { width: width * factor, height: height * factor };
-  }
-  return { width, height };
-}
-
 function withImageArtifactSize<TArtifact extends AiImageArtifact>(artifact: TArtifact, width?: number, height?: number): TArtifact {
   return {
     ...artifact,
     width: width ?? artifact.width,
     height: height ?? artifact.height,
   };
-}
-
-function enhancementPurpose(
-  operation: NonNullable<AiEnhancementTask["options"]>["operation"],
-): AiImageArtifact["purpose"] {
-  switch (operation) {
-    case "upscale":
-      return "upscaled";
-    case "style-transfer":
-      return "styled";
-    case "auto-enhance":
-    case "denoise":
-    case "restore":
-    case "colorize":
-    default:
-      return "enhanced";
-  }
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────
@@ -678,10 +655,6 @@ function toImageSize(width?: number, height?: number): string | undefined {
   }
 
   return best.label;
-}
-
-function defaultCaptionPrompt(detail?: "brief" | "detailed"): string {
-  return detail === "brief" ? "Write a brief caption for this image." : "Describe this image in detail.";
 }
 
 function parseGenerationResponse(payload: unknown): {

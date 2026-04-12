@@ -2,23 +2,32 @@ import { applyIcons, closeModal, openModal } from "@goblin-systems/goblin-design
 import { GRADIENT_PRESETS } from "../editor/adjustments";
 import { pushHistory } from "../editor/history";
 import { addLayerMask, clearLayerMask, invertLayerMask, removeLayerMask } from "../editor/layerMask";
-import { applyPreset, createEffect, getAllPresets, getEffectMeta, loadCustomPresets, saveCustomPresets } from "../editor/layerStyles";
+import { applyPreset, cloneEffects, createEffect, getAllPresets, getEffectMeta, saveCustomPreset } from "../editor/layerStyles";
 import { rasterizeLayer } from "../editor/layers";
 import { renderInspector as renderInspectorView } from "../editor/render";
 import { renderSmartObjectLayer, replaceSmartObjectSource } from "../editor/smartObject";
 import {
+  getTextFillColor,
   type AdjustmentLayer,
   type DocumentState,
   type EffectType,
   type Layer,
   type LayerEffect,
+  type LinearGradientFill,
+  type RadialGradientFill,
   type ShapeKind,
   type ShapeLayer,
   type SmartObjectLayer,
+  type TextFill,
   type TextLayer,
 } from "../editor/types";
+import { gradientConfigToTextFill, createDefaultGradientConfig } from "../editor/gradient";
+import type { GradientEditorResult } from "./gradientToolController";
 import { refreshLayerCanvas, snapshotDocument } from "../editor/documents";
 import { byId } from "./dom";
+import { createFontFamilyPicker } from "./fontFamilyPicker";
+import { CURATED_LOCAL_FONT_FAMILIES } from "../fonts/curatedFontFamilies";
+import { getCustomFontFamilies, loadFontFromBuffer, type CustomFontEntry } from "./customFontRegistry";
 
 type ToastVariant = "success" | "error" | "info";
 type LogLevel = "INFO" | "WARN" | "ERROR";
@@ -30,10 +39,15 @@ export interface TextInspectorState {
   lineHeight: number;
   kerning: number;
   boxWidth: number | null;
+  boxHeight: number | null;
   alignment: TextLayer["textData"]["alignment"];
-  fillColor: string;
+  fill: TextFill;
+  strokeColor: string;
+  strokeWidth: number;
   bold: boolean;
   italic: boolean;
+  underline: boolean;
+  strikethrough: boolean;
 }
 
 export interface ShapeInspectorState {
@@ -57,6 +71,7 @@ export interface EffectInputChange {
   field: string;
   value: string;
   checked?: boolean;
+  effectType?: EffectType;
 }
 
 export interface MaskInspectorUiState {
@@ -75,6 +90,10 @@ export interface InspectorControllerDeps {
   renderEditorState: () => void;
   showToast: (message: string, variant?: ToastVariant) => void;
   log: (message: string, level?: LogLevel) => void;
+  openGradientEditorForText: (
+    currentFill: LinearGradientFill | RadialGradientFill,
+    onConfirm: (result: GradientEditorResult) => void,
+  ) => void;
 }
 
 export interface InspectorController {
@@ -87,7 +106,7 @@ interface InspectorDomRefs {
   backgroundColourInput: HTMLInputElement;
   inspectorMode: HTMLElement;
   inspectorSelection: HTMLElement;
-  inspectorBlend: HTMLElement;
+  inspectorBlendSelect: HTMLSelectElement;
   inspectorOpacity: HTMLElement;
   inspectorPosition: HTMLElement;
   inspectorLayer: HTMLElement;
@@ -98,14 +117,24 @@ interface InspectorDomRefs {
   effectsInspector: HTMLElement;
   textValue: HTMLTextAreaElement;
   textFontFamily: HTMLInputElement;
+  textFontFamilyOptions: HTMLElement;
   textFontSize: HTMLInputElement;
   textLineHeight: HTMLInputElement;
   textKerning: HTMLInputElement;
   textBoxWidth: HTMLInputElement;
+  textBoxHeight: HTMLInputElement;
   textAlignment: HTMLSelectElement;
   textFill: HTMLInputElement;
+  textFillTypeSelect: HTMLSelectElement;
+  textFillColorField: HTMLElement;
+  textFillGradientFields: HTMLElement;
+  textFillEditGradientBtn: HTMLButtonElement;
+  textStrokeColor: HTMLInputElement;
+  textStrokeWidth: HTMLInputElement;
   textBold: HTMLInputElement;
   textItalic: HTMLInputElement;
+  textUnderline: HTMLInputElement;
+  textStrikethrough: HTMLInputElement;
   shapeKind: HTMLSelectElement;
   shapeWidth: HTMLInputElement;
   shapeHeight: HTMLInputElement;
@@ -161,6 +190,7 @@ interface InspectorDomRefs {
   soRotateDeg: HTMLInputElement;
   soRasterizeBtn: HTMLButtonElement;
   soReplaceBtn: HTMLButtonElement;
+  textLoadFontBtn: HTMLButtonElement;
 }
 
 function getInspectorDomRefs(): InspectorDomRefs {
@@ -168,7 +198,7 @@ function getInspectorDomRefs(): InspectorDomRefs {
     backgroundColourInput: byId<HTMLInputElement>("background-colour-input"),
     inspectorMode: byId<HTMLElement>("inspector-mode"),
     inspectorSelection: byId<HTMLElement>("inspector-selection"),
-    inspectorBlend: byId<HTMLElement>("inspector-blend"),
+    inspectorBlendSelect: byId<HTMLSelectElement>("inspector-blend-select"),
     inspectorOpacity: byId<HTMLElement>("inspector-opacity"),
     inspectorPosition: byId<HTMLElement>("inspector-position"),
     inspectorLayer: byId<HTMLElement>("inspector-layer"),
@@ -179,14 +209,24 @@ function getInspectorDomRefs(): InspectorDomRefs {
     effectsInspector: byId<HTMLElement>("effects-inspector"),
     textValue: byId<HTMLTextAreaElement>("text-value-input"),
     textFontFamily: byId<HTMLInputElement>("text-font-family-input"),
+    textFontFamilyOptions: byId<HTMLElement>("text-font-family-options"),
     textFontSize: byId<HTMLInputElement>("text-font-size-input"),
     textLineHeight: byId<HTMLInputElement>("text-line-height-input"),
     textKerning: byId<HTMLInputElement>("text-kerning-input"),
     textBoxWidth: byId<HTMLInputElement>("text-box-width-input"),
+    textBoxHeight: byId<HTMLInputElement>("text-box-height-input"),
     textAlignment: byId<HTMLSelectElement>("text-alignment-select"),
     textFill: byId<HTMLInputElement>("text-fill-input"),
+    textFillTypeSelect: byId<HTMLSelectElement>("text-fill-type-select"),
+    textFillColorField: byId<HTMLElement>("text-fill-color-field"),
+    textFillGradientFields: byId<HTMLElement>("text-fill-gradient-fields"),
+    textFillEditGradientBtn: byId<HTMLButtonElement>("text-fill-edit-gradient-btn"),
+    textStrokeColor: byId<HTMLInputElement>("text-stroke-color-input"),
+    textStrokeWidth: byId<HTMLInputElement>("text-stroke-width-input"),
     textBold: byId<HTMLInputElement>("text-bold-input"),
     textItalic: byId<HTMLInputElement>("text-italic-input"),
+    textUnderline: byId<HTMLInputElement>("text-underline-input"),
+    textStrikethrough: byId<HTMLInputElement>("text-strikethrough-input"),
     shapeKind: byId<HTMLSelectElement>("shape-kind-inspector-select"),
     shapeWidth: byId<HTMLInputElement>("shape-width-input"),
     shapeHeight: byId<HTMLInputElement>("shape-height-input"),
@@ -242,6 +282,7 @@ function getInspectorDomRefs(): InspectorDomRefs {
     soRotateDeg: byId<HTMLInputElement>("so-rotate-deg"),
     soRasterizeBtn: byId<HTMLButtonElement>("so-rasterize-btn"),
     soReplaceBtn: byId<HTMLButtonElement>("so-replace-btn"),
+    textLoadFontBtn: byId<HTMLButtonElement>("text-load-font-btn"),
   };
 }
 
@@ -252,10 +293,15 @@ export function applyTextInspectorState(layer: TextLayer, state: TextInspectorSt
   layer.textData.lineHeight = Math.max(0.8, state.lineHeight || 1.2);
   layer.textData.kerning = state.kerning || 0;
   layer.textData.boxWidth = Math.max(0, state.boxWidth || 0) || null;
+  layer.textData.boxHeight = Math.max(0, state.boxHeight || 0) || null;
   layer.textData.alignment = state.alignment;
-  layer.textData.fillColor = state.fillColor;
+  layer.textData.fill = state.fill;
+  layer.textData.fillColor = getTextFillColor(state.fill);
+  layer.textData.stroke = state.strokeWidth > 0 ? { color: state.strokeColor, width: state.strokeWidth } : null;
   layer.textData.bold = state.bold;
   layer.textData.italic = state.italic;
+  layer.textData.underline = state.underline;
+  layer.textData.strikethrough = state.strikethrough;
   refreshLayerCanvas(layer);
 }
 
@@ -389,7 +435,16 @@ export function getMaskInspectorUiState(activeLayer: Layer | null, maskEditTarge
   };
 }
 
-function readTextInspectorState(refs: InspectorDomRefs): TextInspectorState {
+function readTextInspectorState(refs: InspectorDomRefs, currentFill?: TextFill): TextInspectorState {
+  const fillType = refs.textFillTypeSelect.value as TextFill["type"];
+  let fill: TextFill;
+  if (fillType === "solid") {
+    fill = { type: "solid", color: refs.textFill.value };
+  } else if (currentFill && currentFill.type !== "solid") {
+    fill = currentFill;
+  } else {
+    fill = gradientConfigToTextFill(createDefaultGradientConfig());
+  }
   return {
     text: refs.textValue.value,
     fontFamily: refs.textFontFamily.value,
@@ -397,10 +452,15 @@ function readTextInspectorState(refs: InspectorDomRefs): TextInspectorState {
     lineHeight: Number(refs.textLineHeight.value) || 0,
     kerning: Number(refs.textKerning.value) || 0,
     boxWidth: refs.textBoxWidth.value ? Number(refs.textBoxWidth.value) : null,
+    boxHeight: refs.textBoxHeight.value ? Number(refs.textBoxHeight.value) : null,
     alignment: refs.textAlignment.value as TextLayer["textData"]["alignment"],
-    fillColor: refs.textFill.value,
+    fill,
+    strokeColor: refs.textStrokeColor.value,
+    strokeWidth: Number(refs.textStrokeWidth.value) || 0,
     bold: refs.textBold.checked,
     italic: refs.textItalic.checked,
+    underline: refs.textUnderline.checked,
+    strikethrough: refs.textStrikethrough.checked,
   };
 }
 
@@ -431,6 +491,7 @@ function readEffectInputChanges(container: HTMLElement): EffectInputChange[] {
     field: input.dataset.effectField ?? "",
     value: input.value,
     checked: input instanceof HTMLInputElement ? input.checked : undefined,
+    effectType: input.closest<HTMLElement>("[data-effect-type]")?.dataset.effectType as EffectType | undefined,
   }));
 }
 
@@ -444,26 +505,42 @@ function applyMaskInspectorUi(refs: InspectorDomRefs, state: MaskInspectorUiStat
 
 function populateEffectPresetSelect(select: HTMLSelectElement) {
   const presets = getAllPresets();
-  if (select.options.length !== presets.length + 1) {
-    select.innerHTML = '<option value="">Apply preset...</option>';
-    presets.forEach((preset, index) => {
-      const option = document.createElement("option");
-      option.value = String(index);
-      option.textContent = preset.name + (preset.builtIn ? "" : " (custom)");
-      select.appendChild(option);
-    });
-  }
+  select.innerHTML = '<option value="">Apply preset...</option>';
+  presets.forEach((preset, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = preset.name + (preset.builtIn ? "" : " (custom)");
+    select.appendChild(option);
+  });
 }
 
 export function createInspectorController(deps: InspectorControllerDeps): InspectorController {
   const refs = getInspectorDomRefs();
+  let pendingEffectSnapshot: string | null = null;
+  let pendingEffectEntry = "Edited layer effects";
+
+  function getAllFontOptions(): string[] {
+    return [...CURATED_LOCAL_FONT_FAMILIES, ...getCustomFontFamilies()];
+  }
+
+  let textFontFamilyPicker = createFontFamilyPicker({
+    input: refs.textFontFamily,
+    optionsList: refs.textFontFamilyOptions,
+  }, getAllFontOptions());
+
+  function refreshFontPickerOptions() {
+    textFontFamilyPicker = createFontFamilyPicker({
+      input: refs.textFontFamily,
+      optionsList: refs.textFontFamilyOptions,
+    }, getAllFontOptions());
+  }
 
   function applyInspectorLayerEdits() {
     const doc = deps.getActiveDocument();
     const layer = doc ? deps.getActiveLayer(doc) : null;
     if (!doc || !layer || layer.isBackground) return;
     if (layer.type === "text") {
-      applyTextInspectorState(layer, readTextInspectorState(refs));
+      applyTextInspectorState(layer, readTextInspectorState(refs, layer.textData.fill));
     } else if (layer.type === "shape") {
       applyShapeInspectorState(layer, readShapeInspectorState(refs));
     } else if (layer.type === "adjustment") {
@@ -475,12 +552,56 @@ export function createInspectorController(deps: InspectorControllerDeps): Inspec
     deps.renderEditorState();
   }
 
+  function handleTextFontFamilyInput() {
+    const doc = deps.getActiveDocument();
+    const layer = doc ? deps.getActiveLayer(doc) : null;
+    if (!doc || !layer || layer.isBackground || layer.type !== "text") return;
+    if (refs.textFontFamily.value === "") return;
+    applyInspectorLayerEdits();
+  }
+
   function applyEffectsFromDynamicUi() {
     const doc = deps.getActiveDocument();
     const layer = doc ? deps.getActiveLayer(doc) : null;
     if (!doc || !layer) return;
     applyEffectInputChanges(layer.effects ?? [], readEffectInputChanges(refs.effectsList));
     doc.dirty = true;
+    deps.renderEditorState();
+  }
+
+  function beginEffectEditSession(doc: DocumentState, entry = "Edited layer effects") {
+    if (!pendingEffectSnapshot) {
+      pendingEffectSnapshot = snapshotDocument(doc);
+    }
+    pendingEffectEntry = entry;
+  }
+
+  function commitEffectEditSession(doc: DocumentState) {
+    if (!pendingEffectSnapshot) return;
+    doc.undoStack.push(pendingEffectSnapshot);
+    doc.redoStack = [];
+    pushHistory(doc, pendingEffectEntry);
+    pendingEffectSnapshot = null;
+    pendingEffectEntry = "Edited layer effects";
+  }
+
+  function discardEffectEditSession() {
+    pendingEffectSnapshot = null;
+    pendingEffectEntry = "Edited layer effects";
+  }
+
+  function applyLayerEffectsChange(entry: string, mutate: (layer: Layer) => boolean) {
+    const doc = deps.getActiveDocument();
+    const layer = doc ? deps.getActiveLayer(doc) : null;
+    if (!doc || !layer) return;
+    const snapshot = snapshotDocument(doc);
+    const changed = mutate(layer);
+    if (!changed) return;
+    doc.undoStack.push(snapshot);
+    doc.redoStack = [];
+    doc.dirty = true;
+    pushHistory(doc, entry);
+    discardEffectEditSession();
     deps.renderEditorState();
   }
 
@@ -507,10 +628,8 @@ export function createInspectorController(deps: InspectorControllerDeps): Inspec
       cleanup();
       if (settled) return;
       settled = true;
-      const custom = loadCustomPresets();
-      custom.push({ name: presetName, effects: layer.effects!.map((effect) => ({ ...effect })) });
-      saveCustomPresets(custom);
-      deps.showToast(`Saved preset "${presetName}"`);
+      const result = saveCustomPreset(presetName, cloneEffects(layer.effects ?? []));
+      deps.showToast(result.replacedExisting ? `Updated preset "${result.preset.name}"` : `Saved preset "${result.preset.name}"`);
       deps.renderEditorState();
     };
 
@@ -666,7 +785,7 @@ export function createInspectorController(deps: InspectorControllerDeps): Inspec
       backgroundColourInput: refs.backgroundColourInput,
       inspectorMode: refs.inspectorMode,
       inspectorSelection: refs.inspectorSelection,
-      inspectorBlend: refs.inspectorBlend,
+      inspectorBlendSelect: refs.inspectorBlendSelect,
       inspectorOpacity: refs.inspectorOpacity,
       inspectorPosition: refs.inspectorPosition,
       inspectorLayer: refs.inspectorLayer,
@@ -681,10 +800,13 @@ export function createInspectorController(deps: InspectorControllerDeps): Inspec
       textLineHeight: refs.textLineHeight,
       textKerning: refs.textKerning,
       textBoxWidth: refs.textBoxWidth,
+      textBoxHeight: refs.textBoxHeight,
       textAlignment: refs.textAlignment,
       textFill: refs.textFill,
       textBold: refs.textBold,
       textItalic: refs.textItalic,
+      textUnderline: refs.textUnderline,
+      textStrikethrough: refs.textStrikethrough,
       shapeKind: refs.shapeKind,
       shapeWidth: refs.shapeWidth,
       shapeHeight: refs.shapeHeight,
@@ -726,15 +848,52 @@ export function createInspectorController(deps: InspectorControllerDeps): Inspec
       soScaleY: refs.soScaleY,
       soRotateDeg: refs.soRotateDeg,
     });
+    textFontFamilyPicker.setValue(refs.textFontFamily.value);
     populateEffectPresetSelect(refs.effectsPresetSelect);
     applyMaskInspectorUi(refs, getMaskInspectorUiState(deps.getActiveLayer(doc), deps.getMaskEditTarget()));
+
+    const activeLayer = deps.getActiveLayer(doc);
+    if (activeLayer?.type === "text") {
+      const fill = activeLayer.textData.fill;
+      refs.textFillTypeSelect.value = fill.type;
+      if (fill.type === "solid") {
+        refs.textFill.value = fill.color;
+      }
+      syncTextFillTypeVisibility();
+      refs.textStrokeColor.value = activeLayer.textData.stroke?.color ?? "#000000";
+      refs.textStrokeWidth.value = String(activeLayer.textData.stroke?.width ?? 0);
+    }
+
     applyIcons();
+  }
+
+  function syncTextFillTypeVisibility() {
+    const fillType = refs.textFillTypeSelect.value;
+    const isGradient = fillType !== "solid";
+    refs.textFillColorField.hidden = isGradient;
+    refs.textFillGradientFields.hidden = !isGradient;
+  }
+
+  async function pickAndLoadFont(): Promise<CustomFontEntry | null> {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".ttf,.otf,.woff,.woff2";
+      input.addEventListener("change", async () => {
+        const file = input.files?.[0];
+        if (!file) { resolve(null); return; }
+        const buffer = await file.arrayBuffer();
+        const entry = await loadFontFromBuffer(buffer, file.name);
+        resolve(entry);
+      });
+      input.click();
+    });
   }
 
   function bind() {
     const inspectorIds = [
-      "text-value-input", "text-font-family-input", "text-font-size-input", "text-line-height-input", "text-kerning-input", "text-box-width-input",
-      "text-alignment-select", "text-fill-input", "text-bold-input", "text-italic-input", "shape-kind-inspector-select", "shape-width-input",
+      "text-value-input", "text-font-size-input", "text-line-height-input", "text-kerning-input", "text-box-width-input", "text-box-height-input",
+      "text-alignment-select", "text-fill-input", "text-bold-input", "text-italic-input", "text-underline-input", "text-strikethrough-input", "shape-kind-inspector-select", "shape-width-input",
       "shape-height-input", "shape-fill-input", "shape-stroke-input", "shape-stroke-width-input", "shape-corner-radius-input",
       "adj-bc-brightness", "adj-bc-contrast",
       "adj-hs-hue", "adj-hs-saturation", "adj-hs-lightness",
@@ -749,55 +908,142 @@ export function createInspectorController(deps: InspectorControllerDeps): Inspec
       byId<HTMLElement>(id).addEventListener("input", applyInspectorLayerEdits);
       byId<HTMLElement>(id).addEventListener("change", applyInspectorLayerEdits);
     });
+    refs.textFontFamily.addEventListener("input", handleTextFontFamilyInput);
+    refs.textFontFamily.addEventListener("change", applyInspectorLayerEdits);
+
+    refs.inspectorBlendSelect.addEventListener("change", () => {
+      const doc = deps.getActiveDocument();
+      const layer = doc ? deps.getActiveLayer(doc) : null;
+      if (!doc || !layer) return;
+      doc.undoStack.push(snapshotDocument(doc));
+      doc.redoStack = [];
+      layer.blendMode = (refs.inspectorBlendSelect.value || undefined) as GlobalCompositeOperation | undefined;
+      doc.dirty = true;
+      pushHistory(doc, `Blend mode → ${refs.inspectorBlendSelect.value || "Normal"}`);
+      deps.renderEditorState();
+    });
+
+    refs.textFillTypeSelect.addEventListener("change", () => {
+      syncTextFillTypeVisibility();
+      const fillType = refs.textFillTypeSelect.value;
+      if (fillType !== "solid") {
+        const doc = deps.getActiveDocument();
+        const layer = doc ? deps.getActiveLayer(doc) : null;
+        if (!doc || !layer || layer.type !== "text") return;
+        const defaultFill = gradientConfigToTextFill(createDefaultGradientConfig());
+        const targetFill: LinearGradientFill | RadialGradientFill = fillType === "radial-gradient"
+          ? { ...defaultFill, type: "radial-gradient" } as RadialGradientFill
+          : { ...defaultFill, type: "linear-gradient" } as LinearGradientFill;
+        applyTextInspectorState(layer, readTextInspectorState(refs, targetFill));
+        doc.dirty = true;
+        deps.renderEditorState();
+        deps.openGradientEditorForText(targetFill, (result) => {
+          const updatedFill = gradientConfigToTextFill(result.config);
+          applyTextInspectorState(layer, readTextInspectorState(refs, updatedFill));
+          doc.dirty = true;
+          deps.renderEditorState();
+        });
+        return;
+      }
+      applyInspectorLayerEdits();
+    });
+
+    refs.textFillEditGradientBtn.addEventListener("click", () => {
+      const doc = deps.getActiveDocument();
+      const layer = doc ? deps.getActiveLayer(doc) : null;
+      if (!doc || !layer || layer.type !== "text") return;
+      let currentFill = layer.textData.fill;
+      if (currentFill.type === "solid") {
+        const defaultFill = gradientConfigToTextFill(createDefaultGradientConfig());
+        applyTextInspectorState(layer, readTextInspectorState(refs, defaultFill));
+        doc.dirty = true;
+        deps.renderEditorState();
+        currentFill = defaultFill;
+      }
+      deps.openGradientEditorForText(currentFill as LinearGradientFill | RadialGradientFill, (result) => {
+        const updatedFill = gradientConfigToTextFill(result.config);
+        applyTextInspectorState(layer, readTextInspectorState(refs, updatedFill));
+        doc.dirty = true;
+        deps.renderEditorState();
+      });
+    });
+
+    refs.textStrokeColor.addEventListener("input", applyInspectorLayerEdits);
+    refs.textStrokeColor.addEventListener("change", applyInspectorLayerEdits);
+    refs.textStrokeWidth.addEventListener("input", applyInspectorLayerEdits);
+    refs.textStrokeWidth.addEventListener("change", applyInspectorLayerEdits);
 
     refs.effectsAddSelect.addEventListener("change", () => {
       const type = refs.effectsAddSelect.value as EffectType;
       if (!type) return;
       refs.effectsAddSelect.value = "";
+      applyLayerEffectsChange(`Added ${getEffectMeta(type)?.label ?? type}`, (layer) => {
+        layer.effects ??= [];
+        layer.effects.push(createEffect(type));
+        return true;
+      });
+    });
+
+    refs.effectsList.addEventListener("input", (event) => {
+      const target = event.target as HTMLInputElement | HTMLSelectElement | null;
+      if (!target?.matches("[data-effect-index][data-effect-field]")) return;
       const doc = deps.getActiveDocument();
       const layer = doc ? deps.getActiveLayer(doc) : null;
       if (!doc || !layer) return;
-      layer.effects ??= [];
-      layer.effects.push(createEffect(type));
-      doc.dirty = true;
-      deps.renderEditorState();
+      const effectType = target.closest<HTMLElement>("[data-effect-type]")?.dataset.effectType as EffectType | undefined;
+      const label = effectType ? `Edited ${getEffectMeta(effectType)?.label ?? effectType}` : "Edited layer effects";
+      beginEffectEditSession(doc, label);
+      applyEffectsFromDynamicUi();
+    });
+
+    refs.effectsList.addEventListener("change", (event) => {
+      const target = event.target as HTMLInputElement | HTMLSelectElement | null;
+      if (!target?.matches("[data-effect-index][data-effect-field]")) return;
+      const doc = deps.getActiveDocument();
+      const layer = doc ? deps.getActiveLayer(doc) : null;
+      if (!doc || !layer) return;
+      if (!pendingEffectSnapshot) {
+        const effectType = target.closest<HTMLElement>("[data-effect-type]")?.dataset.effectType as EffectType | undefined;
+        const label = effectType ? `Edited ${getEffectMeta(effectType)?.label ?? effectType}` : "Edited layer effects";
+        beginEffectEditSession(doc, label);
+        applyEffectsFromDynamicUi();
+      }
+      commitEffectEditSession(doc);
     });
 
     refs.effectsList.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>("[data-effect-delete-index]");
       if (!target) return;
       const idx = Number(target.dataset.effectDeleteIndex);
-      const doc = deps.getActiveDocument();
-      const layer = doc ? deps.getActiveLayer(doc) : null;
-      if (!doc || !layer || !layer.effects) return;
-      if (idx >= 0 && idx < layer.effects.length) {
+      applyLayerEffectsChange("Removed layer effect", (layer) => {
+        if (!layer.effects || idx < 0 || idx >= layer.effects.length) {
+          return false;
+        }
         layer.effects.splice(idx, 1);
-        doc.dirty = true;
-        deps.renderEditorState();
-      }
+        return true;
+      });
     });
 
     refs.effectsClearBtn.addEventListener("click", () => {
-      const doc = deps.getActiveDocument();
-      const layer = doc ? deps.getActiveLayer(doc) : null;
-      if (!doc || !layer) return;
-      layer.effects = [];
-      doc.dirty = true;
-      deps.renderEditorState();
+      applyLayerEffectsChange("Cleared layer effects", (layer) => {
+        if (!layer.effects || layer.effects.length === 0) {
+          return false;
+        }
+        layer.effects = [];
+        return true;
+      });
     });
 
     refs.effectsPresetSelect.addEventListener("change", () => {
       const idx = Number(refs.effectsPresetSelect.value);
       if (Number.isNaN(idx) || refs.effectsPresetSelect.value === "") return;
       refs.effectsPresetSelect.value = "";
-      const doc = deps.getActiveDocument();
-      const layer = doc ? deps.getActiveLayer(doc) : null;
-      if (!doc || !layer) return;
       const preset = getAllPresets()[idx];
       if (!preset) return;
-      layer.effects = applyPreset(preset);
-      doc.dirty = true;
-      deps.renderEditorState();
+      applyLayerEffectsChange(`Applied preset \"${preset.name}\"`, (layer) => {
+        layer.effects = applyPreset(preset);
+        return true;
+      });
     });
 
     refs.effectsSavePresetBtn.addEventListener("click", () => {
@@ -819,6 +1065,32 @@ export function createInspectorController(deps: InspectorControllerDeps): Inspec
     refs.soRasterizeBtn.addEventListener("click", handleRasterizeLayer);
     refs.soReplaceBtn.addEventListener("click", () => {
       void replaceActiveSmartObjectSource();
+    });
+
+    refs.textLoadFontBtn.addEventListener("click", () => {
+      void pickAndLoadFont().then((result) => {
+        if (!result) return;
+        const doc = deps.getActiveDocument();
+        if (!doc) return;
+        // Add to document for persistence
+        if (!doc.customFonts.some((f) => f.family === result.family)) {
+          doc.customFonts.push({ family: result.family, dataUrl: result.dataUrl, fileName: result.fileName });
+        }
+        // Update font picker options
+        refreshFontPickerOptions();
+        // Auto-select the loaded font
+        textFontFamilyPicker.setValue(result.family);
+        // Trigger apply to the active text layer
+        const layer = doc ? deps.getActiveLayer(doc) : null;
+        if (layer?.type === "text") {
+          refs.textFontFamily.value = result.family;
+          refs.textFontFamily.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        deps.showToast(`Loaded font: ${result.family}`, "success");
+      }).catch((err: unknown) => {
+        deps.log(`Font loading failed: ${err}`, "ERROR");
+        deps.showToast("Failed to load font", "error");
+      });
     });
   }
 

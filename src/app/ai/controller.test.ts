@@ -42,6 +42,12 @@ vi.mock("@goblin-systems/goblin-design-system", async () => {
   };
 });
 
+const inspectionModalMocks = vi.hoisted(() => ({
+  openAiJobInspectionModal: vi.fn(),
+}));
+
+vi.mock("./inspectionModal", () => inspectionModalMocks);
+
 vi.mock("./secureStore", () => secureStoreMocks);
 
 vi.mock("./modelDiscovery", () => ({
@@ -358,13 +364,153 @@ describe("AI controller", () => {
       await createControllerWithDefaults();
       const grid = document.getElementById("ai-routing-grid")!;
       const modelSelects = grid.querySelectorAll<HTMLSelectElement>("select[data-ai-route-field='model']");
-      // 5 families: segmentation, inpainting, enhancement, generation, captioning
-      expect(modelSelects.length).toBe(5);
+      // 6 families: segmentation, inpainting, enhancement, generation, captioning, text-replacement
+      expect(modelSelects.length).toBe(6);
     });
 
     it("exposes discoverModels on the controller interface", async () => {
       const { controller } = await createControllerWithDefaults();
       expect(typeof controller.discoverModels).toBe("function");
     });
+  });
+
+  it("shows inspect button only for task jobs when debug logging is enabled", async () => {
+    const { createAiController } = await import("./controller");
+    const settings = getDefaultSettings();
+    settings.debugLoggingEnabled = true;
+
+    const controller = createAiController({
+      getSettings: () => settings,
+      persistSettings: async () => {},
+      showToast: vi.fn(),
+      log: vi.fn(),
+    });
+
+    controller.render();
+    controller.queueTask({
+      task: { id: "inspect-1", family: "generation", prompt: "goblin" },
+      inspection: { request: { prompt: "goblin", assets: [] } },
+    }, "Run generation");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(document.querySelector('[data-ai-job-action="inspect"]')).not.toBeNull();
+  });
+
+  it("hides inspect button when debug logging is disabled", async () => {
+    const { createAiController } = await import("./controller");
+    const settings = getDefaultSettings();
+
+    const controller = createAiController({
+      getSettings: () => settings,
+      persistSettings: async () => {},
+      showToast: vi.fn(),
+      log: vi.fn(),
+    });
+
+    controller.render();
+    controller.queueTask({
+      task: { id: "inspect-2", family: "generation", prompt: "goblin" },
+      inspection: { request: { prompt: "goblin", assets: [] } },
+    }, "Run generation");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(document.querySelector('[data-ai-job-action="inspect"]')).toBeNull();
+  });
+
+  it("opens inspection modal from inspect button without breaking retry or cancel wiring", async () => {
+    const { createAiController } = await import("./controller");
+    const settings = getDefaultSettings();
+    settings.debugLoggingEnabled = true;
+
+    const controller = createAiController({
+      getSettings: () => settings,
+      persistSettings: async () => {},
+      showToast: vi.fn(),
+      log: vi.fn(),
+    });
+
+    controller.bind();
+    controller.render();
+    controller.queueTask({
+      task: { id: "inspect-3", family: "generation", prompt: "goblin" },
+      inspection: { request: { prompt: "goblin", assets: [] } },
+    }, "Run generation");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    (document.querySelector('[data-ai-job-action="inspect"]') as HTMLButtonElement).click();
+    expect(inspectionModalMocks.openAiJobInspectionModal).toHaveBeenCalled();
+  });
+
+  it("passes provider and model inspection metadata into the inspect modal", async () => {
+    const { createAiController } = await import("./controller");
+    const settings = getDefaultSettings();
+    settings.debugLoggingEnabled = true;
+
+    const controller = createAiController({
+      getSettings: () => settings,
+      persistSettings: async () => {},
+      showToast: vi.fn(),
+      log: vi.fn(),
+    });
+
+    controller.bind();
+    controller.render();
+    controller.queueTask({
+      task: {
+        id: "inspect-4",
+        family: "captioning",
+        prompt: "Describe image",
+        input: { image: { kind: "image", mimeType: "image/png", data: "data:image/png;base64,AAAA" } },
+      },
+      inspection: { request: { prompt: "Describe image", assets: [] } },
+    }, "Caption image");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    (document.querySelector('[data-ai-job-action="inspect"]') as HTMLButtonElement).click();
+
+    expect(inspectionModalMocks.openAiJobInspectionModal).toHaveBeenCalledWith(
+      "Caption image",
+      expect.objectContaining({
+        providerId: expect.any(String),
+      }),
+      expect.any(Array),
+    );
+  });
+
+  it("passes planned provider and model into inspect while the job is still loading", async () => {
+    const { createAiController } = await import("./controller");
+    const settings = getDefaultSettings();
+    settings.debugLoggingEnabled = true;
+    settings.ai.routing.generation.primaryProviderId = "gemini";
+    settings.ai.routing.generation.preferredModel = "gemini-2.5-flash-image";
+
+    const controller = createAiController({
+      getSettings: () => settings,
+      persistSettings: async () => {},
+      showToast: vi.fn(),
+      log: vi.fn(),
+    });
+
+    controller.bind();
+    controller.render();
+    controller.queueTask({
+      task: { id: "inspect-5", family: "generation", prompt: "goblin" },
+      inspection: { request: { prompt: "goblin", assets: [] } },
+    }, "Run generation");
+
+    (document.querySelector('[data-ai-job-action="inspect"]') as HTMLButtonElement).click();
+
+    expect(inspectionModalMocks.openAiJobInspectionModal).toHaveBeenCalledWith(
+      "Run generation",
+      expect.objectContaining({
+        providerId: "gemini",
+        model: "gemini-2.5-flash-image",
+      }),
+      expect.any(Array),
+    );
   });
 });

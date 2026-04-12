@@ -1,55 +1,11 @@
+import { parseHexColour, blendChannel } from "./colorUtils";
 import { getLayerContext, syncLayerSource } from "./documents";
-import { invertMask, isMaskEmpty, normalizeSelectionToMask } from "./selection";
+import { getFillGradientNoOverlapMessage, getFillGradientSelectionRequiredMessage, resolveEffectiveSelectionMask } from "./fillGradientValidation";
 import type { DocumentState, RasterLayer } from "./types";
 
 export type FillSelectionResult =
   | { ok: true; message: string }
   | { ok: false; message: string; variant: "error" | "info" };
-
-function parseHexColour(colour: string) {
-  const normalized = colour.trim();
-  const hex = normalized.startsWith("#") ? normalized.slice(1) : normalized;
-  if (hex.length === 3) {
-    const [r, g, b] = hex.split("");
-    return {
-      r: Number.parseInt(`${r}${r}`, 16),
-      g: Number.parseInt(`${g}${g}`, 16),
-      b: Number.parseInt(`${b}${b}`, 16),
-      a: 255,
-    };
-  }
-  if (hex.length === 6 || hex.length === 8) {
-    const r = Number.parseInt(hex.slice(0, 2), 16);
-    const g = Number.parseInt(hex.slice(2, 4), 16);
-    const b = Number.parseInt(hex.slice(4, 6), 16);
-    const a = hex.length === 8 ? Number.parseInt(hex.slice(6, 8), 16) : 255;
-    if ([r, g, b, a].some((value) => Number.isNaN(value))) {
-      return null;
-    }
-    return { r, g, b, a };
-  }
-  return null;
-}
-
-function blendChannel(source: number, destination: number, sourceAlpha: number, destinationAlpha: number, outAlpha: number) {
-  if (outAlpha <= 0) {
-    return 0;
-  }
-  return Math.round(((source * sourceAlpha) + (destination * destinationAlpha * (1 - sourceAlpha))) / outAlpha);
-}
-
-export function resolveEffectiveSelectionMask(
-  doc: Pick<DocumentState, "width" | "height" | "selectionRect" | "selectionShape" | "selectionPath" | "selectionMask" | "selectionInverted">
-) {
-  const mask = normalizeSelectionToMask(doc.width, doc.height, doc.selectionRect, doc.selectionShape, doc.selectionPath, doc.selectionMask);
-  if (!mask) {
-    return null;
-  }
-  if (doc.selectionInverted) {
-    invertMask(mask);
-  }
-  return isMaskEmpty(mask) ? null : mask;
-}
 
 export function applyFillToSelection(
   doc: Pick<DocumentState, "width" | "height" | "selectionRect" | "selectionShape" | "selectionPath" | "selectionMask" | "selectionInverted">,
@@ -58,7 +14,7 @@ export function applyFillToSelection(
 ): FillSelectionResult {
   const effectiveMask = resolveEffectiveSelectionMask(doc);
   if (!effectiveMask) {
-    return { ok: false, message: "Create a selection before using Fill", variant: "info" };
+    return { ok: false, message: getFillGradientSelectionRequiredMessage("fill"), variant: "info" };
   }
 
   const rgba = parseHexColour(colour);
@@ -71,7 +27,7 @@ export function applyFillToSelection(
   const right = Math.min(layer.canvas.width, doc.width - layer.x);
   const bottom = Math.min(layer.canvas.height, doc.height - layer.y);
   if (right <= left || bottom <= top) {
-    return { ok: false, message: "Selection does not overlap the active layer", variant: "info" };
+    return { ok: false, message: getFillGradientNoOverlapMessage(), variant: "info" };
   }
 
   const width = right - left;
@@ -118,7 +74,7 @@ export function applyFillToSelection(
   }
 
   if (!hasSelectedOverlap) {
-    return { ok: false, message: "Selection does not overlap the active layer", variant: "info" };
+    return { ok: false, message: getFillGradientNoOverlapMessage(), variant: "info" };
   }
 
   if (!changed) {

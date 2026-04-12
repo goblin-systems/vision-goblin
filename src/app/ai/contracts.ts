@@ -1,4 +1,5 @@
 import type { AiArtifact, AiTask, AiTaskFamily } from "./types";
+import type { AiProviderDebugInspection } from "./inspection";
 
 export type AiLogLevel = "INFO" | "WARN" | "ERROR";
 
@@ -10,6 +11,7 @@ export type AiErrorCode =
   | "transport_error"
   | "provider_error"
   | "invalid_response"
+  | "invalid_schema"
   | "unknown_error";
 
 export interface AiTaskUsage {
@@ -24,6 +26,7 @@ export interface AiTaskError {
   message: string;
   retryable: boolean;
   providerCode?: string;
+  aiMessage?: string;
   details?: unknown;
 }
 
@@ -33,6 +36,7 @@ export interface AiProviderRequest<TTask extends AiTask = AiTask> {
   preferredModel?: string;
   signal?: AbortSignal;
   metadata?: Record<string, string>;
+  inspection?: AiProviderDebugInspection;
 }
 
 export interface AiTaskSuccess<TTask extends AiTask = AiTask> {
@@ -45,6 +49,7 @@ export interface AiTaskSuccess<TTask extends AiTask = AiTask> {
   artifacts: AiArtifact[];
   warnings: string[];
   usage?: AiTaskUsage;
+  inspection?: AiProviderDebugInspection;
 }
 
 export interface AiTaskFailure<TTask extends AiTask = AiTask> {
@@ -55,6 +60,7 @@ export interface AiTaskFailure<TTask extends AiTask = AiTask> {
   providerTaskId?: string;
   error: AiTaskError;
   warnings: string[];
+  inspection?: AiProviderDebugInspection;
 }
 
 export type AiProviderResponse<TTask extends AiTask = AiTask> = AiTaskSuccess<TTask> | AiTaskFailure<TTask>;
@@ -80,6 +86,7 @@ export function createAiSuccessResponse<TTask extends AiTask>(
     artifacts: response.artifacts,
     warnings: response.warnings ?? [],
     usage: response.usage,
+    inspection: response.inspection,
   };
 }
 
@@ -90,6 +97,7 @@ export function createAiFailureResponse<TTask extends AiTask>(
     providerTaskId?: string;
     error: AiTaskError;
     warnings?: string[];
+    inspection?: AiProviderDebugInspection;
   },
 ): AiTaskFailure<TTask> {
   return {
@@ -100,6 +108,7 @@ export function createAiFailureResponse<TTask extends AiTask>(
     providerTaskId: response.providerTaskId,
     error: response.error,
     warnings: response.warnings ?? [],
+    inspection: response.inspection,
   };
 }
 
@@ -113,6 +122,7 @@ export function normalizeAiTaskError(
       message: error.message,
       retryable: error.retryable,
       providerCode: error.providerCode,
+      aiMessage: error.aiMessage,
       details: error.details,
     };
   }

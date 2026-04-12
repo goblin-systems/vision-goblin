@@ -8,10 +8,17 @@ import {
   type AiProviderResponse,
   type AiTaskUsage,
 } from "../contracts";
+import {
+  createInspectionImageAsset,
+  createInspectionMaskAsset,
+  createInspectionRequestSnapshot,
+  createInspectionResponseSnapshot,
+} from "../inspection";
 import type {
   AiArtifact,
   AiCaptioningTask,
   AiEnhancementTask,
+  AiGuideMode,
   AiGenerationTask,
   AiImageAsset,
   AiImageArtifact,
@@ -19,8 +26,21 @@ import type {
   AiSegmentationTask,
   AiTask,
   AiTaskFamily,
+  AiTextReplacementTask,
 } from "../types";
-import { buildEnhancementPromptContract } from "./enhancementPrompt";
+import {
+  defaultCaptionPrompt,
+  defaultSegmentationUserPrompt,
+  buildSegmentationSystemPrompt,
+  buildSizeGuidance,
+  getReferenceSourceSize,
+  getEnhancementTargetSize,
+  enhancementPurpose,
+  buildGenerationPrompt,
+  buildGuideSemanticsPrompt,
+  buildInpaintingPromptContract,
+  buildEnhancementPromptContract,
+} from "../prompts";
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -44,11 +64,12 @@ export interface GeminiProviderOptions {
 const GEMINI_DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/openai";
 const GEMINI_NATIVE_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 
-const GEMINI_SUPPORTED_FAMILIES = ["segmentation", "inpainting", "enhancement", "generation", "captioning"] as const;
+const GEMINI_SUPPORTED_FAMILIES = ["segmentation", "inpainting", "enhancement", "generation", "captioning", "text-replacement"] as const;
 
 const GEMINI_MODEL_BY_FAMILY: Record<AiTaskFamily, string> = {
   generation: "gemini-2.5-flash-image",
   captioning: "gemini-2.5-flash",
+  "text-replacement": "gemini-2.5-flash-image",
   segmentation: "gemini-2.5-flash-image",
   inpainting: "gemini-2.5-flash-image",
   enhancement: "gemini-2.5-flash-image",
@@ -80,6 +101,8 @@ export function createGeminiProvider(options: GeminiProviderOptions): AiProvider
           return executeInpainting(fetchImpl, endpoint, options, request as AiProviderRequest<AiInpaintingTask>) as Promise<AiProviderResponse<TTask>>;
         case "enhancement":
           return executeEnhancement(fetchImpl, endpoint, options, request as AiProviderRequest<AiEnhancementTask>) as Promise<AiProviderResponse<TTask>>;
+        case "text-replacement":
+          return executeTextReplacement(fetchImpl, endpoint, options, request as AiProviderRequest<AiTextReplacementTask>) as Promise<AiProviderResponse<TTask>>;
         default:
           return createAiFailureResponse(request, {
             providerId: PROVIDER_ID,
@@ -106,6 +129,10 @@ async function executeGeneration(
     const model = request.preferredModel ?? GEMINI_MODEL_BY_FAMILY.generation;
     const aspectRatio = toGeminiAspectRatio(request.task.options?.width, request.task.options?.height);
     const prompt = buildGenerationPrompt(request.task);
+    const requestInspection = createInspectionRequestSnapshot(
+      prompt,
+      (request.task.input?.referenceImages ?? []).map((asset, index) => createInspectionImageAsset(`reference ${index + 1}`, asset)),
+    );
 
     // Build content parts: optional reference images (before text) + text prompt.
     const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
@@ -141,18 +168,30 @@ async function executeGeneration(
       return createAiFailureResponse(request, {
         providerId: PROVIDER_ID,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
     const parsed = parseNativeResponse(payload);
     if (!parsed.images.length) {
+      options.log?.(`[AI provider debug][gemini] Response payload (no images): ${JSON.stringify(payload)}`, "WARN");
       return createAiFailureResponse(request, {
         providerId: PROVIDER_ID,
         error: {
           code: "invalid_response",
-          message: "Gemini generation response did not include any images.",
+          message: parsed.text
+            ? "Gemini did not generate an image. AI response: " + parsed.text
+            : "Gemini generation response did not include any images.",
           retryable: false,
+          aiMessage: parsed.text,
           details: payload,
+        },
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload, parsed.text),
         },
       });
     }
@@ -176,6 +215,10 @@ async function executeGeneration(
             estimatedCostUsd: estimateGenerationCostUsd(request),
           }
         : { estimatedCostUsd: estimateGenerationCostUsd(request) },
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload, parsed.text),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -199,6 +242,7 @@ async function executeCaptioning(
   try {
     const model = request.preferredModel ?? GEMINI_MODEL_BY_FAMILY.captioning;
     const prompt = request.task.prompt ?? defaultCaptionPrompt(request.task.options?.detail);
+    const requestInspection = createInspectionRequestSnapshot(prompt, [createInspectionImageAsset("input image", request.task.input.image)]);
 
     const userContent: ChatContentPart[] = [
       { type: "text", text: prompt },
@@ -226,6 +270,10 @@ async function executeCaptioning(
       return createAiFailureResponse(request, {
         providerId: PROVIDER_ID,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
@@ -239,6 +287,10 @@ async function executeCaptioning(
           message: "Gemini captioning response did not include text content.",
           retryable: false,
           details: payload,
+        },
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
         },
       });
     }
@@ -254,6 +306,10 @@ async function executeCaptioning(
             estimatedCostUsd: estimateTokenCostUsd(parsed.usage),
           }
         : undefined,
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload, text),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -278,8 +334,9 @@ async function executeSegmentation(
     const model = request.preferredModel ?? GEMINI_MODEL_BY_FAMILY.segmentation;
     const mode = request.task.options?.mode ?? "subject";
     const systemPrompt = buildSegmentationSystemPrompt(mode, request.task.input.subjectHint);
-    const userPrompt = request.task.prompt ?? "Generate the segmentation mask for this image.";
+    const userPrompt = request.task.prompt ?? defaultSegmentationUserPrompt();
     const combinedPrompt = `${systemPrompt}${buildSizeGuidance(request.task.input.image.width, request.task.input.image.height, request.task.input.image.width, request.task.input.image.height)}\n\n${userPrompt}`;
+    const requestInspection = createInspectionRequestSnapshot(combinedPrompt, [createInspectionImageAsset("input image", request.task.input.image)]);
     const body = JSON.stringify({
       contents: [{
         parts: [
@@ -306,18 +363,30 @@ async function executeSegmentation(
       return createAiFailureResponse(request, {
         providerId: PROVIDER_ID,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
     const parsed = parseNativeResponse(payload);
     if (!parsed.images.length) {
+      options.log?.(`[AI provider debug][gemini] Response payload (no images): ${JSON.stringify(payload)}`, "WARN");
       return createAiFailureResponse(request, {
         providerId: PROVIDER_ID,
         error: {
           code: "invalid_response",
-          message: "Gemini segmentation response did not include a mask image.",
+          message: parsed.text
+            ? "Gemini did not return a mask. AI response: " + parsed.text
+            : "Gemini segmentation response did not include a mask image.",
           retryable: false,
+          aiMessage: parsed.text,
           details: payload,
+        },
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload, parsed.text),
         },
       });
     }
@@ -343,6 +412,10 @@ async function executeSegmentation(
             estimatedCostUsd: estimateTokenCostUsd(parsed.usage),
           }
         : undefined,
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload, parsed.text),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -365,28 +438,25 @@ async function executeInpainting(
 ): Promise<AiProviderResponse<AiInpaintingTask>> {
   try {
     const model = request.preferredModel ?? GEMINI_MODEL_BY_FAMILY.inpainting;
+    const guideMode = request.task.options?.guideMode;
+    const inpaintingPromptContract = buildInpaintingPromptContract({
+      guideMode,
+      image: request.task.input.image,
+    });
 
-    const systemPrompt =
-      "You are an image editing assistant. You will receive a source image and a mask image. " +
-      "The mask shows the region to edit: white pixels mark the area to modify, black pixels mark the area to keep unchanged. " +
-      "Generate a new version of the source image where only the masked region is modified according to the user's prompt. " +
-      "Preserve the unmasked areas exactly. Output only the edited image." +
-      buildSizeGuidance(
-        request.task.input.image.width,
-        request.task.input.image.height,
-        request.task.input.image.width,
-        request.task.input.image.height,
-        true,
-      );
-
-    const combinedPrompt = `${systemPrompt}\n\n${request.task.prompt}`;
+    const combinedPrompt = `${inpaintingPromptContract.systemPrompt}\n\n${inpaintingPromptContract.inputOrder}\n\n${request.task.prompt}`;
+    const requestInspection = createInspectionRequestSnapshot(combinedPrompt, [
+      createInspectionImageAsset("input image", request.task.input.image),
+      createInspectionMaskAsset("mask", request.task.input.mask),
+    ]);
+    const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+      { text: combinedPrompt },
+      { inlineData: { mimeType: "image/png", data: stripDataUriPrefix(request.task.input.image.data) } },
+      { inlineData: { mimeType: "image/png", data: stripDataUriPrefix(request.task.input.mask.data) } },
+    ];
     const body = JSON.stringify({
       contents: [{
-        parts: [
-          { text: combinedPrompt },
-          { inlineData: { mimeType: "image/png", data: stripDataUriPrefix(request.task.input.image.data) } },
-          { inlineData: { mimeType: "image/png", data: stripDataUriPrefix(request.task.input.mask.data) } },
-        ],
+        parts,
       }],
       generationConfig: {
         responseModalities: ["TEXT", "IMAGE"],
@@ -407,18 +477,30 @@ async function executeInpainting(
       return createAiFailureResponse(request, {
         providerId: PROVIDER_ID,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
     const parsed = parseNativeResponse(payload);
     if (!parsed.images.length) {
+      options.log?.(`[AI provider debug][gemini] Response payload (no images): ${JSON.stringify(payload)}`, "WARN");
       return createAiFailureResponse(request, {
         providerId: PROVIDER_ID,
         error: {
           code: "invalid_response",
-          message: "Gemini inpainting response did not include an image.",
+          message: parsed.text
+            ? "Gemini did not return an image. AI response: " + parsed.text
+            : "Gemini inpainting response did not include an image.",
           retryable: false,
+          aiMessage: parsed.text,
           details: payload,
+        },
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload, parsed.text),
         },
       });
     }
@@ -442,6 +524,10 @@ async function executeInpainting(
             estimatedCostUsd: estimateTokenCostUsd(parsed.usage),
           }
         : undefined,
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload, parsed.text),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -478,6 +564,10 @@ async function executeEnhancement(
       referenceTransport: "embedded-images",
       buildSizeGuidance,
     });
+    const requestInspection = createInspectionRequestSnapshot(promptContract.combinedPrompt, [
+      createInspectionImageAsset("input image", sourceImage),
+      ...(referenceImages ?? []).map((asset, index) => createInspectionImageAsset(`reference ${index + 1}`, asset)),
+    ]);
 
     // Build content parts: text prompt + source image + optional reference images.
     const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
@@ -512,18 +602,30 @@ async function executeEnhancement(
       return createAiFailureResponse(request, {
         providerId: PROVIDER_ID,
         error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
       });
     }
 
     const parsed = parseNativeResponse(payload);
     if (!parsed.images.length) {
+      options.log?.(`[AI provider debug][gemini] Response payload (no images): ${JSON.stringify(payload)}`, "WARN");
       return createAiFailureResponse(request, {
         providerId: PROVIDER_ID,
         error: {
           code: "invalid_response",
-          message: "Gemini enhancement response did not include an image.",
+          message: parsed.text
+            ? "Gemini did not return an image. AI response: " + parsed.text
+            : "Gemini enhancement response did not include an image.",
           retryable: false,
+          aiMessage: parsed.text,
           details: payload,
+        },
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload, parsed.text),
         },
       });
     }
@@ -547,6 +649,10 @@ async function executeEnhancement(
             estimatedCostUsd: estimateTokenCostUsd(parsed.usage),
           }
         : undefined,
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload, parsed.text),
+      },
     });
   } catch (error) {
     return createAiFailureResponse(request, {
@@ -559,90 +665,120 @@ async function executeEnhancement(
   }
 }
 
-// ── Prompt builders ─────────────────────────────────────────────────────
+// ── Text Replacement ────────────────────────────────────────────────────
 
-function defaultCaptionPrompt(detail?: "brief" | "detailed"): string {
-  return detail === "brief" ? "Write a brief caption for this image." : "Describe this image in detail.";
-}
+async function executeTextReplacement(
+  fetchImpl: GeminiFetch,
+  _endpoint: string,
+  options: GeminiProviderOptions,
+  request: AiProviderRequest<AiTextReplacementTask>,
+): Promise<AiProviderResponse<AiTextReplacementTask>> {
+  try {
+    const model = request.preferredModel ?? GEMINI_MODEL_BY_FAMILY["text-replacement"];
+    const requestInspection = createInspectionRequestSnapshot(request.task.prompt, [
+      createInspectionImageAsset("input image", request.task.input.image),
+      createInspectionMaskAsset("mask", request.task.input.mask),
+    ]);
 
-function buildSegmentationSystemPrompt(
-  mode: NonNullable<AiSegmentationTask["options"]>["mode"],
-  subjectHint?: string,
-): string {
-  switch (mode) {
-    case "subject":
-      return "You are an image segmentation assistant. Generate a binary black-and-white mask image where white pixels represent the main subject of the image and black pixels represent everything else. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.";
-    case "background":
-      return "You are an image segmentation assistant. Generate a binary black-and-white mask image where white pixels represent the background of the image and black pixels represent the foreground subject. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.";
-    case "object":
-      return `You are an image segmentation assistant. Generate a binary black-and-white mask image that isolates a specific object in the image. ${subjectHint ? `The object to isolate: "${subjectHint}".` : "Identify the most prominent object."} White pixels represent the object and black pixels represent everything else. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.`;
-    case "background-removal":
-      return "You are an image segmentation assistant. Generate a binary black-and-white mask image where white pixels represent the main subject of the image suitable for background removal. Black pixels represent the background to be removed. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.";
-    default:
-      return "You are an image segmentation assistant. Generate a binary black-and-white mask image of the main subject. Return a mask aligned 1:1 with the source image at the exact same pixel dimensions so every mask pixel maps to the same source pixel. Output only the mask image.";
-  }
-}
+    const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+      { text: request.task.prompt },
+      { inlineData: { mimeType: "image/png", data: stripDataUriPrefix(request.task.input.image.data) } },
+      { inlineData: { mimeType: "image/png", data: stripDataUriPrefix(request.task.input.mask.data) } },
+    ];
 
-function buildGenerationPrompt(task: AiGenerationTask): string {
-  const sourceSize = getReferenceSourceSize(task.input?.referenceImages);
-  return `${task.prompt}${buildSizeGuidance(sourceSize?.width, sourceSize?.height, task.options?.width, task.options?.height, (task.input?.referenceImages?.length ?? 0) > 0)}`;
-}
+    const body = JSON.stringify({
+      contents: [{ parts }],
+      generationConfig: {
+        responseModalities: ["TEXT"],
+      },
+    });
+    const url = buildNativeUrl(model);
+    logJsonRequest(options.log, PROVIDER_ID, url, body);
 
-function buildSizeGuidance(
-  sourceWidth?: number,
-  sourceHeight?: number,
-  targetWidth?: number,
-  targetHeight?: number,
-  preserveAlignment = false,
-): string {
-  const parts: string[] = [];
-  if (sourceWidth && sourceHeight) {
-    parts.push(`Source image size: ${sourceWidth}x${sourceHeight}px.`);
-  }
-  if (targetWidth && targetHeight) {
-    parts.push(`Output image must be exactly ${targetWidth}x${targetHeight}px.`);
-  }
-  if (preserveAlignment) {
-    parts.push("Preserve the original framing and keep all content aligned 1:1 with the source image; do not crop, pad, shift, or re-center the result.");
-  }
-  return parts.length ? `\n\nLayout requirements: ${parts.join(" ")}` : "";
-}
+    const response = await fetchImpl(url, {
+      method: "POST",
+      signal: request.signal,
+      headers: buildNativeHeaders(options),
+      body,
+    });
 
-function getReferenceSourceSize(referenceImages?: AiImageAsset[]) {
-  const firstReference = referenceImages?.[0];
-  if (!firstReference?.width || !firstReference?.height) {
-    return undefined;
-  }
-  return {
-    width: firstReference.width,
-    height: firstReference.height,
-  };
-}
+    const payload = await response.json();
+    if (!response.ok) {
+      return createAiFailureResponse(request, {
+        providerId: PROVIDER_ID,
+        error: extractProviderError(payload, response.status),
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload),
+        },
+      });
+    }
 
-function getEnhancementTargetSize(task: AiEnhancementTask): { width?: number; height?: number } {
-  const width = task.input.image.width;
-  const height = task.input.image.height;
-  if (task.options?.operation === "upscale" && width && height) {
-    const factor = task.options.scaleFactor ?? 2;
-    return { width: width * factor, height: height * factor };
-  }
-  return { width, height };
-}
+    const parsed = parseNativeResponse(payload);
 
-function enhancementPurpose(
-  operation: NonNullable<AiEnhancementTask["options"]>["operation"],
-): AiImageArtifact["purpose"] {
-  switch (operation) {
-    case "upscale":
-      return "upscaled";
-    case "style-transfer":
-      return "styled";
-    case "auto-enhance":
-    case "denoise":
-    case "restore":
-    case "colorize":
-    default:
-      return "enhanced";
+    if (!parsed.text) {
+      options.log?.(`[AI provider debug][gemini] Response payload (no text): ${JSON.stringify(payload)}`, "WARN");
+      return createAiFailureResponse(request, {
+        providerId: PROVIDER_ID,
+        error: {
+          code: "invalid_response",
+          message: "Gemini text replacement response did not include text.",
+          retryable: false,
+          details: payload,
+        },
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload, parsed.text),
+        },
+      });
+    }
+
+    const jsonText = extractJsonFromText(parsed.text);
+    if (!jsonText) {
+      options.log?.(`[AI provider debug][gemini] Response text did not contain valid JSON: ${parsed.text}`, "WARN");
+      return createAiFailureResponse(request, {
+        providerId: PROVIDER_ID,
+        error: {
+          code: "invalid_response",
+          message: "Gemini text replacement response text did not contain valid JSON.",
+          retryable: false,
+          details: payload,
+        },
+        inspection: {
+          request: requestInspection,
+          response: createInspectionResponseSnapshot(payload, parsed.text),
+        },
+      });
+    }
+
+    return createAiSuccessResponse(request, {
+      providerId: PROVIDER_ID,
+      model: parsed.model,
+      artifacts: [{
+        kind: "json",
+        role: "text-reconstruction",
+        mimeType: "application/json",
+        text: jsonText,
+      }],
+      usage: parsed.usage
+        ? {
+            ...parsed.usage,
+            estimatedCostUsd: estimateTokenCostUsd(parsed.usage),
+          }
+        : undefined,
+      inspection: {
+        request: requestInspection,
+        response: createInspectionResponseSnapshot(payload, parsed.text),
+      },
+    });
+  } catch (error) {
+    return createAiFailureResponse(request, {
+      providerId: PROVIDER_ID,
+      error: normalizeAiTaskError(error, {
+        code: "transport_error",
+        retryable: true,
+      }),
+    });
   }
 }
 
@@ -698,6 +834,7 @@ interface NativePart {
 interface ParsedNativeResponse {
   model?: string;
   images: string[];
+  text?: string;
   usage?: AiTaskUsage;
 }
 
@@ -716,6 +853,7 @@ function parseNativeResponse(payload: unknown): ParsedNativeResponse {
   const firstCandidate = candidates.length > 0 ? (candidates[0] as Record<string, unknown>) : undefined;
 
   const images: string[] = [];
+  const textParts: string[] = [];
   if (firstCandidate) {
     const content = firstCandidate.content as { parts?: NativePart[] } | undefined;
     if (content?.parts && Array.isArray(content.parts)) {
@@ -724,13 +862,46 @@ function parseNativeResponse(payload: unknown): ParsedNativeResponse {
           const mimeType = part.inlineData.mimeType ?? "image/png";
           images.push(`data:${mimeType};base64,${part.inlineData.data}`);
         }
+        if (part.text && typeof part.text === "string") {
+          textParts.push(part.text);
+        }
       }
+    }
+  }
+
+  let text: string | undefined = textParts.length > 0 ? textParts.join(" ") : undefined;
+
+  if (!text && firstCandidate) {
+    text = asOptionalString(firstCandidate.finishMessage);
+  }
+
+  if (!text) {
+    const fallbackReasons: string[] = [];
+
+    if (firstCandidate) {
+      const finishReason = asOptionalString(firstCandidate.finishReason);
+      if (finishReason && finishReason !== "STOP") {
+        fallbackReasons.push(`Finish reason: ${finishReason}`);
+      }
+    }
+
+    const promptFeedback = raw.promptFeedback as Record<string, unknown> | undefined;
+    if (promptFeedback && typeof promptFeedback === "object") {
+      const blockReason = asOptionalString(promptFeedback.blockReason);
+      if (blockReason) {
+        fallbackReasons.push(`Prompt blocked: ${blockReason}`);
+      }
+    }
+
+    if (fallbackReasons.length > 0) {
+      text = fallbackReasons.join(". ");
     }
   }
 
   return {
     model: asOptionalString(raw.modelVersion),
     images,
+    text,
     usage: extractNativeUsage(raw.usageMetadata),
   };
 }
@@ -863,6 +1034,46 @@ function numberOrUndefined(value: unknown): number | undefined {
 
 async function defaultFetch(input: string, init?: RequestInit) {
   return fetch(input, init);
+}
+
+// ── JSON extraction helper ──────────────────────────────────────────────
+
+function extractJsonFromText(text: string): string | null {
+  // Try direct parse first
+  const trimmed = text.trim();
+  try {
+    JSON.parse(trimmed);
+    return trimmed;
+  } catch {
+    // Not direct JSON
+  }
+
+  // Try to extract from markdown code fences
+  const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (fenceMatch) {
+    const inner = fenceMatch[1].trim();
+    try {
+      JSON.parse(inner);
+      return inner;
+    } catch {
+      // Invalid JSON inside fence
+    }
+  }
+
+  // Try to find a JSON object in the text
+  const braceStart = trimmed.indexOf("{");
+  const braceEnd = trimmed.lastIndexOf("}");
+  if (braceStart >= 0 && braceEnd > braceStart) {
+    const candidate = trimmed.slice(braceStart, braceEnd + 1);
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // Not valid JSON
+    }
+  }
+
+  return null;
 }
 
 // ── Cost estimation ─────────────────────────────────────────────────────

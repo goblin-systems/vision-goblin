@@ -369,7 +369,35 @@
                 <span class="nav-option-icon"><i data-lucide="frame"></i></span>
                 <span class="nav-option-label">Outpaint Canvas</span>
               </button>
-              <div class="nav-divider"></div>
+              <button class="nav-option" type="button" data-nav-id="ai-add-shadow">
+                <span class="nav-option-icon"><i data-lucide="cloud-sun"></i></span>
+                <span class="nav-option-label">Add Shadow</span>
+              </button>
+               <button class="nav-option" type="button" data-nav-id="ai-remove-shadow">
+                 <span class="nav-option-icon"><i data-lucide="sun-medium"></i></span>
+                 <span class="nav-option-label">Remove Shadow</span>
+               </button>
+               <button class="nav-option" type="button" data-nav-id="ai-add-reflection">
+                 <span class="nav-option-icon"><i data-lucide="sparkles"></i></span>
+                 <span class="nav-option-label">Add Reflection</span>
+               </button>
+               <button class="nav-option" type="button" data-nav-id="ai-remove-reflection">
+                 <span class="nav-option-icon"><i data-lucide="scan-search"></i></span>
+                 <span class="nav-option-label">Remove Reflection</span>
+               </button>
+               <button class="nav-option" type="button" data-nav-id="ai-clone-object">
+                  <span class="nav-option-icon"><i data-lucide="copy"></i></span>
+                  <span class="nav-option-label">Clone Object</span>
+                </button>
+               <button class="nav-option" type="button" data-nav-id="ai-move-object">
+                 <span class="nav-option-icon"><i data-lucide="move-right"></i></span>
+                 <span class="nav-option-label">Move Object</span>
+               </button>
+               <button id="ai-replace-raster-text-nav" class="nav-option" type="button" data-nav-id="ai-replace-raster-text">
+                 <span class="nav-option-icon"><i data-lucide="type"></i></span>
+                 <span class="nav-option-label">Replace Raster Text</span>
+               </button>
+               <div class="nav-divider"></div>
               <button class="nav-option" type="button" data-nav-id="ai-auto-enhance">
                 <span class="nav-option-icon"><i data-lucide="sparkles"></i></span>
                 <span class="nav-option-label">Auto Enhance</span>
@@ -557,7 +585,7 @@
                   <h4>Tool settings</h4>
                 </div>
                 <p id="tool-settings-empty" class="hint" hidden>Select a tool to see relevant settings.</p>
-                <p id="healing-tool-hint" class="hint" hidden>Paint over dust and blemishes to blend them with nearby colour and texture.</p>
+                <p id="healing-tool-hint" class="hint" hidden>Paint over dust and blemishes to borrow a nearby patch, then tune sample spread and texture blend for cleaner edges.</p>
                 <p id="text-tool-hint" class="hint" hidden>Click or drag on the canvas to add text. Drag sets a box width for wrapped text.</p>
                 <p id="shape-tool-hint" class="hint" hidden>Click or drag on the canvas to create a new shape layer.</p>
                 <label id="shape-kind-field" class="field-block" hidden>
@@ -652,6 +680,14 @@
                   <span>Brush opacity</span>
                   <input id="brush-opacity-range" type="range" min="5" max="100" step="5" value="100" />
                 </label>
+                <label id="healing-sample-field" class="field-block" hidden>
+                  <span>Healing sample spread</span>
+                  <input id="healing-sample-range" type="range" min="140" max="400" step="5" value="240" />
+                </label>
+                <label id="healing-blend-field" class="field-block" hidden>
+                  <span>Healing texture blend</span>
+                  <input id="healing-blend-range" type="range" min="0" max="100" step="5" value="80" />
+                </label>
                 <div id="brush-colour-field" class="palette-colour-field">
                   <div class="palette-colour-pair">
                     <button id="palette-primary-swatch" class="palette-swatch palette-swatch--primary is-active" type="button" title="Primary colour" style="background:#6C63FF"></button>
@@ -676,7 +712,14 @@
                   <span class="badge warning">layer</span>
                 </div>
                 <label class="field-block"><span>Text</span><textarea id="text-value-input" rows="3">Text</textarea></label>
-                <label class="field-block"><span>Font family</span><input id="text-font-family-input" type="text" value="Georgia" /></label>
+                <label class="field-block">
+                  <span>Font family</span>
+                  <div class="font-picker">
+                    <input id="text-font-family-input" type="text" value="Georgia" autocomplete="off" spellcheck="false" />
+                    <div id="text-font-family-options" class="font-picker-options" hidden></div>
+                  </div>
+                </label>
+                <button id="text-load-font-btn" class="secondary-btn slim-btn" type="button" style="margin-bottom:6px">Load font…</button>
                 <div class="inline-control-grid">
                   <label class="field-block"><span>Font size</span><input id="text-font-size-input" type="number" min="8" value="64" /></label>
                   <label class="field-block"><span>Line height</span><input id="text-line-height-input" type="number" min="0.8" step="0.1" value="1.2" /></label>
@@ -686,12 +729,29 @@
                   <label class="field-block"><span>Box width</span><input id="text-box-width-input" type="number" min="0" placeholder="Auto" /></label>
                 </div>
                 <div class="inline-control-grid">
+                  <label class="field-block"><span>Box height</span><input id="text-box-height-input" type="number" min="0" placeholder="Auto" /></label>
+                </div>
+                <div class="inline-control-grid">
                   <label class="field-block"><span>Alignment</span><select id="text-alignment-select"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
-                  <label class="field-block"><span>Fill</span><input id="text-fill-input" type="color" value="#ffffff" /></label>
+                </div>
+                <div class="inline-control-grid">
+                  <label class="field-block"><span>Fill type</span><select id="text-fill-type-select"><option value="solid">Solid</option><option value="linear-gradient">Linear gradient</option><option value="radial-gradient">Radial gradient</option></select></label>
+                  <label class="field-block" id="text-fill-color-field"><span>Fill color</span><input id="text-fill-input" type="color" value="#ffffff" /></label>
+                </div>
+                <div id="text-fill-gradient-fields" hidden>
+                  <button id="text-fill-edit-gradient-btn" class="secondary-btn slim-btn" type="button">Edit gradient…</button>
+                </div>
+                <div class="inline-control-grid">
+                  <label class="field-block"><span>Stroke color</span><input id="text-stroke-color-input" type="color" value="#000000" /></label>
+                  <label class="field-block"><span>Stroke width</span><input id="text-stroke-width-input" type="number" min="0" step="0.5" value="0" /></label>
                 </div>
                 <div class="toolbar-toggle-row">
                   <label class="checkbox-label"><input id="text-bold-input" type="checkbox" /><span>Bold</span></label>
                   <label class="checkbox-label"><input id="text-italic-input" type="checkbox" /><span>Italic</span></label>
+                </div>
+                <div class="toolbar-toggle-row">
+                  <label class="checkbox-label"><input id="text-underline-input" type="checkbox" /><span>Underline</span></label>
+                  <label class="checkbox-label"><input id="text-strikethrough-input" type="checkbox" /><span>Strikethrough</span></label>
                 </div>
               </div>
               <div id="shape-inspector" class="mini-panel" hidden>
@@ -845,6 +905,7 @@
                   <div id="canvas-floating-chip" class="canvas-floating-chip">Wheel to zoom. Right drag or Space+drag to pan.</div>
                 </div>
               </div>
+              <div id="ai-mask-session-mount" class="ai-mask-session-mount" hidden></div>
             </section>
 
             <div class="pane-resizer" id="right-pane-resizer" aria-hidden="true"></div>
@@ -879,7 +940,7 @@
                 <div class="stat-grid">
                   <div class="stat-card"><span>Mode</span><strong id="inspector-mode">Raster</strong></div>
                   <div class="stat-card"><span>Selection</span><strong id="inspector-selection">None</strong></div>
-                  <div class="stat-card"><span>Blend</span><strong id="inspector-blend">Normal</strong></div>
+                  <div class="stat-card"><span>Blend</span><select id="inspector-blend-select"><option value="">Normal</option><option value="multiply">Multiply</option><option value="screen">Screen</option><option value="overlay">Overlay</option><option value="darken">Darken</option><option value="lighten">Lighten</option><option value="color-dodge">Color Dodge</option><option value="color-burn">Color Burn</option><option value="hard-light">Hard Light</option><option value="soft-light">Soft Light</option><option value="difference">Difference</option><option value="exclusion">Exclusion</option><option value="hue">Hue</option><option value="saturation">Saturation</option><option value="color">Color</option><option value="luminosity">Luminosity</option></select></div>
                   <div class="stat-card"><span>Opacity</span><strong id="inspector-opacity">100%</strong></div>
                   <div class="stat-card"><span>Position</span><strong id="inspector-position">0, 0</strong></div>
                   <div class="stat-card"><span>Layer</span><strong id="inspector-layer">Base</strong></div>
@@ -1092,19 +1153,13 @@
           <span>Capturing screen...</span>
         </div>
         <canvas id="capture-overlay-canvas" class="capture-overlay-canvas"></canvas>
-        <div id="capture-overlay-toolbar" class="capture-overlay-toolbar">
-          <div>
-            <strong id="capture-overlay-title">Screen Snip</strong>
-            <p id="capture-overlay-hint" class="hint">Drag to select a region.</p>
-          </div>
-          <div class="stack-actions">
-            <div id="capture-colour-chip" class="colour-preview mini-preview" hidden></div>
-            <canvas id="capture-magnifier" class="capture-magnifier" width="120" height="120" hidden></canvas>
+        <div id="capture-picker-hud" class="capture-picker-hud" hidden>
+          <div class="capture-picker-hud-topline">
+            <div id="capture-colour-chip" class="capture-colour-chip" hidden></div>
             <div id="capture-colour-readout" class="colour-value" hidden>#000000</div>
-            <div id="capture-coords" class="colour-value">0, 0</div>
-            <button id="capture-overlay-confirm-btn" class="secondary-btn" type="button" hidden><i data-lucide="check"></i><span>Capture</span></button>
-            <button id="capture-overlay-cancel-btn" class="secondary-btn" type="button"><i data-lucide="x"></i><span>Cancel</span></button>
           </div>
+          <div id="capture-coords" class="capture-picker-coords">0, 0</div>
+          <canvas id="capture-magnifier" class="capture-magnifier" width="120" height="120" hidden></canvas>
         </div>
       </div>
 
@@ -1683,7 +1738,7 @@
               <i data-lucide="x"></i>
             </button>
           </div>
-          <p class="modal-body-text">Build a multi-node curve, set the heading, preview the blend, then apply the gradient to the active raster target.</p>
+          <p class="modal-body-text">Build a multi-node colour curve, then preview and apply the gradient.</p>
           <div class="modal-form-grid">
             <div class="gradient-tool-curve-wrap">
               <canvas id="gradient-curve-canvas" width="560" height="220"></canvas>
@@ -1691,17 +1746,28 @@
             <div class="gradient-tool-preview-wrap">
               <canvas id="gradient-preview-canvas" width="560" height="48"></canvas>
             </div>
+            <div class="gradient-tool-presets-wrap">
+              <div class="gradient-tool-section-title">Presets</div>
+              <div id="gradient-preset-list" class="gradient-preset-list"></div>
+            </div>
             <div class="gradient-tool-actions">
               <button id="gradient-add-node-btn" class="secondary-btn gradient-tool-action-btn" type="button"><i data-lucide="plus"></i><span>Add node</span></button>
               <button id="gradient-reset-btn" class="secondary-btn gradient-tool-action-btn" type="button"><i data-lucide="rotate-ccw"></i><span>Reset</span></button>
-              <label class="field-block gradient-tool-target-field">
+              <label class="field-block gradient-tool-type-field">
+                <span>Type</span>
+                <select id="gradient-type-select" class="gradient-tool-type-select">
+                  <option value="linear">Linear</option>
+                  <option value="radial">Radial</option>
+                </select>
+              </label>
+              <label id="gradient-target-row" class="field-block gradient-tool-target-field">
                 <span>Apply to</span>
                 <select id="gradient-target-select" class="gradient-tool-target-select">
                   <option value="selection">Selection</option>
                   <option value="canvas">Full canvas</option>
                 </select>
               </label>
-              <div class="gradient-tool-heading-field">
+              <div id="gradient-heading-row" class="gradient-tool-heading-field">
                 <div id="gradient-heading-control" class="radial-control radial-control-xs gradient-tool-heading-control" aria-label="Gradient heading" title="Gradient heading">
                   <svg class="radial-control-visual" viewBox="0 0 100 100" aria-hidden="true">
                     <path class="radial-control-track"></path>
@@ -1713,6 +1779,16 @@
                     <span class="radial-control-value"></span>
                   </div>
                 </div>
+              </div>
+              <div id="gradient-center-controls" class="gradient-tool-center-field" hidden>
+                <label class="field-block">
+                  <span>Center X</span>
+                  <input id="gradient-center-x" type="number" min="0" max="1" step="0.05" value="0.5" />
+                </label>
+                <label class="field-block">
+                  <span>Center Y</span>
+                  <input id="gradient-center-y" type="number" min="0" max="1" step="0.05" value="0.5" />
+                </label>
               </div>
             </div>
             <div id="gradient-node-list" class="gradient-node-list"></div>

@@ -1,8 +1,12 @@
-export const AI_TASK_FAMILIES = ["segmentation", "inpainting", "enhancement", "generation", "captioning"] as const;
+export const AI_TASK_FAMILIES = ["segmentation", "inpainting", "enhancement", "generation", "captioning", "text-replacement"] as const;
 
 export const AI_INPUT_SCOPES = ["selected-layers", "visible-content"] as const;
 
+export const AI_GUIDE_MODES = ["shadow-add", "shadow-remove", "reflection-add", "reflection-remove", "clone-object", "move-object", "inpaint", "remove-object", "replace-text"] as const;
+
 export type AiInputScope = typeof AI_INPUT_SCOPES[number];
+
+export type AiGuideMode = typeof AI_GUIDE_MODES[number];
 
 export type AiTaskFamily = typeof AI_TASK_FAMILIES[number];
 
@@ -28,6 +32,13 @@ export interface AiTextArtifact {
   text: string;
 }
 
+export interface AiJsonArtifact {
+  kind: "json";
+  role: "text-reconstruction" | "structured-output";
+  mimeType: "application/json";
+  text: string;
+}
+
 export interface AiImageArtifact {
   kind: "image";
   mimeType: string;
@@ -46,7 +57,7 @@ export interface AiMaskArtifact {
   label?: string;
 }
 
-export type AiArtifact = AiTextArtifact | AiImageArtifact | AiMaskArtifact;
+export type AiArtifact = AiTextArtifact | AiJsonArtifact | AiImageArtifact | AiMaskArtifact;
 
 export interface AiSegmentationTask {
   id: string;
@@ -71,6 +82,7 @@ export interface AiInpaintingTask {
   };
   options?: {
     mode?: "remove" | "replace";
+    guideMode?: AiGuideMode;
   };
 }
 
@@ -115,9 +127,23 @@ export interface AiCaptioningTask {
   };
 }
 
+export interface AiTextReplacementTask {
+  id: string;
+  family: "text-replacement";
+  prompt: string;
+  input: {
+    image: AiImageAsset;
+    mask: AiMaskAsset;
+  };
+  options?: {
+    schemaVersion?: string;
+  };
+}
+
 export type AiTask =
   | AiSegmentationTask
   | AiInpaintingTask
   | AiEnhancementTask
   | AiGenerationTask
-  | AiCaptioningTask;
+  | AiCaptioningTask
+  | AiTextReplacementTask;

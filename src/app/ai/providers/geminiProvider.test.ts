@@ -8,6 +8,7 @@ import type {
   AiInpaintingTask,
   AiMaskAsset,
   AiSegmentationTask,
+  AiTextReplacementTask,
 } from "../types";
 
 // ── Test helpers ────────────────────────────────────────────────────────
@@ -87,6 +88,55 @@ function makeNativeResponse(overrides?: {
   };
 }
 
+/** Native response where candidate has no content field (safety block). */
+function makeSafetyBlockedResponse(finishReason = "SAFETY") {
+  return {
+    candidates: [
+      {
+        finishReason,
+        // no content field
+      },
+    ],
+  };
+}
+
+/** Native response with empty candidates and a promptFeedback block. */
+function makePromptBlockedResponse(blockReason = "SAFETY") {
+  return {
+    candidates: [],
+    promptFeedback: {
+      blockReason,
+    },
+  };
+}
+
+/** Native response where content.parts is empty and finishReason is non-STOP. */
+function makeEmptyPartsResponse(finishReason = "RECITATION") {
+  return {
+    candidates: [
+      {
+        content: { parts: [], role: "model" },
+        finishReason,
+      },
+    ],
+  };
+}
+
+/** Native response where candidate exposes a human-readable finishMessage. */
+function makeFinishMessageResponse(
+  finishMessage = "Unable to show the generated image. The model could not generate the image based on the prompt provided.",
+  finishReason = "IMAGE_OTHER",
+) {
+  return {
+    candidates: [
+      {
+        finishReason,
+        finishMessage,
+      },
+    ],
+  };
+}
+
 const GEMINI_OPENAI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/openai";
 const GEMINI_NATIVE_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -101,12 +151,12 @@ describe("Gemini provider", () => {
     expect(provider.displayName).toBe("Google Gemini");
   });
 
-  it("supportedFamilies includes all 5 families", () => {
+  it("supportedFamilies includes all 6 families", () => {
     const provider = createGeminiProvider({ apiKey: "test-key" });
     expect([...provider.supportedFamilies]).toEqual(
-      expect.arrayContaining(["segmentation", "inpainting", "enhancement", "generation", "captioning"]),
+      expect.arrayContaining(["segmentation", "inpainting", "enhancement", "generation", "captioning", "text-replacement"]),
     );
-    expect(provider.supportedFamilies).toHaveLength(5);
+    expect(provider.supportedFamilies).toHaveLength(6);
   });
 
   // ── Endpoint configuration ────────────────────────────────────────────
@@ -292,6 +342,20 @@ describe("Gemini provider", () => {
       data: "data:image/png;base64,DDDD",
       purpose: "generated",
     });
+    expect(result.inspection?.request?.prompt).toContain("A goblin with a paintbrush");
+    expect(result.inspection?.response?.rawPayload).toEqual({
+      candidates: [
+        {
+          content: {
+            parts: [{ inlineData: { mimeType: "image/png", data: "DDDD" } }],
+            role: "model",
+          },
+          finishReason: "STOP",
+        },
+      ],
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20, totalTokenCount: 30 },
+      modelVersion: "gemini-2.5-flash-image",
+    });
 
     const body = parseFetchBody(fetchMock);
     expect(body.generationConfig).toEqual({
@@ -405,6 +469,41 @@ describe("Gemini provider", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failure");
     expect(result.error.code).toBe("invalid_response");
+    expect(result.error.aiMessage).toBe("I cannot generate that image.");
+    expect(result.error.message).toContain("I cannot generate that image.");
+  });
+
+  it("generation: returns failure with finishReason when safety blocked (no content)", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makeSafetyBlockedResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiGenerationTask = { id: "gen-safety", family: "generation", prompt: "test" };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("SAFETY");
+  });
+
+  it("generation: returns failure with blockReason when prompt is blocked", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makePromptBlockedResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiGenerationTask = { id: "gen-prompt-block", family: "generation", prompt: "test" };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("SAFETY");
+  });
+
+  it("generation: returns failure with finishReason when content parts are empty (non-STOP)", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makeEmptyPartsResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiGenerationTask = { id: "gen-empty-parts", family: "generation", prompt: "test" };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("RECITATION");
   });
 
   // ── Captioning ────────────────────────────────────────────────────────
@@ -646,7 +745,7 @@ describe("Gemini provider", () => {
 
   // ── Inpainting ────────────────────────────────────────────────────────
 
-  it("inpainting: uses native endpoint, model, and sends image + mask as inlineData", async () => {
+  it("inpainting: sends source image and colour-coded guide mask for guided edits", async () => {
     const fetchMock = mockFetch({
       ok: true,
       status: 200,
@@ -667,6 +766,7 @@ describe("Gemini provider", () => {
         image: makeImageAsset("data:image/png;base64,SOURCE"),
         mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
       },
+      options: { guideMode: "shadow-add" },
     };
 
     const result = await provider.execute({ task });
@@ -684,14 +784,22 @@ describe("Gemini provider", () => {
     const contents = body.contents as Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
     expect(contents).toHaveLength(1);
 
-    // Verify combined prompt contains mask instruction.
+    // Verify combined prompt contains colour-coded guide mask instruction.
     const textPart = contents[0].parts.find((p) => "text" in p);
     expect(textPart?.text).toBeDefined();
-    expect(textPart!.text!.toLowerCase()).toContain("mask");
+    expect(textPart!.text!).toContain("colour-coded guide mask");
+    expect(textPart!.text).toContain("dual-colour shadow guide");
+    expect(textPart!.text).toContain("red pixels mark the existing object casting the shadow");
+    expect(textPart!.text).toContain("black pixels mark the approximate existing surface region where the shadow should fall");
+    expect(textPart!.text).toContain("Treat both coloured guides as approximate guides, not exact contours to trace");
+    expect(textPart!.text).toContain("believable perspective, contact, softness, blur, and falloff");
+    expect(textPart!.text).toContain("Treat black guide pixels only as a surface constraint for darkening underlying image content during shadow-related edits");
+    expect(textPart!.text).toContain("not a new object, decal, cutout, silhouette, filled shape, or any other form to generate");
+    expect(textPart!.text).toContain("Input order: 1) source image, 2) colour-coded guide mask");
     expect(textPart!.text).toContain("Output image must be exactly 512x512px");
     expect(textPart!.text).toContain("aligned 1:1 with the source image");
 
-    // Verify both image and mask are sent as inlineData with stripped base64.
+    // Verify source image and mask are sent as inlineData with stripped base64.
     const inlineDataParts = contents[0].parts.filter((p) => "inlineData" in p);
     expect(inlineDataParts).toHaveLength(2);
     expect(inlineDataParts[0].inlineData?.data).toBe("SOURCE");
@@ -701,6 +809,439 @@ describe("Gemini provider", () => {
       `${GEMINI_NATIVE_ENDPOINT}/models/gemini-2.5-flash-image:generateContent`,
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("inpainting: sends source image and colour-coded guide mask for shadow-add edits", async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        modelVersion: "gemini-2.5-flash-image",
+        parts: [{ inlineData: { mimeType: "image/png", data: "SHADOWED" } }],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    const task: AiInpaintingTask = {
+      id: "inp-shadow",
+      family: "inpainting",
+      prompt: "Add a realistic shadow",
+      input: {
+        image: makeImageAsset("data:image/png;base64,SOURCE"),
+        mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
+      },
+      options: { guideMode: "shadow-add" },
+    };
+
+    const result = await provider.execute({ task });
+
+    expect(result.ok).toBe(true);
+
+    const body = parseFetchBody(fetchMock);
+    const contents = body.contents as Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+    const textPart = contents[0].parts.find((p) => "text" in p);
+    expect(textPart?.text).toContain("colour-coded guide mask");
+    expect(textPart?.text).toContain("Treat both coloured guides as approximate guides, not exact contours to trace");
+    expect(textPart?.text).toContain("believable perspective, contact, softness, blur, and falloff");
+    expect(textPart?.text).toContain("Only modify pixels inside the guide-constrained editable region");
+    expect(textPart?.text).toContain("Input order: 1) source image, 2) colour-coded guide mask");
+    expect(textPart?.text).not.toContain("binary edit mask");
+
+    const inlineDataParts = contents[0].parts.filter((p) => "inlineData" in p);
+    expect(inlineDataParts).toHaveLength(2);
+    expect(inlineDataParts[0].inlineData?.data).toBe("SOURCE");
+    expect(inlineDataParts[1].inlineData?.data).toBe("MASKDATA");
+  });
+
+  it("inpainting: uses shadow-remove guide semantics for shadow removal edits", async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        modelVersion: "gemini-2.5-flash-image",
+        parts: [{ inlineData: { mimeType: "image/png", data: "DESHADOWED" } }],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    await provider.execute({
+      task: {
+        id: "inp-shadow-remove",
+        family: "inpainting",
+        prompt: "Remove the cast shadow naturally",
+        input: {
+          image: makeImageAsset("data:image/png;base64,SOURCE"),
+          mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
+        },
+        options: { guideMode: "shadow-remove" },
+      },
+    });
+
+    const body = parseFetchBody(fetchMock);
+    const contents = body.contents as Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+    const textPart = contents[0].parts.find((p) => "text" in p);
+    expect(textPart?.text).toContain("colour-coded guide mask");
+    expect(textPart?.text).toContain("dual-colour shadow guide image");
+    expect(textPart?.text).toContain("black pixels mark the approximate existing shadow region to clean up, lighten, or remove");
+    expect(textPart?.text).toContain("Red pixels, if present, are only optional extra context");
+    expect(textPart?.text).toContain("do not depend on red pixels being present");
+    expect(textPart?.text).toContain("Treat black guide pixels only as the editable shadow-removal region");
+    expect(textPart?.text).toContain("Only modify pixels inside the guide-constrained editable region");
+    expect(textPart?.text).toContain("Input order: 1) source image, 2) colour-coded guide mask");
+    expect(textPart?.text).not.toContain("binary edit mask");
+
+    const inlineDataParts = contents[0].parts.filter((p) => "inlineData" in p);
+    expect(inlineDataParts).toHaveLength(2);
+    expect(inlineDataParts[0].inlineData?.data).toBe("SOURCE");
+    expect(inlineDataParts[1].inlineData?.data).toBe("MASKDATA");
+  });
+
+  it("inpainting: uses reflection-add guide semantics for reflection generation edits", async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        modelVersion: "gemini-2.5-flash-image",
+        parts: [{ inlineData: { mimeType: "image/png", data: "REFLECTED" } }],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    await provider.execute({
+      task: {
+        id: "inp-reflection-add",
+        family: "inpainting",
+        prompt: "Add a realistic reflection",
+        input: {
+          image: makeImageAsset("data:image/png;base64,SOURCE"),
+          mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
+        },
+        options: { guideMode: "reflection-add" },
+      },
+    });
+
+    const body = parseFetchBody(fetchMock);
+    const contents = body.contents as Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+    const textPart = contents[0].parts.find((p) => "text" in p);
+    expect(textPart?.text).toContain("colour-coded guide mask");
+    expect(textPart?.text).toContain("dual-colour reflection guide image");
+    expect(textPart?.text).toContain("red pixels mark the source object or bright cause of the reflection or glare");
+    expect(textPart?.text).toContain("black pixels mark the approximate target region where the reflection or glare should appear");
+    expect(textPart?.text).toContain("Treat both coloured guides as approximate semantic guides, not exact contours to trace");
+    expect(textPart?.text).toContain("Treat black guide pixels only as the editable target region for integrating reflected or glared image content");
+    expect(textPart?.text).toContain("Input order: 1) source image, 2) colour-coded guide mask");
+    expect(textPart?.text).not.toContain("binary edit mask");
+  });
+
+  it("inpainting: uses reflection-remove guide semantics for reflection cleanup edits", async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        modelVersion: "gemini-2.5-flash-image",
+        parts: [{ inlineData: { mimeType: "image/png", data: "CLEANED" } }],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    await provider.execute({
+      task: {
+        id: "inp-reflection-remove",
+        family: "inpainting",
+        prompt: "Remove the reflection naturally",
+        input: {
+          image: makeImageAsset("data:image/png;base64,SOURCE"),
+          mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
+        },
+        options: { guideMode: "reflection-remove" },
+      },
+    });
+
+    const body = parseFetchBody(fetchMock);
+    const contents = body.contents as Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+    const textPart = contents[0].parts.find((p) => "text" in p);
+    expect(textPart?.text).toContain("colour-coded guide mask");
+    expect(textPart?.text).toContain("dual-colour reflection guide image");
+    expect(textPart?.text).toContain("black pixels mark the approximate reflection or glare region to clean up, lighten, or remove");
+    expect(textPart?.text).toContain("Red pixels, if present, are only optional extra context");
+    expect(textPart?.text).toContain("do not depend on red pixels being present");
+    expect(textPart?.text).toContain("Treat black guide pixels only as the editable reflection-removal region");
+    expect(textPart?.text).toContain("Input order: 1) source image, 2) colour-coded guide mask");
+    expect(textPart?.text).not.toContain("binary edit mask");
+  });
+
+  it("inpainting: uses clone-object guide semantics when guide mode requests cloning", async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        modelVersion: "gemini-2.5-flash-image",
+        parts: [{ inlineData: { mimeType: "image/png", data: "CLONED" } }],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    const task: AiInpaintingTask = {
+      id: "inp-clone",
+      family: "inpainting",
+      prompt: "Clone the object",
+      input: {
+        image: makeImageAsset("data:image/png;base64,SOURCE"),
+        mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
+      },
+      options: { guideMode: "clone-object" },
+    };
+
+    await provider.execute({ task });
+
+    const body = parseFetchBody(fetchMock);
+    const contents = body.contents as Array<{ parts: Array<{ text?: string }> }>;
+    const textPart = contents[0].parts.find((p) => "text" in p);
+    expect(textPart?.text).toContain("colour-coded guide mask");
+    expect(textPart?.text).toContain("dual-colour object guide image");
+    expect(textPart?.text).toContain("red pixels mark the source object to clone");
+    expect(textPart?.text).toContain("black pixels mark the destination region where the cloned object should appear");
+    expect(textPart?.text).toContain("multiple separate black destination islands");
+    expect(textPart?.text).toContain("one natural copy inside each meaningful black destination island in a single pass");
+    expect(textPart?.text).toContain("Keep the original red-marked object in place and do not modify or erase it");
+    expect(textPart?.text).toContain("The black region is a placement hint, not a literal filled shape to render");
+  });
+
+  it("inpainting: clone-object sends source image and colour-coded guide mask as two inline data parts", async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        modelVersion: "gemini-2.5-flash-image",
+        parts: [{ inlineData: { mimeType: "image/png", data: "CLONEDMASKED" } }],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    await provider.execute({
+      task: {
+        id: "inp-clone-masked",
+        family: "inpainting",
+        prompt: "Clone the object into the destination",
+        input: {
+          image: makeImageAsset("data:image/png;base64,SOURCE"),
+          mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
+        },
+        options: { guideMode: "clone-object" },
+      },
+    });
+
+    const body = parseFetchBody(fetchMock);
+    const contents = body.contents as Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+    const textPart = contents[0].parts.find((p) => "text" in p);
+    expect(textPart?.text).toContain("colour-coded guide mask");
+    expect(textPart?.text).toContain("Input order: 1) source image, 2) colour-coded guide mask");
+
+    const inlineDataParts = contents[0].parts.filter((p) => "inlineData" in p);
+    expect(inlineDataParts).toHaveLength(2);
+    expect(inlineDataParts[0].inlineData?.data).toBe("SOURCE");
+    expect(inlineDataParts[1].inlineData?.data).toBe("MASKDATA");
+  });
+
+  it("inpainting: uses move-object guide semantics when guide mode requests moving", async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        modelVersion: "gemini-2.5-flash-image",
+        parts: [{ inlineData: { mimeType: "image/png", data: "MOVED" } }],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    await provider.execute({
+      task: {
+        id: "inp-move",
+        family: "inpainting",
+        prompt: "Move the object",
+        input: {
+          image: makeImageAsset("data:image/png;base64,SOURCE"),
+          mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
+        },
+        options: { guideMode: "move-object" },
+      },
+    });
+
+    const body = parseFetchBody(fetchMock);
+    const contents = body.contents as Array<{ parts: Array<{ text?: string }> }>;
+    const textPart = contents[0].parts.find((p) => "text" in p);
+    expect(textPart?.text).toContain("dual-colour object guide image");
+    expect(textPart?.text).toContain("red pixels mark the source object to move");
+    expect(textPart?.text).toContain("black pixels mark the destination region where the moved object should appear");
+    expect(textPart?.text).toContain("Preserve the identity of that exact object while relocating it");
+    expect(textPart?.text).toContain("Remove the object from the red-marked source area");
+    expect(textPart?.text).toContain("leave no duplicate, ghost, outline, residue, or partial remnant behind");
+    expect(textPart?.text).toContain("Place exactly one instance of the same object inside the black destination region");
+    expect(textPart?.text).toContain("must not hallucinate unrelated new objects or create multiple destination copies");
+    expect(textPart?.text).toContain("The black region is a placement hint, not a literal filled shape to render");
+  });
+
+  // ── Text Replacement ───────────────────────────────────────────────────
+
+  it("text-replacement: uses native endpoint with TEXT-only modalities and returns json artifact", async () => {
+    const jsonPayload = '{"schemaVersion":"f4.2/v1","blocks":[{"id":"b1","text":"Replaced","bounds":{"x":0,"y":0,"width":50,"height":20}}]}';
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        modelVersion: "gemini-2.5-flash-image",
+        parts: [
+          { text: jsonPayload },
+        ],
+        usageMetadata: { promptTokenCount: 40, candidatesTokenCount: 50, totalTokenCount: 90 },
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    const task: AiTextReplacementTask = {
+      id: "txr-1",
+      family: "text-replacement",
+      prompt: "Remove text and reconstruct",
+      input: {
+        image: makeImageAsset("data:image/png;base64,SOURCE"),
+        mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
+      },
+    };
+
+    const result = await provider.execute({ task });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected success");
+
+    // Should have only a json artifact, no image artifact
+    const imageArtifact = result.artifacts.find((a) => a.kind === "image");
+    const jsonArtifact = result.artifacts.find((a) => a.kind === "json");
+    expect(imageArtifact).toBeUndefined();
+    expect(jsonArtifact).toMatchObject({
+      kind: "json",
+      role: "text-reconstruction",
+      mimeType: "application/json",
+      text: jsonPayload,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${GEMINI_NATIVE_ENDPOINT}/models/gemini-2.5-flash-image:generateContent`,
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    // Verify request body sends TEXT-only responseModalities
+    const body = parseFetchBody(fetchMock);
+    const generationConfig = body.generationConfig as { responseModalities: string[] };
+    expect(generationConfig.responseModalities).toEqual(["TEXT"]);
+
+    // Verify request body sends prompt + image + mask
+    const contents = body.contents as Array<{ parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>;
+    expect(contents).toHaveLength(1);
+    const textPart = contents[0].parts.find((p) => "text" in p);
+    expect(textPart?.text).toContain("Remove text and reconstruct");
+    const inlineDataParts = contents[0].parts.filter((p) => "inlineData" in p);
+    expect(inlineDataParts).toHaveLength(2);
+    expect(inlineDataParts[0].inlineData?.data).toBe("SOURCE");
+    expect(inlineDataParts[1].inlineData?.data).toBe("MASKDATA");
+  });
+
+  it("text-replacement: returns failure when response contains no text", async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({ parts: [] }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    const task: AiTextReplacementTask = {
+      id: "txr-empty",
+      family: "text-replacement",
+      prompt: "Replace text",
+      input: {
+        image: makeImageAsset(),
+        mask: makeMaskAsset(),
+      },
+    };
+
+    const result = await provider.execute({ task });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+  });
+
+  it("text-replacement: returns failure when response text contains no valid JSON", async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        parts: [{ text: "I cannot process this image, sorry." }],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    const task: AiTextReplacementTask = {
+      id: "txr-no-json",
+      family: "text-replacement",
+      prompt: "Replace text",
+      input: {
+        image: makeImageAsset(),
+        mask: makeMaskAsset(),
+      },
+    };
+
+    const result = await provider.execute({ task });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+  });
+
+  it("text-replacement: extracts JSON from markdown code fences in response text", async () => {
+    const jsonContent = '{"schemaVersion":"f4.2/v1","blocks":[]}';
+    const wrappedJson = `Here is the result:\n\`\`\`json\n${jsonContent}\n\`\`\``;
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        parts: [
+          { text: wrappedJson },
+        ],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    const task: AiTextReplacementTask = {
+      id: "txr-fence",
+      family: "text-replacement",
+      prompt: "Replace text",
+      input: {
+        image: makeImageAsset(),
+        mask: makeMaskAsset(),
+      },
+    };
+
+    const result = await provider.execute({ task });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected success");
+    const jsonArtifact = result.artifacts.find((a) => a.kind === "json");
+    expect(jsonArtifact).toBeDefined();
+    expect((jsonArtifact as { text: string }).text).toBe(jsonContent);
+    // Should not have any image artifacts
+    const imageArtifact = result.artifacts.find((a) => a.kind === "image");
+    expect(imageArtifact).toBeUndefined();
   });
 
   // ── Error handling ────────────────────────────────────────────────────
@@ -933,6 +1474,53 @@ describe("Gemini provider", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failure");
     expect(result.error.code).toBe("invalid_response");
+    expect(result.error.aiMessage).toBe("I could not generate a mask.");
+    expect(result.error.message).toContain("I could not generate a mask.");
+  });
+
+  it("segmentation: returns failure with finishReason when safety blocked (no content)", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makeSafetyBlockedResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiSegmentationTask = {
+      id: "seg-safety",
+      family: "segmentation",
+      input: { image: makeImageAsset() },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("SAFETY");
+  });
+
+  it("segmentation: returns failure with blockReason when prompt is blocked", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makePromptBlockedResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiSegmentationTask = {
+      id: "seg-prompt-block",
+      family: "segmentation",
+      input: { image: makeImageAsset() },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("SAFETY");
+  });
+
+  it("segmentation: returns failure with finishReason when content parts are empty (non-STOP)", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makeEmptyPartsResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiSegmentationTask = {
+      id: "seg-empty-parts",
+      family: "segmentation",
+      input: { image: makeImageAsset() },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("RECITATION");
   });
 
   it("segmentation: returns provider_error when API responds with non-ok status", async () => {
@@ -1010,6 +1598,75 @@ describe("Gemini provider", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failure");
     expect(result.error.code).toBe("invalid_response");
+    expect(result.error.aiMessage).toBe("Unable to inpaint the image.");
+    expect(result.error.message).toContain("Unable to inpaint the image.");
+  });
+
+  it("inpainting: returns failure with finishReason when safety blocked (no content)", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makeSafetyBlockedResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiInpaintingTask = {
+      id: "inp-safety",
+      family: "inpainting",
+      prompt: "Fill in the gap",
+      input: { image: makeImageAsset(), mask: makeMaskAsset() },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("SAFETY");
+  });
+
+  it("inpainting: returns failure with blockReason when prompt is blocked", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makePromptBlockedResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiInpaintingTask = {
+      id: "inp-prompt-block",
+      family: "inpainting",
+      prompt: "Fill in the gap",
+      input: { image: makeImageAsset(), mask: makeMaskAsset() },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("SAFETY");
+  });
+
+  it("inpainting: returns failure with finishReason when content parts are empty (non-STOP)", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makeEmptyPartsResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiInpaintingTask = {
+      id: "inp-empty-parts",
+      family: "inpainting",
+      prompt: "Fill in the gap",
+      input: { image: makeImageAsset(), mask: makeMaskAsset() },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("RECITATION");
+  });
+
+  it("inpainting: prefers finishMessage over finishReason when Gemini provides both", async () => {
+    const finishMessage = "Unable to show the generated image. The model could not generate the image based on the prompt provided.";
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makeFinishMessageResponse(finishMessage) });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiInpaintingTask = {
+      id: "inp-finish-message",
+      family: "inpainting",
+      prompt: "Fill in the gap",
+      input: { image: makeImageAsset(), mask: makeMaskAsset() },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.aiMessage).toBe(finishMessage);
+    expect(result.error.message).toContain(finishMessage);
+    expect(result.error.message).not.toContain("Finish reason: IMAGE_OTHER");
   });
 
   it("inpainting: returns provider_error when API responds with 403", async () => {
@@ -1065,6 +1722,56 @@ describe("Gemini provider", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failure");
     expect(result.error.code).toBe("invalid_response");
+    expect(result.error.aiMessage).toBe("Could not enhance the image.");
+    expect(result.error.message).toContain("Could not enhance the image.");
+  });
+
+  it("enhancement: returns failure with finishReason when safety blocked (no content)", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makeSafetyBlockedResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiEnhancementTask = {
+      id: "enh-safety",
+      family: "enhancement",
+      input: { image: makeImageAsset() },
+      options: { operation: "auto-enhance" },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("SAFETY");
+  });
+
+  it("enhancement: returns failure with blockReason when prompt is blocked", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makePromptBlockedResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiEnhancementTask = {
+      id: "enh-prompt-block",
+      family: "enhancement",
+      input: { image: makeImageAsset() },
+      options: { operation: "auto-enhance" },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("SAFETY");
+  });
+
+  it("enhancement: returns failure with finishReason when content parts are empty (non-STOP)", async () => {
+    const fetchMock = mockFetch({ ok: true, status: 200, body: makeEmptyPartsResponse() });
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+    const task: AiEnhancementTask = {
+      id: "enh-empty-parts",
+      family: "enhancement",
+      input: { image: makeImageAsset() },
+      options: { operation: "auto-enhance" },
+    };
+    const result = await provider.execute({ task });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.code).toBe("invalid_response");
+    expect(result.error.message).toContain("RECITATION");
   });
 
   it("enhancement: includes reference images as additional inlineData parts", async () => {
@@ -1342,6 +2049,38 @@ describe("Gemini provider", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       `${GEMINI_NATIVE_ENDPOINT}/models/gemini-custom-model:generateContent`,
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("text-replacement: uses preferredModel override in native endpoint URL", async () => {
+    const jsonPayload = '{"schemaVersion":"f4.2/v1","blocks":[]}';
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: makeNativeResponse({
+        parts: [
+          { text: jsonPayload },
+        ],
+      }),
+    });
+
+    const provider = createGeminiProvider({ apiKey: "test-key", fetch: fetchMock });
+
+    const task: AiTextReplacementTask = {
+      id: "txr-preferred",
+      family: "text-replacement",
+      prompt: "Replace text with custom model",
+      input: {
+        image: makeImageAsset("data:image/png;base64,SOURCE"),
+        mask: makeMaskAsset("data:image/png;base64,MASKDATA"),
+      },
+    };
+
+    await provider.execute({ task, preferredModel: "gemini-custom-text-model" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${GEMINI_NATIVE_ENDPOINT}/models/gemini-custom-text-model:generateContent`,
       expect.objectContaining({ method: "POST" }),
     );
   });

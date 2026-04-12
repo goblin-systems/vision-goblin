@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { normalizeEffects, EFFECT_DEFAULTS } from "./documents";
 import {
   createEffect,
@@ -8,6 +8,9 @@ import {
   getEffectMeta,
   EFFECT_META,
   getAllPresets,
+  loadCustomPresets,
+  saveCustomPreset,
+  summarizeEffectStack,
 } from "./layerStyles";
 import type { EffectType, LayerEffect } from "./types";
 
@@ -149,6 +152,10 @@ describe("getEffectMeta", () => {
 });
 
 describe("style presets", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it("has 6 built-in presets", () => {
     expect(BUILT_IN_PRESETS).toHaveLength(6);
     for (const preset of BUILT_IN_PRESETS) {
@@ -171,6 +178,30 @@ describe("style presets", () => {
     const presets = getAllPresets();
     expect(presets.length).toBeGreaterThanOrEqual(BUILT_IN_PRESETS.length);
   });
+
+  it("saveCustomPreset stores a normalized custom preset", () => {
+    const result = saveCustomPreset("  Hero Glow  ", [createEffect("outer-glow")]);
+
+    expect(result.replacedExisting).toBe(false);
+    expect(result.preset.name).toBe("Hero Glow");
+    expect(loadCustomPresets()).toEqual([
+      {
+        name: "Hero Glow",
+        builtIn: false,
+        effects: [createEffect("outer-glow")],
+      },
+    ]);
+  });
+
+  it("saveCustomPreset replaces an existing custom preset with the same name", () => {
+    saveCustomPreset("Glow", [createEffect("outer-glow")]);
+    const replacement = createEffect("outline");
+    const result = saveCustomPreset(" glow ", [replacement]);
+
+    expect(result.replacedExisting).toBe(true);
+    expect(loadCustomPresets()).toHaveLength(1);
+    expect(loadCustomPresets()[0]?.effects).toEqual([replacement]);
+  });
 });
 
 describe("hasEnabledEffects", () => {
@@ -192,5 +223,15 @@ describe("hasEnabledEffects", () => {
     expect(hasEnabledEffects([
       { type: "drop-shadow", color: "#000", offsetX: 0, offsetY: 0, blur: 4, opacity: 0.5, enabled: true },
     ])).toBe(true);
+  });
+});
+
+describe("summarizeEffectStack", () => {
+  it("describes enabled and disabled counts", () => {
+    expect(summarizeEffectStack()).toBe("No effects");
+    expect(summarizeEffectStack([
+      { type: "drop-shadow", color: "#000", offsetX: 0, offsetY: 0, blur: 4, opacity: 0.5, enabled: true },
+      { type: "outline", color: "#fff", width: 2, opacity: 1, enabled: false },
+    ])).toBe("1 active, 1 disabled");
   });
 });

@@ -3,11 +3,13 @@ import { pushHistory } from "../editor/history";
 import { defaultPolygonRotation, isAxisAlignedRectMarquee } from "../editor/selection";
 import { renderCanvas as renderCanvasView } from "../editor/render";
 import { buildTransformPreview } from "../editor/documents";
-import type { DocumentState, Guide, Layer, PointerState } from "../editor/types";
+import { formatLargeImageMetrics, getLargeImagePolicy, getRenderDegradationPolicy } from "../editor/largeImagePolicy";
+import type { BrushState, DocumentState, Guide, Layer, PointerState } from "../editor/types";
 import type { VisionSettings } from "../settings";
 import type { SelectionMode } from "../editor/selection";
 import type { TransformDraft } from "../editor/types";
 import { clamp, nextId } from "../editor/utils";
+import { isBrushCursorTool } from "./editorInteractionController";
 
 const RULER_SIZE = 20;
 export const SNAP_THRESHOLD = 6;
@@ -126,17 +128,26 @@ interface CanvasPointerBindings {
 }
 
 export interface CanvasWorkspaceControllerDeps {
+  canvasWrap: HTMLElement;
   editorCanvas: HTMLCanvasElement;
   getEditorContext: () => CanvasRenderingContext2D;
   getSettings: () => VisionSettings;
   getActiveDocument: () => DocumentState | null;
   getActiveLayer: (doc: DocumentState) => Layer | null;
+  getBrushState: () => BrushState;
+  adjustBrushSize: (delta: number) => number;
   getPointerState: () => PointerState;
   getTransformDraft: () => TransformDraft | null;
   getEffectiveMarqueeMode: () => SelectionMode;
   getMarqueeSides: () => number;
   getMarqueeModifiers: () => { rotate: boolean; perfect: boolean };
   getQuickMaskOverlay: () => { canvas: HTMLCanvasElement; color: string } | null;
+  getMaskOverlays?: () => Array<{
+    canvas: HTMLCanvasElement;
+    color: string;
+    outlineColor: string;
+    active: boolean;
+  }>;
   renderShellState: () => void;
   renderEditorState: () => void;
   updateMarqueeModeFromModifiers: (ctrlKey: boolean, shiftKey: boolean, altKey: boolean) => void;
@@ -145,6 +156,8 @@ export interface CanvasWorkspaceControllerDeps {
   resetView: () => void;
   showToast: (message: string, variant?: "success" | "error" | "info") => void;
   log: (message: string, level?: "INFO" | "WARN" | "ERROR") => void;
+  getHiddenLayerId?: () => string | null;
+  onAfterCanvasRender?: () => void;
 }
 
 export interface CanvasWorkspaceController {
@@ -160,6 +173,12 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
   let activeSnapLines: SnapLine[] = [];
   let draggingGuideId: string | null = null;
   let scheduledCanvasRender = 0;
+  let lastRenderDiagnosticSignature = "";
+  let paintCursorPosition: { clientX: number; clientY: number } | null = null;
+  const paintCursor = document.createElement("div");
+  paintCursor.className = "paint-cursor-ring";
+  paintCursor.setAttribute("aria-hidden", "true");
+  paintCursor.hidden = true;
 
   const requestRenderFrame = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
     ? window.requestAnimationFrame.bind(window)
@@ -184,20 +203,86 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
     return { x: result.x, y: result.y };
   }
 
+  function hidePaintCursor() {
+    paintCursor.hidden = true;
+    if (deps.editorCanvas.style.cursor === "none") {
+      deps.editorCanvas.style.cursor = "";
+    }
+  }
+
+  function syncPaintCursor() {
+    const doc = deps.getActiveDocument();
+    const activeTool = deps.getSettings().activeTool;
+    if (!doc || !paintCursorPosition || !isBrushCursorTool(activeTool)) {
+      hidePaintCursor();
+      return;
+    }
+
+    const rect = deps.editorCanvas.getBoundingClientRect();
+    if (
+      paintCursorPosition.clientX < rect.left
+      || paintCursorPosition.clientX > rect.right
+      || paintCursorPosition.clientY < rect.top
+      || paintCursorPosition.clientY > rect.bottom
+    ) {
+      hidePaintCursor();
+      return;
+    }
+
+    const bounds = getCanvasBoundsForDoc(doc);
+    const diameter = Math.max(1, Math.round(deps.getBrushState().brushSize * bounds.scale));
+    paintCursor.style.left = `${Math.round(paintCursorPosition.clientX - rect.left)}px`;
+    paintCursor.style.top = `${Math.round(paintCursorPosition.clientY - rect.top)}px`;
+    paintCursor.style.width = `${diameter}px`;
+    paintCursor.style.height = `${diameter}px`;
+    paintCursor.hidden = false;
+    deps.editorCanvas.style.cursor = "none";
+  }
+
+  function updatePaintCursorPosition(clientX: number, clientY: number) {
+    paintCursorPosition = { clientX, clientY };
+    syncPaintCursor();
+  }
+
   function renderCanvas() {
     const doc = deps.getActiveDocument();
     const activeTransformDraft = deps.getTransformDraft();
     const pointerState = deps.getPointerState();
+    const interactiveRender = pointerState.mode !== "none" || !!activeTransformDraft;
     const previewLayer = doc && activeTransformDraft ? doc.layers.find((item) => item.id === activeTransformDraft.layerId) : null;
+    const transformFrame = activeTransformDraft?.frameBounds ?? null;
     const transformPreview = activeTransformDraft && previewLayer?.visible
-      ? { layerId: activeTransformDraft.layerId, ...buildTransformPreview(activeTransformDraft) }
+      ? {
+        layerId: activeTransformDraft.layerId,
+        layerIds: activeTransformDraft.previewLayerIds,
+        ...buildTransformPreview(activeTransformDraft),
+      }
       : null;
+    const largeImagePolicy = doc ? getLargeImagePolicy(doc) : null;
+    const degradedRendering = doc ? getRenderDegradationPolicy(doc, interactiveRender) : null;
+
+    if (!doc || !largeImagePolicy || !degradedRendering) {
+      lastRenderDiagnosticSignature = "";
+    } else {
+      const signature = [doc.id, interactiveRender, degradedRendering.active, degradedRendering.skipAdjustmentLayers, degradedRendering.skipSelectionOverlays].join(":");
+      if (signature !== lastRenderDiagnosticSignature) {
+        lastRenderDiagnosticSignature = signature;
+        if (degradedRendering.active) {
+          deps.log(
+            `Large image degraded interactive render for '${doc.name}' (${formatLargeImageMetrics(largeImagePolicy)}): ${degradedRendering.reasons.join(", ")}`,
+            "WARN"
+          );
+        }
+      }
+    }
+
     renderCanvasView({
       editorCanvas: deps.editorCanvas,
       getEditorContext: deps.getEditorContext,
       doc,
       activeTool: deps.getSettings().activeTool,
       activeLayer: doc ? deps.getActiveLayer(doc) : null,
+      skipLayerId: deps.getHiddenLayerId?.() ?? null,
       marqueePreview: pointerState.mode === "marquee"
         ? (() => {
             const previewRect = doc?.selectionRect ?? null;
@@ -219,6 +304,8 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
           })()
         : null,
       transformPreview,
+      transformFrame,
+      transformIntent: activeTransformDraft?.intent ?? null,
       pivotPoint: activeTransformDraft ? { x: activeTransformDraft.pivotX, y: activeTransformDraft.pivotY } : null,
       guides: doc?.guides ?? [],
       snapLines: activeSnapLines,
@@ -226,7 +313,11 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
       showGrid: deps.getSettings().showGrid,
       gridSize: deps.getSettings().gridSize,
       quickMaskOverlay: deps.getQuickMaskOverlay(),
+      maskOverlays: deps.getMaskOverlays?.() ?? [],
+      degradedRendering,
     });
+    syncPaintCursor();
+    deps.onAfterCanvasRender?.();
   }
 
   function scheduleCanvasRender() {
@@ -254,6 +345,17 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
     deps.editorCanvas.addEventListener("wheel", (event) => {
       const doc = deps.getActiveDocument();
       if (!doc) return;
+
+      if (event.altKey && isBrushCursorTool(deps.getSettings().activeTool)) {
+        event.preventDefault();
+        const delta = event.deltaY < 0 ? 1 : event.deltaY > 0 ? -1 : 0;
+        if (delta !== 0) {
+          deps.adjustBrushSize(delta);
+        }
+        updatePaintCursorPosition(event.clientX, event.clientY);
+        return;
+      }
+
       event.preventDefault();
       doc.zoom = clamp(doc.zoom + (event.deltaY < 0 ? 10 : -10), 10, 800);
       deps.log(`Wheel zoom changed to ${doc.zoom}% for '${doc.name}'`, "INFO");
@@ -315,7 +417,24 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
   }
 
   function bindCanvasInteractions() {
+    if (!paintCursor.parentElement) {
+      deps.canvasWrap.appendChild(paintCursor);
+    }
+
     deps.editorCanvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+    deps.editorCanvas.addEventListener("pointerenter", (event) => {
+      updatePaintCursorPosition(event.clientX, event.clientY);
+    });
+
+    deps.editorCanvas.addEventListener("pointermove", (event) => {
+      updatePaintCursorPosition(event.clientX, event.clientY);
+    });
+
+    deps.editorCanvas.addEventListener("pointerleave", () => {
+      paintCursorPosition = null;
+      hidePaintCursor();
+    });
 
     deps.editorCanvas.addEventListener("pointerdown", (event) => {
       deps.updateMarqueeModeFromModifiers(event.ctrlKey, event.shiftKey, event.altKey);
@@ -407,6 +526,10 @@ export function createCanvasWorkspaceController(deps: CanvasWorkspaceControllerD
     });
 
     window.addEventListener("resize", renderCanvas);
+    window.addEventListener("blur", () => {
+      paintCursorPosition = null;
+      hidePaintCursor();
+    });
   }
 
   return {

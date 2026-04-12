@@ -4,6 +4,7 @@ import { createSelectionController } from "./selectionController";
 import { createMaskCanvas, fillMask } from "./selection";
 import type { RasterLayer } from "./types";
 import { createLayerCanvas, syncLayerSource } from "./documents";
+import { installPixelCanvasMock, readPixel, setPixel } from "../test/pixelCanvasMock";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -23,6 +24,7 @@ function makeController(doc: ReturnType<typeof makeNewDocument>, overrides?: {
     showToast: vi.fn(),
     log: vi.fn(),
     snapshotDocument: (_d) => "snapshot-" + Date.now(),
+    getSelectionMaskTarget: () => null,
   });
 }
 
@@ -113,6 +115,7 @@ describe("selectionController", () => {
       showToast: vi.fn(),
       log: vi.fn(),
       snapshotDocument: vi.fn(() => "snapshot"),
+      getSelectionMaskTarget: () => null,
     });
 
     controller.setMarqueeSides(20);
@@ -135,6 +138,7 @@ describe("selectionController", () => {
       showToast: vi.fn(),
       log: vi.fn(),
       snapshotDocument: vi.fn(() => "snapshot"),
+      getSelectionMaskTarget: () => null,
     });
 
     controller.toggleQuickMask();
@@ -161,6 +165,7 @@ describe("selectionController", () => {
       showToast: vi.fn(),
       log: vi.fn(),
       snapshotDocument: vi.fn(() => "snapshot"),
+      getSelectionMaskTarget: () => null,
     });
 
     controller.updateMarqueeModeFromModifiers(false, true, false);
@@ -181,11 +186,12 @@ describe("selectionController", () => {
       showToast: vi.fn(),
       log: vi.fn(),
       snapshotDocument: vi.fn(() => "snapshot"),
+      getSelectionMaskTarget: () => null,
     });
 
-    expect(controller.getMarqueeModifiers({ ctrlPressed: true, shiftPressed: true, altPressed: false })).toEqual({ rotate: true, perfect: true });
-    expect(controller.getMarqueeModifiers({ ctrlPressed: false, shiftPressed: true, altPressed: true })).toEqual({ rotate: false, perfect: false });
-    expect(controller.getMarqueeModifiers({ ctrlPressed: false, shiftPressed: false, altPressed: false })).toEqual({ rotate: false, perfect: true });
+    expect(controller.getMarqueeModifiers({ ctrlPressed: true, shiftPressed: true, altPressed: false })).toEqual({ rotate: true, perfect: false });
+    expect(controller.getMarqueeModifiers({ ctrlPressed: false, shiftPressed: true, altPressed: true })).toEqual({ rotate: false, perfect: true });
+    expect(controller.getMarqueeModifiers({ ctrlPressed: false, shiftPressed: false, altPressed: false })).toEqual({ rotate: false, perfect: false });
   });
 });
 
@@ -395,6 +401,48 @@ describe("completeLassoSelection — undo snapshots", () => {
     expect(doc.history).toHaveLength(0);
   });
 
+  it("clears an existing selection on replace-mode lasso click", () => {
+    const doc = freshDoc();
+    doc.selectionRect = { x: 5, y: 5, width: 30, height: 30 };
+    doc.selectionMask = createMaskCanvas(doc.width, doc.height);
+    fillMask(doc.selectionMask);
+    doc.selectionPath = {
+      points: [{ x: 10, y: 10 }, { x: 11, y: 10 }],
+      closed: false,
+    };
+    const controller = makeController(doc, { getActiveTool: () => "lasso" });
+
+    controller.completeLassoSelection(0, 0);
+
+    expect(doc.selectionRect).toBeNull();
+    expect(doc.selectionMask).toBeNull();
+    expect(doc.selectionPath).toBeNull();
+    expect(doc.undoStack).toHaveLength(1);
+    expect(doc.history[0]).toBe("Deselected");
+  });
+
+  it("keeps the current selection on non-replace lasso click", () => {
+    const doc = freshDoc();
+    const existingMask = createMaskCanvas(doc.width, doc.height);
+    fillMask(existingMask);
+    doc.selectionRect = { x: 5, y: 5, width: 30, height: 30 };
+    doc.selectionMask = existingMask;
+    doc.selectionPath = {
+      points: [{ x: 10, y: 10 }, { x: 11, y: 10 }],
+      closed: false,
+    };
+    const controller = makeController(doc, { getActiveTool: () => "lasso" });
+    controller.setMarqueeMode("add");
+
+    controller.completeLassoSelection(0, 0);
+
+    expect(doc.selectionRect).toEqual({ x: 5, y: 5, width: 30, height: 30 });
+    expect(doc.selectionMask).toBe(existingMask);
+    expect(doc.selectionPath).toBeNull();
+    expect(doc.undoStack).toHaveLength(0);
+    expect(doc.history).toHaveLength(0);
+  });
+
   it("does NOT push a snapshot when path bounding rect is too small", () => {
     const doc = freshDoc();
     doc.selectionPath = {
@@ -444,7 +492,6 @@ describe("completeLassoSelection — undo snapshots", () => {
     expect(doc.redoStack).toHaveLength(0);
   });
 });
-
 // ---------------------------------------------------------------------------
 // magicWandSelect — undo snapshots
 // ---------------------------------------------------------------------------
@@ -540,5 +587,226 @@ describe("magicWandSelect — undo snapshots", () => {
     controller.magicWandSelect(0, 0);
 
     expect(doc.redoStack).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session-target redirection
+// ---------------------------------------------------------------------------
+
+describe("session-target redirection", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    installPixelCanvasMock();
+  });
+
+  function freshDocWithPixelMock(width = 10, height = 10) {
+    const doc = makeNewDocument("Doc", width, height, 100, "transparent");
+    doc.history = [];
+    doc.historyIndex = 0;
+    doc.undoStack = [];
+    doc.redoStack = [];
+    return doc;
+  }
+
+  function makePixelRasterLayer(w = 10, h = 10): RasterLayer {
+    const canvas = createLayerCanvas(w, h);
+    // Fill with a uniform colour so magic wand flood-fill hits every pixel
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        setPixel(canvas, x, y, { r: 200, g: 200, b: 200, a: 255 });
+      }
+    }
+    const layer: RasterLayer = {
+      id: "layer-test",
+      type: "raster",
+      name: "Layer",
+      canvas,
+      x: 0,
+      y: 0,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      effects: [],
+    };
+    syncLayerSource(layer);
+    return layer;
+  }
+
+  function makeSessionTargetController(
+    doc: ReturnType<typeof freshDocWithPixelMock>,
+    sessionTarget: HTMLCanvasElement,
+    overrides?: {
+      getActiveTool?: () => string;
+      getActiveLayer?: (d: ReturnType<typeof freshDocWithPixelMock>) => RasterLayer | null;
+    },
+  ) {
+    return createSelectionController({
+      getActiveDocument: () => doc,
+      getActiveLayer: overrides?.getActiveLayer ?? ((activeDoc) => (activeDoc.layers[0] as RasterLayer) ?? null),
+      getActiveTool: (overrides?.getActiveTool as () => import("../settings").ToolName) ?? (() => "marquee" as const),
+      setActiveTool: vi.fn(),
+      renderEditorState: vi.fn(),
+      renderToolState: vi.fn(),
+      showToast: vi.fn(),
+      log: vi.fn(),
+      snapshotDocument: (_d) => "snapshot-" + Date.now(),
+      getSelectionMaskTarget: () => sessionTarget,
+    });
+  }
+
+  it("magic wand writes to session target when active", () => {
+    const layer = makePixelRasterLayer(10, 10);
+    const doc = freshDocWithPixelMock(10, 10);
+    doc.layers = [layer];
+    doc.activeLayerId = layer.id;
+    const sessionTarget = createMaskCanvas(10, 10);
+
+    const controller = makeSessionTargetController(doc, sessionTarget, {
+      getActiveTool: () => "magic-wand",
+    });
+
+    controller.magicWandSelect(0, 0);
+
+    // The session target should have pixels (magic wand found contiguous region)
+    const pixel = readPixel(sessionTarget, 0, 0);
+    expect(pixel.a).toBeGreaterThan(0);
+
+    // doc.selectionMask should NOT be modified
+    expect(doc.selectionMask).toBeNull();
+  });
+
+  it("lasso writes to session target when active", () => {
+    const layer = makePixelRasterLayer(100, 100);
+    const doc = freshDocWithPixelMock(100, 100);
+    doc.layers = [layer];
+    doc.activeLayerId = layer.id;
+    const sessionTarget = createMaskCanvas(100, 100);
+
+    // Set up a valid lasso path (>= 3 points, large enough bounding rect)
+    doc.selectionPath = {
+      points: [{ x: 10, y: 10 }, { x: 50, y: 10 }, { x: 50, y: 50 }, { x: 10, y: 50 }],
+      closed: false,
+    };
+
+    const controller = makeSessionTargetController(doc, sessionTarget, {
+      getActiveTool: () => "lasso",
+    });
+
+    controller.completeLassoSelection(0, 0);
+
+    // The session target should have pixels from the lasso rasterization
+    let hasPixels = false;
+    for (let y = 10; y < 50; y++) {
+      for (let x = 10; x < 50; x++) {
+        if (readPixel(sessionTarget, x, y).a > 0) {
+          hasPixels = true;
+          break;
+        }
+      }
+      if (hasPixels) break;
+    }
+    expect(hasPixels).toBe(true);
+
+    // doc.selectionMask should NOT be modified
+    expect(doc.selectionMask).toBeNull();
+  });
+
+  it("replace mode clears target before writing", () => {
+    // Create a layer where only the top-left quadrant matches magic wand.
+    // This way the mask won't cover pixel (9,9), and replace's clearRect
+    // will erase the pre-filled pixel there.
+    const w = 10, h = 10;
+    const layer: RasterLayer = {
+      id: "layer-test",
+      type: "raster",
+      name: "Layer",
+      canvas: createLayerCanvas(w, h),
+      x: 0,
+      y: 0,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      effects: [],
+    };
+    // Fill top-left quadrant with one colour and bottom-right with a very different colour
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (x < 5 && y < 5) {
+          setPixel(layer.canvas, x, y, { r: 100, g: 100, b: 100, a: 255 });
+        } else {
+          setPixel(layer.canvas, x, y, { r: 0, g: 0, b: 0, a: 0 }); // transparent
+        }
+      }
+    }
+    syncLayerSource(layer);
+
+    const doc = freshDocWithPixelMock(w, h);
+    doc.layers = [layer];
+    doc.activeLayerId = layer.id;
+    const sessionTarget = createMaskCanvas(w, h);
+
+    // Pre-fill a pixel in the bottom-right area (outside the magic wand region)
+    setPixel(sessionTarget, 9, 9, { r: 255, g: 0, b: 0, a: 200 });
+    expect(readPixel(sessionTarget, 9, 9).a).toBe(200);
+
+    const controller = makeSessionTargetController(doc, sessionTarget, {
+      getActiveTool: () => "magic-wand",
+    });
+    // Default mode is "replace" — clearRect runs before drawImage
+    // Tolerance 32: magic wand from (2,2) floods the top-left contiguous region (100,100,100,255)
+
+    controller.magicWandSelect(2, 2);
+
+    // After replace mode: clearRect wiped the entire target, then the mask was drawn.
+    // The mask only covers the top-left quadrant, so (9,9) should now be transparent.
+    const pixel = readPixel(sessionTarget, 9, 9);
+    expect(pixel.a).toBe(0); // old pixel was cleared by replace
+    // And the top-left quadrant should have the mask
+    expect(readPixel(sessionTarget, 2, 2).a).toBeGreaterThan(0);
+  });
+
+  it("add mode accumulates on target", () => {
+    const layer = makePixelRasterLayer(10, 10);
+    const doc = freshDocWithPixelMock(10, 10);
+    doc.layers = [layer];
+    doc.activeLayerId = layer.id;
+    const sessionTarget = createMaskCanvas(10, 10);
+
+    // Pre-fill a pixel on the target
+    setPixel(sessionTarget, 5, 5, { r: 255, g: 255, b: 255, a: 255 });
+    expect(readPixel(sessionTarget, 5, 5).a).toBe(255);
+
+    const controller = makeSessionTargetController(doc, sessionTarget, {
+      getActiveTool: () => "magic-wand",
+    });
+    controller.setMarqueeMode("add");
+
+    // Magic wand will add its result onto the existing target
+    controller.magicWandSelect(0, 0);
+
+    // The pre-existing pixel should still be there (add doesn't clear)
+    expect(readPixel(sessionTarget, 5, 5).a).toBe(255);
+    // And a new pixel from the magic wand should also be present
+    expect(readPixel(sessionTarget, 0, 0).a).toBeGreaterThan(0);
+  });
+
+  it("no undo push when writing to session target", () => {
+    const layer = makePixelRasterLayer(10, 10);
+    const doc = freshDocWithPixelMock(10, 10);
+    doc.layers = [layer];
+    doc.activeLayerId = layer.id;
+    const sessionTarget = createMaskCanvas(10, 10);
+
+    const controller = makeSessionTargetController(doc, sessionTarget, {
+      getActiveTool: () => "magic-wand",
+    });
+
+    controller.magicWandSelect(0, 0);
+
+    // undo stack should remain empty — session manages its own state
+    expect(doc.undoStack).toHaveLength(0);
   });
 });

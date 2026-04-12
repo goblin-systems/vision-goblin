@@ -43,6 +43,8 @@ import {
   aiPromptText,
   aiPromptTextWithInputScope,
   aiPromptSelect,
+  aiPromptReviewText,
+  aiPromptReviewTextPieces,
   aiPromptConfirm,
   aiPromptOutpaint,
   aiPromptOutpaintWithInputScope,
@@ -212,6 +214,67 @@ describe("aiPromptSelect", () => {
     backdrop.querySelector<HTMLButtonElement>(".modal-btn-accept")!.click();
 
     expect(await promise).toBe("mask");
+  });
+});
+
+describe("aiPromptReviewText", () => {
+  it("returns edited multiline text on apply", async () => {
+    const promise = aiPromptReviewText("Review", "Check text", "hello");
+    await tick();
+
+    const backdrop = document.querySelector<HTMLElement>(".modal-backdrop")!;
+    const textarea = backdrop.querySelector<HTMLTextAreaElement>("textarea")!;
+    textarea.value = "Line one\nLine two";
+
+    backdrop.querySelector<HTMLButtonElement>(".modal-btn-accept")!.click();
+
+    await expect(promise).resolves.toEqual({ text: "Line one\nLine two" });
+  });
+
+  it("returns null on cancel", async () => {
+    const promise = aiPromptReviewText("Review", "Check text", "hello");
+    await tick();
+
+    const backdrop = document.querySelector<HTMLElement>(".modal-backdrop")!;
+    backdrop.querySelector<HTMLButtonElement>(".modal-btn-reject")!.click();
+
+    await expect(promise).resolves.toBeNull();
+  });
+});
+
+describe("aiPromptReviewTextPieces", () => {
+  it("returns edited text for multiple pieces on apply", async () => {
+    const promise = aiPromptReviewTextPieces("Review", "Check pieces", [
+      { id: "piece-1", text: "hello" },
+      { id: "piece-2", text: "world" },
+    ]);
+    await tick();
+
+    const backdrop = document.querySelector<HTMLElement>(".modal-backdrop")!;
+    const textareas = backdrop.querySelectorAll<HTMLTextAreaElement>("textarea");
+    expect(textareas).toHaveLength(2);
+    textareas[0].value = "Line one";
+    textareas[1].value = "Line two";
+
+    backdrop.querySelector<HTMLButtonElement>(".modal-btn-accept")!.click();
+
+    await expect(promise).resolves.toEqual([
+      { id: "piece-1", text: "Line one" },
+      { id: "piece-2", text: "Line two" },
+    ]);
+  });
+
+  it("returns null on cancel", async () => {
+    const promise = aiPromptReviewTextPieces("Review", "Check pieces", [
+      { id: "piece-1", text: "hello" },
+      { id: "piece-2", text: "world" },
+    ]);
+    await tick();
+
+    const backdrop = document.querySelector<HTMLElement>(".modal-backdrop")!;
+    backdrop.querySelector<HTMLButtonElement>(".modal-btn-reject")!.click();
+
+    await expect(promise).resolves.toBeNull();
   });
 });
 
@@ -856,3 +919,4 @@ describe("aiPromptThumbnailWithInputScope", () => {
     });
   });
 });
+

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Capture Overlay</title>
+  <script type="module" src="/src/app/captureOverlayWindow.ts"></script>
+</head>
+<body class="capture-overlay-window-body">
+  <div id="capture-overlay" class="capture-overlay capture-overlay--window">
+    <div id="capture-loading-card" class="capture-loading-card">
+      <span class="capture-loading-spinner"></span>
+      <span>Preparing desktop capture...</span>
+    </div>
+    <canvas id="capture-overlay-canvas" class="capture-overlay-canvas" hidden></canvas>
+    <div id="capture-picker-hud" class="capture-picker-hud" hidden>
+      <div class="capture-picker-hud-topline">
+        <div id="capture-colour-chip" class="capture-colour-chip" hidden></div>
+        <div id="capture-colour-readout" class="colour-value" hidden>#000000</div>
+      </div>
+      <div id="capture-coords" class="capture-picker-coords">0, 0</div>
+      <canvas id="capture-magnifier" class="capture-magnifier" width="120" height="120" hidden></canvas>
+    </div>
+  </div>
+</body>
+</html>
