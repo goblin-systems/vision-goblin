@@ -20,6 +20,7 @@ export {
   buildRemoveObjectPrompt,
   DEFAULT_BACKGROUND_DESCRIPTION,
   RASTER_TEXT_CLEANUP_PROMPT,
+  AI_HEALING_PROMPT,
   buildThumbnailTextOverlayPrompt,
 } from "./editing";
 

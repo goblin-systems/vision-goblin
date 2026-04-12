@@ -4,7 +4,7 @@ Start here for current work.
 
 ## Priority now
 
-- None currently.
+- `P005` -> `backlog/epic-p005-ai-healing.md`
 
 ## Shared requirements
 

@@ -5,10 +5,13 @@ import {
   DEFAULT_ADD_REFLECTION_SESSION_CONFIG,
   DEFAULT_ADD_SHADOW_SESSION_CONFIG,
   DEFAULT_CLONE_OBJECT_SESSION_CONFIG,
+  DEFAULT_AI_HEALING_SESSION_CONFIG,
+  DEFAULT_DENOISE_SESSION_CONFIG,
   DEFAULT_INPAINT_SESSION_CONFIG,
   DEFAULT_MOVE_OBJECT_SESSION_CONFIG,
   DEFAULT_REMOVE_REFLECTION_SESSION_CONFIG,
   DEFAULT_REMOVE_SHADOW_SESSION_CONFIG,
+  DEFAULT_REPLACE_TEXT_SESSION_CONFIG,
   createAiMaskSessionController,
 } from "./aiMaskSession";
 
@@ -152,7 +155,7 @@ describe("aiMaskSession", () => {
       guideMode: "shadow-add",
       intensity: 50,
       lightDirection: "auto",
-      inputScope: "visible-content",
+      inputScope: "selected-layers",
     });
     expect(readPixel(result!.casterMask, 8, 9).a).toBe(255);
     expect(readPixel(result!.surfaceMask, 2, 3).a).toBe(255);
@@ -381,6 +384,110 @@ describe("aiMaskSession", () => {
     await expect(promise).resolves.toEqual(result);
   });
 
+  it("supports AI healing single-channel copy and requires a non-empty mask", async () => {
+    const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
+    const showToast = vi.fn();
+
+    const controller = createAiMaskSessionController({
+      mountRoot: document.getElementById("ai-mask-session-mount")!,
+      getActiveTool: () => "move",
+      setActiveTool: vi.fn(),
+      setSelectionMode: vi.fn(),
+      getSelectionMode: () => "replace" as const,
+      renderCanvas: vi.fn(),
+      renderEditorState: vi.fn(),
+      showToast,
+    });
+
+    const promise = controller.start(doc, DEFAULT_AI_HEALING_SESSION_CONFIG);
+    const panel = document.querySelector<HTMLElement>("[data-ai-mask-session]")!;
+    const inputScope = panel.querySelector<HTMLSelectElement>("[data-ai-mask-input-scope]")!;
+
+    expect(document.body.textContent).toContain("AI: Healing");
+    expect(document.body.textContent).toContain("Paint or select the area to heal with a single AI inpainting pass.");
+    expect(document.body.textContent).toContain("Healing area");
+    expect(document.querySelector('button[data-ai-mask-channel="caster"]')).toBeNull();
+    expect(controller.complete()).toBeNull();
+    expect(showToast).toHaveBeenCalledWith("Paint or select the area to heal before continuing.", "error");
+
+    inputScope.value = "selected-layers";
+    inputScope.dispatchEvent(new Event("change"));
+    setPixel(controller.getState()!.surfaceMask, 4, 4, { r: 255, g: 255, b: 255, a: 255 });
+    controller.complete();
+
+    await expect(promise).resolves.toMatchObject({
+      guideMode: "heal",
+      inputScope: "selected-layers",
+    });
+  });
+
+  it("supports AI denoise single-channel copy, selection tools, input scope, and blank-mask fallback copy", async () => {
+    const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
+    const showToast = vi.fn();
+
+    const controller = createAiMaskSessionController({
+      mountRoot: document.getElementById("ai-mask-session-mount")!,
+      getActiveTool: () => "move",
+      setActiveTool: vi.fn(),
+      setSelectionMode: vi.fn(),
+      getSelectionMode: () => "replace" as const,
+      renderCanvas: vi.fn(),
+      renderEditorState: vi.fn(),
+      showToast,
+    });
+
+    const promise = controller.start(doc, DEFAULT_DENOISE_SESSION_CONFIG);
+    const panel = document.querySelector<HTMLElement>("[data-ai-mask-session]")!;
+    const inputScope = panel.querySelector<HTMLSelectElement>("[data-ai-mask-input-scope]")!;
+    const intensity = panel.querySelector<HTMLInputElement>("[data-ai-mask-intensity]")!;
+
+    expect(document.body.textContent).toContain("AI: Denoise");
+    expect(document.body.textContent).toContain("Paint or select the area to denoise");
+    expect(document.body.textContent).toContain("Denoise area");
+    expect(document.body.textContent).toContain("Denoise strength");
+    expect(document.querySelector('button[data-ai-mask-channel="caster"]')).toBeNull();
+    expect(document.querySelectorAll("[data-ai-mask-tool]")).toHaveLength(6);
+    expect(document.querySelectorAll("[data-ai-mask-selection-mode]")).toHaveLength(4);
+    expect(showToast).toHaveBeenCalledWith(
+      "Paint or select the denoise area, or continue to process the full target.",
+      "info",
+    );
+
+    inputScope.value = "visible-content";
+    inputScope.dispatchEvent(new Event("change"));
+    intensity.value = "72";
+    intensity.dispatchEvent(new Event("input"));
+
+    controller.complete();
+
+    await expect(promise).resolves.toMatchObject({
+      guideMode: "denoise",
+      inputScope: "visible-content",
+      intensity: 72,
+    });
+  });
+
+  it("shows input scope for replace raster text and defaults it to selected layers", async () => {
+    const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
+
+    const controller = createAiMaskSessionController({
+      mountRoot: document.getElementById("ai-mask-session-mount")!,
+      getActiveTool: () => "move",
+      setActiveTool: vi.fn(),
+      setSelectionMode: vi.fn(),
+      getSelectionMode: () => "replace" as const,
+      renderCanvas: vi.fn(),
+      renderEditorState: vi.fn(),
+      showToast: vi.fn(),
+    });
+
+    void controller.start(doc, DEFAULT_REPLACE_TEXT_SESSION_CONFIG);
+
+    const inputScope = document.querySelector<HTMLSelectElement>("[data-ai-mask-input-scope]");
+    expect(inputScope).not.toBeNull();
+    expect(inputScope?.value).toBe("selected-layers");
+  });
+
   it("supports add-reflection specific copy and source plus target guide semantics", async () => {
     const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
     const showToast = vi.fn();
@@ -548,6 +655,15 @@ describe("aiMaskSession", () => {
     });
   });
 
+  it("enables selection-capable tools for guided move/clone/shadow/reflection sessions", () => {
+    expect(DEFAULT_ADD_SHADOW_SESSION_CONFIG.allowedTools).toEqual(DEFAULT_INPAINT_SESSION_CONFIG.allowedTools);
+    expect(DEFAULT_REMOVE_SHADOW_SESSION_CONFIG.allowedTools).toEqual(DEFAULT_INPAINT_SESSION_CONFIG.allowedTools);
+    expect(DEFAULT_ADD_REFLECTION_SESSION_CONFIG.allowedTools).toEqual(DEFAULT_INPAINT_SESSION_CONFIG.allowedTools);
+    expect(DEFAULT_REMOVE_REFLECTION_SESSION_CONFIG.allowedTools).toEqual(DEFAULT_INPAINT_SESSION_CONFIG.allowedTools);
+    expect(DEFAULT_MOVE_OBJECT_SESSION_CONFIG.allowedTools).toEqual(DEFAULT_INPAINT_SESSION_CONFIG.allowedTools);
+    expect(DEFAULT_CLONE_OBJECT_SESSION_CONFIG.allowedTools).toEqual(DEFAULT_INPAINT_SESSION_CONFIG.allowedTools);
+  });
+
   it("returns the active channel canvas or null when inactive", async () => {
     const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
 
@@ -621,8 +737,10 @@ describe("aiMaskSession — tool picker and selection mode", () => {
     const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
     const controller = createAiMaskSessionController(makeDeps());
 
-    // Default config (shadow-add) has no allowedTools → defaults to ["brush","eraser"]
-    void controller.start(doc);
+    void controller.start(doc, {
+      ...DEFAULT_ADD_SHADOW_SESSION_CONFIG,
+      allowedTools: ["brush", "eraser"],
+    });
 
     const toolsContainer = document.querySelector("[data-ai-mask-tools]");
     expect(toolsContainer).toBeNull();
@@ -654,15 +772,52 @@ describe("aiMaskSession — tool picker and selection mode", () => {
     expect(modeButtons).toHaveLength(4);
   });
 
+  it("uses leaner plus minus icons with custom intersect while keeping replace on lucide", () => {
+    const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
+    const controller = createAiMaskSessionController(makeDeps());
+
+    void controller.start(doc, DEFAULT_INPAINT_SESSION_CONFIG);
+
+    const replaceBtn = document.querySelector<HTMLButtonElement>('[data-ai-mask-selection-mode="replace"]');
+    const addBtn = document.querySelector<HTMLButtonElement>('[data-ai-mask-selection-mode="add"]');
+    const removeBtn = document.querySelector<HTMLButtonElement>('[data-ai-mask-selection-mode="subtract"]');
+    const intersectBtn = document.querySelector<HTMLButtonElement>('[data-ai-mask-selection-mode="intersect"]');
+    expect(replaceBtn?.querySelector("svg.selection-mode-btn__icon-svg")).toBeNull();
+    expect(replaceBtn?.querySelector("svg")).not.toBeNull();
+    expect(addBtn?.getAttribute("title")).toBe("Add");
+    expect(removeBtn?.getAttribute("title")).toBe("Remove");
+    expect(intersectBtn).not.toBeNull();
+    expect(intersectBtn?.getAttribute("title")).toBe("Intersect");
+    expect(intersectBtn?.getAttribute("aria-label")).toBe("Intersect");
+    expect(addBtn?.querySelector(".selection-mode-btn__icon svg")).not.toBeNull();
+    expect(removeBtn?.querySelector(".selection-mode-btn__icon svg")).not.toBeNull();
+    expect(intersectBtn?.querySelector("svg.selection-mode-btn__icon-svg")).not.toBeNull();
+    expect(addBtn?.querySelector("svg.selection-mode-btn__icon-svg")).toBeNull();
+    expect(removeBtn?.querySelector("svg.selection-mode-btn__icon-svg")).toBeNull();
+    expect(intersectBtn?.querySelector("i")).toBeNull();
+  });
+
   it("does NOT render selection mode buttons without selection tools", () => {
     const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
     const controller = createAiMaskSessionController(makeDeps());
 
-    // Default shadow config has no selection tools in allowed set
-    void controller.start(doc);
+    void controller.start(doc, {
+      ...DEFAULT_ADD_SHADOW_SESSION_CONFIG,
+      allowedTools: ["brush", "eraser"],
+    });
 
     const modesContainer = document.querySelector("[data-ai-mask-modes]");
     expect(modesContainer).toBeNull();
+  });
+
+  it("renders tool picker and selection modes for guided shadow config", () => {
+    const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
+    const controller = createAiMaskSessionController(makeDeps());
+
+    void controller.start(doc, DEFAULT_ADD_SHADOW_SESSION_CONFIG);
+
+    expect(document.querySelectorAll("[data-ai-mask-tool]")).toHaveLength(6);
+    expect(document.querySelectorAll("[data-ai-mask-selection-mode]")).toHaveLength(4);
   });
 
   it("clicking selection mode button calls setSelectionMode", () => {
@@ -677,6 +832,31 @@ describe("aiMaskSession — tool picker and selection mode", () => {
     addBtn!.click();
 
     expect(setSelectionMode).toHaveBeenCalledWith("add");
+  });
+
+  it("clicking selection mode button updates active styling immediately", () => {
+    const doc = makeNewDocument("Doc", 24, 24, 100, "transparent");
+    let currentMode = "replace";
+    const controller = createAiMaskSessionController(makeDeps({
+      getSelectionMode: () => currentMode as import("../../editor/selection").SelectionMode,
+      setSelectionMode: vi.fn(),
+    }));
+
+    void controller.start(doc, DEFAULT_INPAINT_SESSION_CONFIG);
+
+    const replaceBtn = document.querySelector<HTMLButtonElement>('[data-ai-mask-selection-mode="replace"]');
+    const addBtn = document.querySelector<HTMLButtonElement>('[data-ai-mask-selection-mode="add"]');
+    expect(replaceBtn!.classList.contains("is-active")).toBe(true);
+    expect(addBtn!.classList.contains("is-active")).toBe(false);
+
+    addBtn!.click();
+
+    expect(replaceBtn!.classList.contains("is-active")).toBe(false);
+    expect(addBtn!.classList.contains("is-active")).toBe(true);
+
+    currentMode = "add";
+    controller.syncToolState();
+    expect(addBtn!.classList.contains("is-active")).toBe(true);
   });
 
   it("syncToolState updates tool button active state", () => {

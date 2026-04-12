@@ -90,6 +90,7 @@ function createDeps(overrides: Partial<RegisterEditorCommandsDeps> = {}): Regist
     runAiCloneObject: overrides.runAiCloneObject ?? vi.fn(),
     runAiMoveObject: overrides.runAiMoveObject ?? vi.fn(),
     runAiReplaceRasterText: overrides.runAiReplaceRasterText ?? vi.fn(),
+    runAiHealing: overrides.runAiHealing ?? vi.fn(),
     setTheme: overrides.setTheme ?? vi.fn(),
   };
 }
@@ -261,6 +262,41 @@ describe("buildEditorCommands", () => {
     expect(runAiReplaceRasterText).toHaveBeenCalledTimes(1);
   });
 
+  it("enables AI healing when a document exists and executes the controller action", () => {
+    const runAiHealing = vi.fn();
+    const doc = makeNewDocument("Doc", 100, 80, 100, "transparent");
+    const commands = buildEditorCommands(createDeps({ getActiveDocument: () => doc, runAiHealing }));
+    const command = commands.find((entry) => entry.id === "ai-healing");
+
+    expect(command?.enabled()).toBe(true);
+
+    command?.execute();
+
+    expect(runAiHealing).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables AI inpaint when a document exists without selection and executes the controller action", () => {
+    const runAiInpaint = vi.fn();
+    const doc = makeNewDocument("Doc", 100, 80, 100, "transparent");
+    doc.selectionMask = null;
+    doc.selectionRect = null;
+    doc.selectionPath = null;
+    const commands = buildEditorCommands(createDeps({ getActiveDocument: () => doc, runAiInpaint }));
+    const command = commands.find((entry) => entry.id === "ai-inpaint");
+
+    expect(command?.enabled()).toBe(true);
+
+    command?.execute();
+
+    expect(runAiInpaint).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables AI inpaint when no document is open", () => {
+    const commands = buildEditorCommands(createDeps({ getActiveDocument: () => null }));
+
+    expect(commands.find((command) => command.id === "ai-inpaint")?.enabled()).toBe(false);
+  });
+
   it("enables AI replace raster text when a document exists without selection", () => {
     const runAiReplaceRasterText = vi.fn();
     const doc = makeNewDocument("Doc", 100, 80, 100, "transparent");
@@ -274,7 +310,7 @@ describe("buildEditorCommands", () => {
   it("assigns ai category to all AI commands", () => {
     const commands = buildEditorCommands(createDeps());
     const aiCommands = commands.filter((c) => c.id.startsWith("ai-") || c.id.startsWith("open-ai-"));
-    expect(aiCommands.length).toBe(23);
+    expect(aiCommands.length).toBe(24);
     for (const cmd of aiCommands) {
       expect(cmd.category).toBe("ai");
     }

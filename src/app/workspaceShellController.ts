@@ -8,6 +8,7 @@ import type { ActiveTool, BrushState, DocumentState, Layer, ShapeKind, Transform
 import { SHAPE_NAMES, type SelectionMode } from "../editor/selection";
 import type { TransformMode } from "../editor/transformController";
 import type { UiTheme } from "./theme";
+import { decorateSelectionModeButtons } from "./selectionModeButtons";
 
 const TOOL_COPY: Record<ActiveTool, string> = {
   move: "Move tool active. Drag the current layer to reposition it on the canvas.",
@@ -107,6 +108,7 @@ const EMPTY_DOC_DISABLED_NAV_IDS = [
   "color-range-nav",
   "refine-edge-nav",
   "quick-mask-nav",
+  "ai-healing-nav",
   "ai-replace-raster-text-nav",
 ] as const;
 
@@ -278,6 +280,7 @@ export function buildWorkspaceShellState(params: BuildWorkspaceShellStateParams)
     "color-range-nav": false,
     "refine-edge-nav": !doc.selectionMask,
     "quick-mask-nav": false,
+    "ai-healing-nav": false,
     "ai-replace-raster-text-nav": false,
   };
   return {
@@ -482,6 +485,7 @@ export function createWorkspaceShellController(deps: WorkspaceShellControllerDep
     if (sidesLabel) sidesLabel.textContent = SHAPE_NAMES[marqueeSides] ?? String(marqueeSides);
     const shapeKindSelect = document.getElementById("shape-kind-select") as HTMLSelectElement | null;
     if (shapeKindSelect) shapeKindSelect.value = deps.getActiveShapeKind();
+    decorateSelectionModeButtons(document);
     document.querySelectorAll<HTMLElement>("[data-selection-mode]").forEach((button) => {
       button.classList.toggle("is-active", button.getAttribute("data-selection-mode") === deps.getEffectiveMarqueeMode());
     });

@@ -1047,6 +1047,7 @@ function registerEditorCommands() {
     runAiRemoveReflection: () => aiEditingController.removeReflection(),
     runAiCloneObject: () => aiEditingController.cloneObject(),
     runAiMoveObject: () => aiEditingController.moveObject(),
+    runAiHealing: () => aiEditingController.aiHealing(),
     runAiReplaceRasterText: () => aiEditingController.replaceRasterText(),
     setTheme,
   }));

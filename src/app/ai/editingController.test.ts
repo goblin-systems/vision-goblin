@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { DocumentState, Layer, RasterLayer } from "../../editor/types";
-import { installPixelCanvasMock, setPixel } from "../../test/pixelCanvasMock";
+import { installPixelCanvasMock, readPixel, setPixel } from "../../test/pixelCanvasMock";
 import type { AiController } from "./controller";
 import type { AiInpaintingTask, AiImageAsset, AiMaskAsset, AiSegmentationTask, AiTask, AiTextReplacementTask } from "./types";
 import type { AiJobRecord } from "./jobQueue";
@@ -106,7 +106,7 @@ const editingSupportMocks = vi.hoisted(() => ({
       height: 600,
     };
   }),
-  buildInpaintingTask: vi.fn((image: AiImageAsset, mask: AiMaskAsset, prompt: string, mode: string, options?: { guideMode?: "shadow-add" | "shadow-remove" | "reflection-add" | "reflection-remove" | "clone-object" | "move-object" }): AiInpaintingTask => ({
+  buildInpaintingTask: vi.fn((image: AiImageAsset, mask: AiMaskAsset, prompt: string, mode: string, options?: { guideMode?: "shadow-add" | "shadow-remove" | "reflection-add" | "reflection-remove" | "clone-object" | "move-object" | "heal" }): AiInpaintingTask => ({
     id: "ai-inpaint-test",
     family: "inpainting",
     prompt,
@@ -120,7 +120,20 @@ const editingSupportMocks = vi.hoisted(() => ({
     input: { image },
     options: { mode: mode as "subject" | "background" | "object" | "background-removal" },
   })),
-  buildEnhancementTask: vi.fn(),
+  buildEnhancementTask: vi.fn((operation: string, image: AiImageAsset, options?: { intensity?: number; scaleFactor?: number; prompt?: string; referenceImages?: AiImageAsset[] }) => ({
+    id: `ai-enh-${operation}`,
+    family: "enhancement" as const,
+    prompt: options?.prompt,
+    input: {
+      image,
+      referenceImages: options?.referenceImages,
+    },
+    options: {
+      operation: operation as "auto-enhance" | "upscale" | "denoise" | "restore" | "colorize" | "style-transfer",
+      intensity: options?.intensity,
+      scaleFactor: options?.scaleFactor,
+    },
+  })),
   buildGenerationTask: vi.fn(),
   buildTextReplacementTask: vi.fn((image: AiImageAsset, mask: AiMaskAsset, prompt: string): AiTextReplacementTask => ({
     id: "ai-text-replacement-test",
@@ -177,7 +190,7 @@ const editingSupportMocks = vi.hoisted(() => ({
 
 const promptMocks = vi.hoisted(() => ({
   aiPromptText: vi.fn(async () => "test prompt"),
-  aiPromptTextWithInputScope: vi.fn(async (): Promise<{ prompt: string; inputScope: "selected-layers" | "visible-content" }> => ({ prompt: "test prompt", inputScope: "visible-content" })),
+  aiPromptTextWithInputScope: vi.fn(async (): Promise<{ prompt: string; inputScope: "selected-layers" | "visible-content" }> => ({ prompt: "test prompt", inputScope: "selected-layers" })),
   aiPromptSelect: vi.fn(),
   aiPromptReviewText: vi.fn(async (): Promise<{ text: string } | null> => ({ text: "test prompt" })),
   aiPromptReviewTextPieces: vi.fn(async (title: string, message: string, pieces: Array<{ id: string; text: string }>) => pieces.map((piece) => ({ ...piece, text: `${piece.text} reviewed` }))),
@@ -428,7 +441,7 @@ function makeOverlappingMaskCanvas(): HTMLCanvasElement {
 }
 
 function makeMaskSessionResult(overrides?: Partial<{
-  guideMode: "shadow-add" | "shadow-remove" | "reflection-add" | "reflection-remove" | "clone-object" | "move-object" | "inpaint" | "remove-object" | "replace-text";
+  guideMode: "shadow-add" | "shadow-remove" | "reflection-add" | "reflection-remove" | "clone-object" | "move-object" | "inpaint" | "remove-object" | "replace-text" | "heal" | "denoise";
   intensity: number;
   lightDirection: "auto" | "top" | "top-right" | "right" | "bottom-right" | "bottom" | "bottom-left" | "left" | "top-left";
   inputScope: "selected-layers" | "visible-content";
@@ -479,8 +492,8 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
   });
 
   describe("inpaintSelection", () => {
-    it("sends visible content by default", async () => {
-      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint" }));
+    it("uses the mask session input scope and no longer opens a duplicate scope prompt", async () => {
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint", inputScope: "selected-layers" }));
       const { createAiEditingController } = await import("./editingController");
 
       const controller = createAiEditingController({
@@ -498,9 +511,15 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
       await controller.inpaintSelection();
 
       expect(startAiMaskSession).toHaveBeenCalledWith(doc, expect.objectContaining({ guideMode: "inpaint" }));
-      expect(editingSupportMocks.buildScopedCompositeImageAsset).toHaveBeenCalledWith(doc, "visible-content");
+      expect(promptMocks.aiPromptText).toHaveBeenCalledWith(
+        "AI: Inpaint Selection",
+        "Describe what should replace the selected area",
+        "add a hat and sunglasses",
+      );
+      expect(promptMocks.aiPromptTextWithInputScope).not.toHaveBeenCalled();
+      expect(editingSupportMocks.buildScopedCompositeImageAsset).toHaveBeenCalledWith(doc, "selected-layers");
       expect(editingSupportMocks.buildInpaintingTask).toHaveBeenCalledWith(
-        expect.objectContaining({ data: "data:image/png;base64,COMPOSITE" }),
+        expect.objectContaining({ data: "data:image/png;base64,SELECTED" }),
         expect.anything(),
         expect.any(String),
         "replace",
@@ -510,11 +529,6 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
 
     it("sends selected layers when the session chooses selected layers", async () => {
       const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint", inputScope: "selected-layers" }));
-
-      promptMocks.aiPromptTextWithInputScope.mockResolvedValueOnce({
-        prompt: "test prompt",
-        inputScope: "selected-layers",
-      });
 
       const { createAiEditingController } = await import("./editingController");
 
@@ -1047,6 +1061,10 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
 
       await controller.replaceRasterText();
 
+      expect(startAiMaskSession).toHaveBeenCalledWith(doc, expect.objectContaining({
+        guideMode: "replace-text",
+        defaults: expect.objectContaining({ inputScope: "selected-layers" }),
+      }));
       expect(editingSupportMocks.buildScopedCompositeImageAsset).not.toHaveBeenCalled();
       expect(editingSupportMocks.buildLayerImageAsset).not.toHaveBeenCalled();
       expect(editingSupportMocks.buildRasterLayerContentImageAsset).toHaveBeenCalledWith(layer);
@@ -1340,6 +1358,341 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
     });
   });
 
+  describe("aiHealing", () => {
+    it("opens the shared healing mask session and runs a single inpainting pass", async () => {
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "heal", inputScope: "selected-layers", surfaceMask: makeOverlappingMaskCanvas() }));
+      const sourceMask = document.createElement("canvas");
+      sourceMask.width = 800;
+      sourceMask.height = 600;
+      setPixel(sourceMask, 170, 110, { r: 255, g: 255, b: 255, a: 255 });
+      startAiMaskSession.mockResolvedValueOnce(makeMaskSessionResult({
+        guideMode: "heal",
+        inputScope: "selected-layers",
+        surfaceMask: sourceMask,
+      }));
+      const { createAiEditingController } = await import("./editingController");
+
+      const controller = createAiEditingController({
+        aiController,
+        getActiveDocument: () => doc,
+        getActiveLayer: () => layer,
+        renderCanvas: vi.fn(),
+        renderEditorState: vi.fn(),
+        showToast: vi.fn(),
+        log: vi.fn(),
+        saveDebugImage: vi.fn(),
+        startAiMaskSession,
+      });
+
+      await controller.aiHealing();
+
+      expect(startAiMaskSession).toHaveBeenCalledWith(doc, expect.objectContaining({ guideMode: "heal" }));
+      expect(startAiMaskSession).toHaveBeenCalledWith(doc, expect.objectContaining({
+        defaults: expect.objectContaining({ inputScope: "selected-layers" }),
+      }));
+      expect(editingSupportMocks.buildInpaintingTask).toHaveBeenCalledTimes(1);
+      expect(editingSupportMocks.buildInpaintingTask).toHaveBeenCalledWith(
+        expect.objectContaining({ data: "data:image/png;base64,LAYER_CONTENT" }),
+        expect.anything(),
+        expect.stringContaining("Heal and reconstruct the masked region naturally"),
+        "replace",
+      );
+      expect(editingSupportMocks.replaceLayerWithCanvas).toHaveBeenCalledWith(
+        doc,
+        layer,
+        expect.any(HTMLCanvasElement),
+        "AI Healing",
+        expect.objectContaining({ operation: "healing" }),
+      );
+    });
+
+    it("rejects a blank healing mask", async () => {
+      const blankMask = document.createElement("canvas");
+      blankMask.width = 800;
+      blankMask.height = 600;
+      const showToast = vi.fn();
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "heal", surfaceMask: blankMask }));
+      const { createAiEditingController } = await import("./editingController");
+
+      const controller = createAiEditingController({
+        aiController,
+        getActiveDocument: () => doc,
+        getActiveLayer: () => layer,
+        renderCanvas: vi.fn(),
+        renderEditorState: vi.fn(),
+        showToast,
+        log: vi.fn(),
+        saveDebugImage: vi.fn(),
+        startAiMaskSession,
+      });
+
+      await controller.aiHealing();
+
+      expect(showToast).toHaveBeenCalledWith("Paint or select the area to heal before continuing.", "error");
+      expect(editingSupportMocks.buildInpaintingTask).not.toHaveBeenCalled();
+      expect(aiController.queueTask).not.toHaveBeenCalled();
+    });
+
+    it("uses selected-layers scope and applies the result as an undoable AI raster edit", async () => {
+      const sourceMask = document.createElement("canvas");
+      sourceMask.width = 800;
+      sourceMask.height = 600;
+      setPixel(sourceMask, 170, 110, { r: 255, g: 255, b: 255, a: 255 });
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({
+        guideMode: "heal",
+        inputScope: "selected-layers",
+        surfaceMask: sourceMask,
+      }));
+      const renderEditorState = vi.fn();
+      const showToast = vi.fn();
+      const { createAiEditingController } = await import("./editingController");
+
+      const controller = createAiEditingController({
+        aiController,
+        getActiveDocument: () => doc,
+        getActiveLayer: () => layer,
+        renderCanvas: vi.fn(),
+        renderEditorState,
+        showToast,
+        log: vi.fn(),
+        saveDebugImage: vi.fn(),
+        startAiMaskSession,
+      });
+
+      await controller.aiHealing();
+
+      expect(editingSupportMocks.buildScopedCompositeImageAsset).not.toHaveBeenCalledWith(doc, "visible-content");
+      expect(editingSupportMocks.buildRasterLayerContentImageAsset).toHaveBeenCalledWith(layer);
+      expect(showToast).toHaveBeenCalledWith("Healing applied.", "success");
+    });
+
+    it("preserves unmasked pixels when healing writes back in visible-content scope", async () => {
+      setPixel(layer.canvas, 2, 2, { r: 10, g: 20, b: 30, a: 255 });
+      setPixel(layer.canvas, 3, 2, { r: 40, g: 50, b: 60, a: 255 });
+
+      const sourceMask = document.createElement("canvas");
+      sourceMask.width = 800;
+      sourceMask.height = 600;
+      setPixel(sourceMask, layer.x + 2, layer.y + 2, { r: 255, g: 255, b: 255, a: 255 });
+
+      editingSupportMocks.artifactToCanvas.mockImplementationOnce(async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 800;
+        canvas.height = 600;
+        setPixel(canvas, layer.x + 2, layer.y + 2, { r: 200, g: 210, b: 220, a: 255 });
+        setPixel(canvas, layer.x + 3, layer.y + 2, { r: 150, g: 160, b: 170, a: 255 });
+        return canvas;
+      });
+
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({
+        guideMode: "heal",
+        inputScope: "visible-content",
+        surfaceMask: sourceMask,
+      }));
+      const { createAiEditingController } = await import("./editingController");
+
+      const controller = createAiEditingController({
+        aiController,
+        getActiveDocument: () => doc,
+        getActiveLayer: () => layer,
+        renderCanvas: vi.fn(),
+        renderEditorState: vi.fn(),
+        showToast: vi.fn(),
+        log: vi.fn(),
+        saveDebugImage: vi.fn(),
+        startAiMaskSession,
+      });
+
+      await controller.aiHealing();
+
+      const mergedCanvas = editingSupportMocks.replaceLayerWithCanvas.mock.calls[0]?.[2] as HTMLCanvasElement | undefined;
+      expect(mergedCanvas).toBeInstanceOf(HTMLCanvasElement);
+      expect(readPixel(mergedCanvas!, 2, 2)).toMatchObject({ r: 200, g: 210, b: 220, a: 255 });
+      expect(readPixel(mergedCanvas!, 3, 2)).toMatchObject({ r: 40, g: 50, b: 60, a: 255 });
+    });
+
+    it("preserves unmasked pixels when healing writes back in selected-layers scope", async () => {
+      setPixel(layer.canvas, 120, 80, { r: 10, g: 20, b: 30, a: 255 });
+      setPixel(layer.canvas, 124, 82, { r: 40, g: 50, b: 60, a: 255 });
+
+      const sourceMask = document.createElement("canvas");
+      sourceMask.width = 800;
+      sourceMask.height = 600;
+      setPixel(sourceMask, 170, 110, { r: 255, g: 255, b: 255, a: 255 });
+
+      editingSupportMocks.artifactToCanvas.mockImplementationOnce(async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 80;
+        canvas.height = 24;
+        setPixel(canvas, 0, 0, { r: 200, g: 210, b: 220, a: 255 });
+        setPixel(canvas, 4, 2, { r: 150, g: 160, b: 170, a: 255 });
+        return canvas;
+      });
+
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({
+        guideMode: "heal",
+        inputScope: "selected-layers",
+        surfaceMask: sourceMask,
+      }));
+      const { createAiEditingController } = await import("./editingController");
+
+      const controller = createAiEditingController({
+        aiController,
+        getActiveDocument: () => doc,
+        getActiveLayer: () => layer,
+        renderCanvas: vi.fn(),
+        renderEditorState: vi.fn(),
+        showToast: vi.fn(),
+        log: vi.fn(),
+        saveDebugImage: vi.fn(),
+        startAiMaskSession,
+      });
+
+      await controller.aiHealing();
+
+      const mergedCanvas = editingSupportMocks.replaceLayerWithCanvas.mock.calls[0]?.[2] as HTMLCanvasElement | undefined;
+      expect(mergedCanvas).toBeInstanceOf(HTMLCanvasElement);
+      expect(readPixel(mergedCanvas!, 120, 80)).toMatchObject({ r: 200, g: 210, b: 220, a: 255 });
+      expect(readPixel(mergedCanvas!, 124, 82)).toMatchObject({ r: 40, g: 50, b: 60, a: 255 });
+    });
+  });
+
+  describe("openDenoiseModal", () => {
+    it("opens the unified denoise mask session and runs enhancement-family denoise on selected layers", async () => {
+      const sourceMask = document.createElement("canvas");
+      sourceMask.width = 800;
+      sourceMask.height = 600;
+      setPixel(sourceMask, 170, 110, { r: 255, g: 255, b: 255, a: 255 });
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({
+        guideMode: "denoise",
+        inputScope: "selected-layers",
+        intensity: 72,
+        surfaceMask: sourceMask,
+      }));
+      const { createAiEditingController } = await import("./editingController");
+
+      const controller = createAiEditingController({
+        aiController,
+        getActiveDocument: () => doc,
+        getActiveLayer: () => layer,
+        renderCanvas: vi.fn(),
+        renderEditorState: vi.fn(),
+        showToast: vi.fn(),
+        log: vi.fn(),
+        saveDebugImage: vi.fn(),
+        startAiMaskSession,
+      });
+
+      controller.openDenoiseModal();
+      await vi.waitFor(() => {
+        expect(editingSupportMocks.replaceLayerWithCanvas).toHaveBeenCalled();
+      });
+
+      expect(startAiMaskSession).toHaveBeenCalledWith(doc, expect.objectContaining({ guideMode: "denoise" }));
+      expect(editingSupportMocks.buildRasterLayerContentImageAsset).toHaveBeenCalledWith(layer);
+      expect(editingSupportMocks.buildScopedCompositeImageAsset).not.toHaveBeenCalledWith(doc, "visible-content");
+      expect(editingSupportMocks.buildEnhancementTask).toHaveBeenCalledWith(
+        "denoise",
+        expect.objectContaining({ data: "data:image/png;base64,LAYER_CONTENT" }),
+        expect.objectContaining({ intensity: 0.72 }),
+      );
+      expect(editingSupportMocks.replaceLayerWithCanvas).toHaveBeenCalledWith(
+        doc,
+        layer,
+        expect.any(HTMLCanvasElement),
+        "AI Denoise",
+        expect.objectContaining({ operation: "denoise" }),
+      );
+    });
+
+    it("falls back to full-target denoise when the session mask is blank", async () => {
+      const blankMask = document.createElement("canvas");
+      blankMask.width = 800;
+      blankMask.height = 600;
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({
+        guideMode: "denoise",
+        inputScope: "visible-content",
+        surfaceMask: blankMask,
+      }));
+      const { createAiEditingController } = await import("./editingController");
+
+      const controller = createAiEditingController({
+        aiController,
+        getActiveDocument: () => doc,
+        getActiveLayer: () => layer,
+        renderCanvas: vi.fn(),
+        renderEditorState: vi.fn(),
+        showToast: vi.fn(),
+        log: vi.fn(),
+        saveDebugImage: vi.fn(),
+        startAiMaskSession,
+      });
+
+      controller.openDenoiseModal();
+      await vi.waitFor(() => {
+        expect(aiController.queueTask).toHaveBeenCalled();
+      });
+
+      expect(editingSupportMocks.buildScopedCompositeImageAsset).toHaveBeenCalledWith(doc, "visible-content");
+      expect(editingSupportMocks.buildEnhancementTask).toHaveBeenCalledWith(
+        "denoise",
+        expect.objectContaining({ data: "data:image/png;base64,COMPOSITE" }),
+        expect.objectContaining({ intensity: 0.5 }),
+      );
+      expect(aiController.queueTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          task: expect.objectContaining({
+            family: "enhancement",
+            options: expect.objectContaining({ operation: "denoise" }),
+          }),
+        }),
+        "AI Denoise",
+      );
+    });
+
+    it("applies visible-content scoped denoise back to the active raster layer", async () => {
+      const sourceMask = document.createElement("canvas");
+      sourceMask.width = 800;
+      sourceMask.height = 600;
+      setPixel(sourceMask, 100, 100, { r: 255, g: 255, b: 255, a: 255 });
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({
+        guideMode: "denoise",
+        inputScope: "visible-content",
+        intensity: 60,
+        surfaceMask: sourceMask,
+      }));
+      const showToast = vi.fn();
+      const { createAiEditingController } = await import("./editingController");
+
+      const controller = createAiEditingController({
+        aiController,
+        getActiveDocument: () => doc,
+        getActiveLayer: () => layer,
+        renderCanvas: vi.fn(),
+        renderEditorState: vi.fn(),
+        showToast,
+        log: vi.fn(),
+        saveDebugImage: vi.fn(),
+        startAiMaskSession,
+      });
+
+      controller.openDenoiseModal();
+      await vi.waitFor(() => {
+        expect(editingSupportMocks.replaceLayerWithCanvas).toHaveBeenCalled();
+      });
+
+      expect(editingSupportMocks.buildScopedCompositeImageAsset).toHaveBeenCalledWith(doc, "visible-content");
+      expect(editingSupportMocks.replaceLayerWithCanvas).toHaveBeenCalledWith(
+        doc,
+        layer,
+        expect.any(HTMLCanvasElement),
+        "AI Denoise",
+        expect.objectContaining({ operation: "denoise" }),
+      );
+      expect(showToast).toHaveBeenCalledWith("AI Denoise applied.", "success");
+    });
+  });
+
   describe("addShadow", () => {
     it("sends visible content by default", async () => {
       const startAiMaskSession = vi.fn(async () => makeMaskSessionResult());
@@ -1375,6 +1728,7 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
         "AI shadow generation",
       );
     });
+
 
     it("sends selected layers when unified session chooses selected-layers", async () => {
       const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ inputScope: "selected-layers" }));
@@ -1698,6 +2052,7 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
       );
     });
 
+
   it("uses the unified remove-shadow session config and settings", async () => {
       const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({
         guideMode: "shadow-remove",
@@ -1960,6 +2315,7 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
       );
     });
 
+
     it("rejects multiple disconnected destination islands with a clear toast", async () => {
       const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "move-object" }));
       editingSupportMocks.splitMaskIntoConnectedComponents.mockReturnValueOnce([
@@ -2104,11 +2460,12 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
       );
     });
 
+
     it("filters tiny destination specks before processing", async () => {
-      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "clone-object" }));
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "clone-object", inputScope: "selected-layers" }));
       editingSupportMocks.splitMaskIntoConnectedComponents.mockReturnValueOnce([
         { canvas: document.createElement("canvas"), bounds: { x: 2, y: 2, width: 8, height: 8 }, pixelCount: 40 },
-        { canvas: document.createElement("canvas"), bounds: { x: 30, y: 30, width: 1, height: 1 }, pixelCount: 1 },
+        { canvas: document.createElement("canvas"), bounds: { x: 30, y: 30, width: 1, height: 1 }, pixelCount: 10 },
       ]);
       const log = vi.fn();
       const { createAiEditingController } = await import("./editingController");
@@ -2279,7 +2636,7 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
     });
 
     it("logs inpaint details including prompt, image dims, and mask dims", async () => {
-      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint" }));
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint", inputScope: "selected-layers" }));
       const { createAiEditingController } = await import("./editingController");
       const log = vi.fn();
 
@@ -2306,10 +2663,13 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
       expect(log).toHaveBeenCalledWith(
         expect.stringContaining("mask=800×600"),
       );
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining("inputScope=selected-layers"),
+      );
     });
 
     it("logs task queued and completed for inpainting", async () => {
-      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint" }));
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint", inputScope: "selected-layers" }));
       const { createAiEditingController } = await import("./editingController");
       const log = vi.fn();
 
@@ -2421,7 +2781,7 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
       editingSupportMocks.waitForJob.mockReset();
       editingSupportMocks.waitForJob.mockResolvedValue(failedJob);
 
-      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint" }));
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint", inputScope: "selected-layers" }));
       const { createAiEditingController } = await import("./editingController");
       const log = vi.fn();
 
@@ -2448,7 +2808,7 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
 
   describe("debug image saving", () => {
     it("saves composite input, mask input, and result output for inpaintSelection", async () => {
-      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint" }));
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint", inputScope: "selected-layers" }));
       const { createAiEditingController } = await import("./editingController");
       const saveDebugImage = vi.fn();
 
@@ -2467,10 +2827,10 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
       await controller.inpaintSelection();
 
       expect(saveDebugImage).toHaveBeenCalledWith(
-        "data:image/png;base64,COMPOSITE",
+        "data:image/png;base64,SELECTED",
         "AI inpainting",
         "input",
-        "composite",
+        "selected-layers",
       );
       expect(saveDebugImage).toHaveBeenCalledWith(
         "data:image/png;base64,MASK",
@@ -2526,7 +2886,7 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
     });
 
     it("uses correct job names and labels matching the task titles", async () => {
-      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint" }));
+      const startAiMaskSession = vi.fn(async () => makeMaskSessionResult({ guideMode: "inpaint", inputScope: "selected-layers" }));
       const { createAiEditingController } = await import("./editingController");
       const saveDebugImage = vi.fn();
 
@@ -2547,7 +2907,7 @@ describe("AI editing controller – inpainting coordinate alignment", () => {
       // Verify the job name matches the task title used in runTask
       const calls = saveDebugImage.mock.calls;
       expect(calls).toHaveLength(3);
-      expect(calls[0]).toEqual(["data:image/png;base64,COMPOSITE", "AI inpainting", "input", "composite"]);
+      expect(calls[0]).toEqual(["data:image/png;base64,SELECTED", "AI inpainting", "input", "selected-layers"]);
       expect(calls[1]).toEqual(["data:image/png;base64,MASK", "AI inpainting", "input", "mask"]);
       expect(calls[2]).toEqual(["data:image/png;base64,RESULT", "AI inpainting", "output", "result"]);
     });

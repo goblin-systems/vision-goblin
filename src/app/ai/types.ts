@@ -2,7 +2,7 @@ export const AI_TASK_FAMILIES = ["segmentation", "inpainting", "enhancement", "g
 
 export const AI_INPUT_SCOPES = ["selected-layers", "visible-content"] as const;
 
-export const AI_GUIDE_MODES = ["shadow-add", "shadow-remove", "reflection-add", "reflection-remove", "clone-object", "move-object", "inpaint", "remove-object", "replace-text"] as const;
+export const AI_GUIDE_MODES = ["shadow-add", "shadow-remove", "reflection-add", "reflection-remove", "clone-object", "move-object", "inpaint", "remove-object", "replace-text", "heal", "denoise"] as const;
 
 export type AiInputScope = typeof AI_INPUT_SCOPES[number];
 

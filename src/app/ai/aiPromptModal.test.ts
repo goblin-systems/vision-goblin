@@ -155,19 +155,19 @@ describe("aiPromptTextWithInputScope", () => {
     });
   });
 
-  it("defaults input scope to visible content", async () => {
+  it("defaults input scope to selected layers", async () => {
     const promise = aiPromptTextWithInputScope("Title", "Enter something", "hello world");
     await tick();
 
     const backdrop = document.querySelector<HTMLElement>(".modal-backdrop")!;
     const select = backdrop.querySelector<HTMLSelectElement>("select")!;
-    expect(select.value).toBe("visible-content");
+    expect(select.value).toBe("selected-layers");
 
     backdrop.querySelector<HTMLButtonElement>(".modal-btn-accept")!.click();
 
     await expect(promise).resolves.toEqual({
       prompt: "hello world",
-      inputScope: "visible-content",
+      inputScope: "selected-layers",
     });
   });
 });

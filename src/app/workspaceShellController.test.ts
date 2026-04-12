@@ -52,6 +52,7 @@ describe("workspaceShellController helpers", () => {
     expect(state.activeDocMeta).toContain("unsaved");
     expect(state.navDisabled["warp-nav"]).toBe(false);
     expect(state.navDisabled["distribute-h-nav"]).toBe(false);
+    expect(state.navDisabled["ai-healing-nav"]).toBe(false);
     expect(state.navDisabled["ai-replace-raster-text-nav"]).toBe(false);
     expect(state.undoDisabled).toBe(false);
     expect(state.redoDisabled).toBe(false);
@@ -71,6 +72,22 @@ describe("workspaceShellController helpers", () => {
     });
 
     expect(state.navDisabled["ai-replace-raster-text-nav"]).toBe(false);
+  });
+
+  it("enables AI healing nav when a document exists without selection", () => {
+    const settings = getDefaultSettings();
+    const doc = makeNewDocument("Doc", 400, 300, 100, "transparent");
+
+    const state = buildWorkspaceShellState({
+      settings,
+      doc,
+      activeLayer: doc.layers[0] ?? null,
+      selectedLayerCount: 1,
+      quickMaskActive: false,
+      activeShapeKind: "rectangle",
+    });
+
+    expect(state.navDisabled["ai-healing-nav"]).toBe(false);
   });
 
   it("clips fractional selection dimensions in document metadata", () => {

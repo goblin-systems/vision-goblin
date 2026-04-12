@@ -4,8 +4,9 @@ import type { DocumentState, Layer, RasterLayer } from "../../editor/types";
 import { applyStructuredTextReconstruction } from "../../editor/textReconstruction";
 import type { AiController } from "./controller";
 import type { AiProviderId } from "./config";
-import type { AiImageAsset, AiInputScope, AiMaskAsset, AiTask } from "./types";
-import { aiPromptTextWithInputScope, aiPromptSelect, aiPromptOutpaintWithInputScope, aiPromptEnhancement, aiPromptRemoveBackgroundWithInputScope, aiPromptThumbnailWithInputScope, aiPromptInputScope, aiPromptReviewText, aiPromptReviewTextPieces } from "./aiPromptModal";
+import type { AiInputScope, AiMaskAsset, AiTask } from "./types";
+import { aiPromptText, aiPromptTextWithInputScope, aiPromptSelect, aiPromptOutpaintWithInputScope, aiPromptEnhancement, aiPromptRemoveBackgroundWithInputScope, aiPromptThumbnailWithInputScope, aiPromptInputScope, aiPromptReviewText, aiPromptReviewTextPieces } from "./aiPromptModal";
+import { DEFAULT_AI_INPUT_SCOPE } from "./inputScope";
 import {
   createGuideMaskUnion,
   addRasterLayerFromCanvas,
@@ -22,7 +23,6 @@ import {
   buildGenerationTask,
   buildInpaintingTask,
   buildLayerImageAsset,
-  buildRasterLayerContentImageAsset,
   buildSegmentationTask,
   getImageArtifact,
   getMaskArtifact,
@@ -36,12 +36,15 @@ import {
   buildGuideDrivenInpaintingPrompt,
   REMOVE_OBJECT_DEFAULT_PROMPT,
   DEFAULT_BACKGROUND_DESCRIPTION,
+  AI_HEALING_PROMPT,
   buildThumbnailTextOverlayPrompt,
 } from "./prompts";
 import {
+  DEFAULT_AI_HEALING_SESSION_CONFIG,
   DEFAULT_ADD_REFLECTION_SESSION_CONFIG,
   DEFAULT_CLONE_OBJECT_SESSION_CONFIG,
   DEFAULT_ADD_SHADOW_SESSION_CONFIG,
+  DEFAULT_DENOISE_SESSION_CONFIG,
   DEFAULT_INPAINT_SESSION_CONFIG,
   DEFAULT_MOVE_OBJECT_SESSION_CONFIG,
   DEFAULT_REMOVE_OBJECT_SESSION_CONFIG,
@@ -51,6 +54,7 @@ import {
   type AiMaskSessionConfig,
   type AiMaskSessionResult,
 } from "./aiMaskSession";
+import { prepareMaskedRasterTarget } from "./maskedRasterTarget";
 
 type ToastVariant = "success" | "error" | "info";
 type EnhancementMode = "auto-enhance" | "denoise" | "style-transfer" | "restore";
@@ -92,6 +96,7 @@ export interface AiEditingController {
   cloneObject(): Promise<void>;
   moveObject(): Promise<void>;
   replaceRasterText(): Promise<void>;
+  aiHealing(): Promise<void>;
 }
 
 interface AiTaskLogSummary {
@@ -266,22 +271,6 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
 
   function buildScopedInputAsset(doc: DocumentState, inputScope: AiInputScope) {
     return buildScopedCompositeImageAsset(doc, inputScope);
-  }
-
-  function buildImageAssetFromCanvas(canvas: HTMLCanvasElement) {
-    return {
-      kind: "image" as const,
-      mimeType: "image/png",
-      data: canvas.toDataURL("image/png"),
-      width: canvas.width,
-      height: canvas.height,
-    };
-  }
-
-  function extractCanvasRegion(source: HTMLCanvasElement, region: { x: number; y: number; width: number; height: number }) {
-    const extracted = createLayerCanvas(region.width, region.height);
-    extracted.getContext("2d")?.drawImage(source, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height);
-    return extracted;
   }
 
   async function selectSubject() {
@@ -489,11 +478,10 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
       deps.showToast("Paint or select the area to inpaint.", "error");
       return;
     }
-    const result = await aiPromptTextWithInputScope("AI: Inpaint Selection", "Describe what should replace the selected area", "add a hat and sunglasses");
-    if (!result) {
+    const prompt = await aiPromptText("AI: Inpaint Selection", "Describe what should replace the selected area", "add a hat and sunglasses");
+    if (!prompt) {
       return;
     }
-    const { prompt } = result;
     const inputScope = sessionResult.inputScope;
     deps.log(`AI inpaint: prompt="${prompt}", inputScope=${inputScope}, image=${editable.doc.width}×${editable.doc.height}, mask=${mask.width ?? 0}×${mask.height ?? 0}`);
     const scopedAsset = buildScopedInputAsset(editable.doc, inputScope);
@@ -543,103 +531,20 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
       return;
     }
 
-    const isLayerScope = sessionResult.inputScope === "selected-layers";
-
-    let effectiveMask: HTMLCanvasElement;
-    let selectionBounds: { x: number; y: number; width: number; height: number };
-    let scopedAsset: { asset: AiImageAsset; debugLabel: string };
-    let contentBoundsLocal: { x: number; y: number; width: number; height: number } | null = null;
-
-    if (isLayerScope) {
-      const contentAsset = buildRasterLayerContentImageAsset(editable.layer);
-      contentBoundsLocal = contentAsset.boundsLocal;
-      const contentOffsetX = contentBoundsLocal?.x ?? 0;
-      const contentOffsetY = contentBoundsLocal?.y ?? 0;
-
-      // Translate the document-space mask into cropped-content-space so it
-      // matches the tight raster content image we send to the AI.
-      const contentWidth = contentAsset.asset.width ?? editable.layer.canvas.width;
-      const contentHeight = contentAsset.asset.height ?? editable.layer.canvas.height;
-      const layerMask = createMaskCanvas(contentWidth, contentHeight);
-      const layerMaskCtx = layerMask.getContext("2d");
-      if (layerMaskCtx) {
-        layerMaskCtx.drawImage(
-          sessionResult.surfaceMask,
-          -editable.layer.x - contentOffsetX,
-          -editable.layer.y - contentOffsetY,
-        );
-      }
-      effectiveMask = layerMask;
-
-      const maskRect = maskBoundingRect(layerMask);
-      if (maskRect) {
-        selectionBounds = maskRect;
-      } else {
-        selectionBounds = {
-          x: 0,
-          y: 0,
-          width: contentWidth,
-          height: contentHeight,
-        };
-        const fallbackCtx = layerMask.getContext("2d");
-        if (fallbackCtx) {
-          fallbackCtx.fillStyle = "#ffffff";
-          fallbackCtx.fillRect(0, 0, contentWidth, contentHeight);
-        }
-      }
-
-      scopedAsset = {
-        asset: contentAsset.asset,
-        debugLabel: "layer-content",
-      };
-    } else {
-      effectiveMask = sessionResult.surfaceMask;
-
-      const maskRect = maskBoundingRect(sessionResult.surfaceMask);
-      if (maskRect) {
-        selectionBounds = maskRect;
-      } else {
-        selectionBounds = {
-          x: editable.layer.x,
-          y: editable.layer.y,
-          width: editable.layer.canvas.width,
-          height: editable.layer.canvas.height,
-        };
-        const fullMaskCtx = sessionResult.surfaceMask.getContext("2d");
-        if (fullMaskCtx) {
-          fullMaskCtx.fillStyle = "#ffffff";
-          fullMaskCtx.fillRect(selectionBounds.x, selectionBounds.y, selectionBounds.width, selectionBounds.height);
-        }
-      }
-
-      scopedAsset = buildScopedInputAsset(editable.doc, sessionResult.inputScope);
-    }
-
-    // Overlap check: compare selection bounds against layer extent.
-    // For layer-scope, both are in cropped-content-space (origin 0,0).
-    // For doc-scope, both are in document-space.
-    const layerExtent = isLayerScope
-      ? {
-        x: 0,
-        y: 0,
-        width: scopedAsset.asset.width ?? editable.layer.canvas.width,
-        height: scopedAsset.asset.height ?? editable.layer.canvas.height,
-      }
-      : { x: editable.layer.x, y: editable.layer.y, width: editable.layer.canvas.width, height: editable.layer.canvas.height };
-    const overlapsLayer = selectionBounds.x < layerExtent.x + layerExtent.width
-      && selectionBounds.x + selectionBounds.width > layerExtent.x
-      && selectionBounds.y < layerExtent.y + layerExtent.height
-      && selectionBounds.y + selectionBounds.height > layerExtent.y;
-    if (!overlapsLayer) {
-      deps.showToast("Selection must overlap the active raster layer.", "error");
+    const preparedTarget = prepareMaskedRasterTarget({
+      doc: editable.doc,
+      layer: editable.layer,
+      inputScope: sessionResult.inputScope,
+      surfaceMask: sessionResult.surfaceMask,
+      emptyMaskPolicy: "fill-full-target",
+      emptyMaskMessage: "Selection mask is unavailable.",
+    });
+    if (!preparedTarget.ok) {
+      deps.showToast(preparedTarget.error, "error");
       return;
     }
-
-    const maskAsset = buildMaskAssetFromCanvas(effectiveMask);
-    if (!maskAsset) {
-      deps.showToast("Selection mask is unavailable.", "error");
-      return;
-    }
+    const { target } = preparedTarget;
+    const { selectionBounds, scopedAsset, maskAsset, isLayerScope, contentBoundsLocal } = target;
 
     deps.log(`AI replace raster text: selection=${JSON.stringify(selectionBounds)}, scope=${isLayerScope ? "layer" : "document"}`);
     deps.saveDebugImage(scopedAsset.asset.data, "AI replace raster text", "input", scopedAsset.debugLabel);
@@ -670,23 +575,16 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
 
     let cleanedCanvas: HTMLCanvasElement;
     if (isLayerScope) {
-      // AI returned an image sized to the cropped raster content — use it directly.
       cleanedCanvas = await artifactToCanvas(result.cleanedImageArtifact, {
-        expectedWidth: scopedAsset.asset.width,
-        expectedHeight: scopedAsset.asset.height,
+        expectedWidth: target.outputExpectedWidth,
+        expectedHeight: target.outputExpectedHeight,
       });
     } else {
-      // AI returned a document-sized image — extract the layer region.
       const cleanedFullCanvas = await artifactToCanvas(result.cleanedImageArtifact, {
-        expectedWidth: editable.doc.width,
-        expectedHeight: editable.doc.height,
+        expectedWidth: target.outputExpectedWidth,
+        expectedHeight: target.outputExpectedHeight,
       });
-      cleanedCanvas = extractCanvasRegion(cleanedFullCanvas, {
-        x: editable.layer.x,
-        y: editable.layer.y,
-        width: editable.layer.canvas.width,
-        height: editable.layer.canvas.height,
-      });
+      cleanedCanvas = target.toLayerCanvas(cleanedFullCanvas);
     }
 
     // Normalize AI-returned text block coordinates to document-space.
@@ -694,8 +592,8 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     //   offset by layer position plus cropped content origin to get document-space.
     // For doc-scope: AI coordinates are relative to the selection crop →
     //   offset by selection bounds (already in document-space).
-    const blockOffsetX = isLayerScope ? editable.layer.x + (contentBoundsLocal?.x ?? 0) : selectionBounds.x;
-    const blockOffsetY = isLayerScope ? editable.layer.y + (contentBoundsLocal?.y ?? 0) : selectionBounds.y;
+    const blockOffsetX = target.blockOffset.x;
+    const blockOffsetY = target.blockOffset.y;
     const normalizedBlocks = result.blocks.map((block) => ({
       ...block,
       bounds: {
@@ -786,6 +684,67 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
       "success",
     );
     return;
+  }
+
+  async function aiHealing() {
+    const editable = getEditableRasterLayer();
+    if (!editable) {
+      return;
+    }
+
+    const sessionResult = deps.startAiMaskSession
+      ? await deps.startAiMaskSession(editable.doc, DEFAULT_AI_HEALING_SESSION_CONFIG)
+      : null;
+    if (!sessionResult) {
+      return;
+    }
+
+    const preparedTarget = prepareMaskedRasterTarget({
+      doc: editable.doc,
+      layer: editable.layer,
+      inputScope: sessionResult.inputScope,
+      surfaceMask: sessionResult.surfaceMask,
+      emptyMaskPolicy: "error",
+      emptyMaskMessage: DEFAULT_AI_HEALING_SESSION_CONFIG.channels.surface.validationMessage,
+    });
+    if (!preparedTarget.ok) {
+      deps.showToast(preparedTarget.error, "error");
+      return;
+    }
+
+    const { target } = preparedTarget;
+    deps.log(`ai healing: inputScope=${sessionResult.inputScope}, scope=${target.isLayerScope ? "layer" : "document"}, selection=${JSON.stringify(target.selectionBounds)}`);
+    deps.saveDebugImage(target.scopedAsset.asset.data, "AI healing", "input", target.scopedAsset.debugLabel);
+    deps.saveDebugImage(target.maskAsset.data, "AI healing", "input", "mask");
+
+    const response = await runTask("AI healing", {
+      task: buildInpaintingTask(target.scopedAsset.asset, target.maskAsset, AI_HEALING_PROMPT, "replace"),
+    });
+    if (!response) {
+      return;
+    }
+
+    const artifact = getImageArtifact(response);
+    if (!artifact) {
+      deps.showToast("AI Healing returned no image.", "error");
+      return;
+    }
+    deps.saveDebugImage(artifact.data, "AI healing", "output", "result");
+
+    const resultCanvas = await artifactToCanvas(artifact, {
+      expectedWidth: target.outputExpectedWidth,
+      expectedHeight: target.outputExpectedHeight,
+    });
+
+    replaceLayerWithCanvas(
+      editable.doc,
+      editable.layer,
+      target.applyMaskedResultToLayerCanvas(resultCanvas),
+      "AI Healing",
+      buildAiProvenance(response, "healing", AI_HEALING_PROMPT),
+    );
+    deps.renderEditorState();
+    deps.showToast("Healing applied.", "success");
   }
 
   async function outpaintCanvas() {
@@ -973,12 +932,75 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     deps.showToast(response.warnings[0] ?? `${title} applied.`, "success");
   }
 
+  async function runDenoiseFlow() {
+    const editable = getEditableRasterLayer();
+    if (!editable) {
+      return;
+    }
+
+    const sessionResult = deps.startAiMaskSession
+      ? await deps.startAiMaskSession(editable.doc, DEFAULT_DENOISE_SESSION_CONFIG)
+      : null;
+    if (!sessionResult) {
+      return;
+    }
+
+    const preparedTarget = prepareMaskedRasterTarget({
+      doc: editable.doc,
+      layer: editable.layer,
+      inputScope: sessionResult.inputScope,
+      surfaceMask: sessionResult.surfaceMask,
+      emptyMaskPolicy: "fill-full-target",
+      emptyMaskMessage: "Denoise selection mask is unavailable.",
+    });
+    if (!preparedTarget.ok) {
+      deps.showToast(preparedTarget.error, "error");
+      return;
+    }
+
+    const { target } = preparedTarget;
+    deps.log(`AI denoise: inputScope=${sessionResult.inputScope}, strength=${sessionResult.intensity}, scope=${target.isLayerScope ? "layer" : "document"}, fallback=${target.usedFullTargetFallback ? "full-target" : "masked"}, selection=${JSON.stringify(target.selectionBounds)}`);
+    deps.saveDebugImage(target.scopedAsset.asset.data, "AI denoise", "input", target.scopedAsset.debugLabel);
+    deps.saveDebugImage(target.maskAsset.data, "AI denoise", "input", target.usedFullTargetFallback ? "mask-full-target" : "mask");
+
+    const response = await runTask("AI Denoise", {
+      task: buildEnhancementTask("denoise", target.scopedAsset.asset, {
+        intensity: sessionResult.intensity / 100,
+      }),
+    });
+    if (!response) {
+      return;
+    }
+
+    const artifact = getImageArtifact(response);
+    if (!artifact) {
+      deps.showToast("AI Denoise returned no image.", "error");
+      return;
+    }
+    deps.saveDebugImage(artifact.data, "AI denoise", "output", "result");
+
+    const resultCanvas = await artifactToCanvas(artifact, {
+      expectedWidth: target.outputExpectedWidth,
+      expectedHeight: target.outputExpectedHeight,
+    });
+
+    replaceLayerWithCanvas(
+      editable.doc,
+      editable.layer,
+      target.applyMaskedResultToLayerCanvas(resultCanvas),
+      "AI Denoise",
+      buildAiProvenance(response, "denoise"),
+    );
+    deps.renderEditorState();
+    deps.showToast(response.warnings[0] ?? "AI Denoise applied.", "success");
+  }
+
   function openAutoEnhanceModal() {
     void runEnhancementFlow("auto-enhance");
   }
 
   function openDenoiseModal() {
-    void runEnhancementFlow("denoise");
+    void runDenoiseFlow();
   }
 
   function openStyleTransferModal() {
@@ -1147,7 +1169,7 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
           guideMode: DEFAULT_CLONE_OBJECT_SESSION_CONFIG.guideMode,
           intensity: DEFAULT_CLONE_OBJECT_SESSION_CONFIG.defaults?.intensity ?? 50,
           lightDirection: "auto" as const,
-          inputScope: "visible-content" as const,
+          inputScope: DEFAULT_AI_INPUT_SCOPE,
           casterMask: createMaskCanvas(editable.doc.width, editable.doc.height),
           surfaceMask: createMaskCanvas(editable.doc.width, editable.doc.height),
         };
@@ -1301,7 +1323,7 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
           guideMode: options.sessionConfig.guideMode,
           intensity: options.sessionConfig.defaults?.intensity ?? 50,
           lightDirection: "auto" as const,
-          inputScope: "visible-content" as const,
+          inputScope: DEFAULT_AI_INPUT_SCOPE,
           casterMask: createMaskCanvas(editable.doc.width, editable.doc.height),
           surfaceMask: createMaskCanvas(editable.doc.width, editable.doc.height),
         };
@@ -1410,6 +1432,7 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     bindButton("ai-remove-reflection-btn", removeReflection);
     bindButton("ai-clone-object-btn", cloneObject);
     bindButton("ai-move-object-btn", moveObject);
+    bindButton("ai-healing-btn", aiHealing);
   }
 
   return {
@@ -1435,5 +1458,6 @@ export function createAiEditingController(deps: AiEditingControllerDeps): AiEdit
     cloneObject,
     moveObject,
     replaceRasterText,
+    aiHealing,
   };
 }

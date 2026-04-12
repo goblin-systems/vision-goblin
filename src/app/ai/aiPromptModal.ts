@@ -3,6 +3,11 @@ import {
   confirmModal,
   openModal,
 } from "@goblin-systems/goblin-design-system";
+import {
+  DEFAULT_AI_INPUT_SCOPE,
+  renderAiInputScopeOptions,
+  resolveAiInputScope,
+} from "./inputScope";
 import type { AiInputScope } from "./types";
 
 /* ---------- types ---------- */
@@ -57,12 +62,6 @@ export interface ReviewTextPieceResult {
   text: string;
 }
 
-const AI_INPUT_SCOPE_OPTIONS: Array<{ value: AiInputScope; label: string }> = [
-  { value: "selected-layers", label: "selected layers" },
-  { value: "visible-content", label: "visible content" },
-];
-const DEFAULT_AI_INPUT_SCOPE: AiInputScope = "visible-content";
-
 /* ---------- internal helpers ---------- */
 
 function createBackdrop(id: string, cardHtml: string): HTMLDivElement {
@@ -81,20 +80,14 @@ function removeBackdrop(backdrop: HTMLElement): void {
 }
 
 function createInputScopeField(id: string, defaultValue: AiInputScope = DEFAULT_AI_INPUT_SCOPE): string {
-  const optionsHtml = AI_INPUT_SCOPE_OPTIONS
-    .map((opt) => `<option value="${escapeAttr(opt.value)}"${opt.value === defaultValue ? " selected" : ""}>${escapeHtml(opt.label)}</option>`)
-    .join("");
-
   return `<label class="field-block" for="${id}">
     <span>Input scope</span>
-    <select id="${id}" class="input">${optionsHtml}</select>
+    <select id="${id}" class="input">${renderAiInputScopeOptions(defaultValue)}</select>
   </label>`;
 }
 
 function readInputScope(backdrop: HTMLElement, inputScopeId: string): AiInputScope {
-  return backdrop.querySelector<HTMLSelectElement>(`#${inputScopeId}`)?.value === "selected-layers"
-    ? "selected-layers"
-    : "visible-content";
+  return resolveAiInputScope(backdrop.querySelector<HTMLSelectElement>(`#${inputScopeId}`)?.value);
 }
 
 let modalCounter = 0;

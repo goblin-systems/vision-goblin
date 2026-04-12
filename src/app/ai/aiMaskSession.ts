@@ -2,6 +2,12 @@ import { applyIcons } from "@goblin-systems/goblin-design-system";
 import { createMaskCanvas, isMaskEmpty, type SelectionMode } from "../../editor/selection";
 import type { DocumentState } from "../../editor/types";
 import type { ToolName } from "../../settings";
+import {
+  DEFAULT_AI_INPUT_SCOPE,
+  renderAiInputScopeOptions,
+  resolveAiInputScope,
+} from "./inputScope";
+import { getSelectionModeActionLabel, renderSelectionModeButtonInner } from "../selectionModeButtons";
 import type { AiGuideMode, AiInputScope } from "./types";
 
 export type AiMaskChannel = "caster" | "surface";
@@ -129,11 +135,6 @@ const AI_LIGHT_DIRECTIONS: Array<{ value: ShadowLightDirection; label: string }>
   { value: "top-left", label: "Top-Left" },
 ];
 
-const AI_INPUT_SCOPE_OPTIONS: Array<{ value: AiInputScope; label: string }> = [
-  { value: "selected-layers", label: "selected layers" },
-  { value: "visible-content", label: "visible content" },
-];
-
 const DEFAULT_MASK_CHANNELS: Record<AiMaskChannel, AiMaskChannelDefinition> = {
   caster: {
     key: "caster",
@@ -157,10 +158,11 @@ const DEFAULT_SESSION_DEFAULTS: AiMaskSessionDefaults = {
   guideMode: "shadow-add",
   intensity: 50,
   lightDirection: "auto",
-  inputScope: "visible-content",
+  inputScope: DEFAULT_AI_INPUT_SCOPE,
 };
 
 const DEFAULT_ALLOWED_TOOLS: ToolName[] = ["brush", "eraser"];
+const DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS: ToolName[] = ["brush", "eraser", "marquee", "lasso", "polygon-lasso", "magic-wand"];
 
 const TOOL_ICON_MAP: Partial<Record<ToolName, string>> = {
   brush: "paintbrush",
@@ -173,12 +175,41 @@ const TOOL_ICON_MAP: Partial<Record<ToolName, string>> = {
 
 const SELECTION_TOOLS: ToolName[] = ["marquee", "lasso", "polygon-lasso", "magic-wand"];
 
-const SELECTION_MODES: Array<{ mode: SelectionMode; icon: string; label: string }> = [
-  { mode: "replace", icon: "replace", label: "Replace" },
-  { mode: "add", icon: "plus", label: "Add" },
-  { mode: "subtract", icon: "minus", label: "Subtract" },
-  { mode: "intersect", icon: "combine", label: "∩" },
-];
+const SELECTION_MODES: SelectionMode[] = ["replace", "add", "subtract", "intersect"];
+
+function renderInputScopeField(defaultValue: AiInputScope): string {
+  return `
+    <label class="field-block" for="ai-mask-input-scope">
+      <span>Input scope</span>
+      <select id="ai-mask-input-scope" class="input" data-ai-mask-input-scope>${renderAiInputScopeOptions(defaultValue)}</select>
+    </label>
+  `;
+}
+
+function bindInputScopeSelect({ panel, getSession }: AiMaskExtraControlBindArgs): void {
+  const inputScopeSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-input-scope]');
+
+  inputScopeSelect?.addEventListener("change", () => {
+    const session = getSession();
+    if (!session) {
+      return;
+    }
+    session.inputScope = resolveAiInputScope(inputScopeSelect.value);
+  });
+}
+
+function createExtraControls(options: {
+  renderBefore?: (args: AiMaskExtraControlRenderArgs) => string;
+  bindBefore?: (args: AiMaskExtraControlBindArgs) => void;
+} = {}): AiMaskExtraControls {
+  return {
+    render: (args) => `${options.renderBefore?.(args) ?? ""}${renderInputScopeField(args.defaults.inputScope)}`,
+    bind: (args) => {
+      options.bindBefore?.(args);
+      bindInputScopeSelect(args);
+    },
+  };
+}
 
 function resolveAllowedTools(config: AiMaskSessionConfig): ToolName[] {
   return config.allowedTools ?? DEFAULT_ALLOWED_TOOLS;
@@ -198,14 +229,12 @@ export const DEFAULT_ADD_SHADOW_SESSION_CONFIG: AiMaskSessionConfig = {
   cancelToastMessage: "Shadow guide cancelled.",
   guideHint: "Both guides start empty. Use Brush to add and Eraser to subtract.",
   channels: DEFAULT_MASK_CHANNELS,
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
   defaults: DEFAULT_SESSION_DEFAULTS,
-  extraControls: {
-    render: ({ defaults }) => {
+  extraControls: createExtraControls({
+    renderBefore: ({ defaults }) => {
       const directionOptionsHtml = AI_LIGHT_DIRECTIONS
         .map((opt) => `<option value="${opt.value}"${opt.value === defaults.lightDirection ? " selected" : ""}>${opt.label}</option>`)
-        .join("");
-      const inputScopeOptionsHtml = AI_INPUT_SCOPE_OPTIONS
-        .map((opt) => `<option value="${opt.value}"${opt.value === defaults.inputScope ? " selected" : ""}>${opt.label}</option>`)
         .join("");
 
       return `
@@ -220,24 +249,19 @@ export const DEFAULT_ADD_SHADOW_SESSION_CONFIG: AiMaskSessionConfig = {
           <span>Light direction</span>
           <select id="ai-mask-direction" class="input" data-ai-mask-direction>${directionOptionsHtml}</select>
         </label>
-        <label class="field-block" for="ai-mask-input-scope">
-          <span>Input scope</span>
-          <select id="ai-mask-input-scope" class="input" data-ai-mask-input-scope>${inputScopeOptionsHtml}</select>
-        </label>
       `;
     },
-    bind: ({ panel, getSession }) => {
+    bindBefore: ({ panel, getSession }) => {
       const intensityInput = panel.querySelector<HTMLInputElement>('input[data-ai-mask-intensity]');
       const intensityOutput = panel.querySelector<HTMLOutputElement>('output[data-ai-mask-intensity-output]');
       const directionSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-direction]');
-      const inputScopeSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-input-scope]');
 
       intensityInput?.addEventListener("input", () => {
         const session = getSession();
         if (!session || !intensityOutput) {
           return;
         }
-        session.intensity = Number(intensityInput.value || DEFAULT_SESSION_DEFAULTS.intensity);
+        session.intensity = Number(intensityInput.value || session.intensity || DEFAULT_SESSION_DEFAULTS.intensity);
         intensityOutput.textContent = String(session.intensity);
       });
       directionSelect?.addEventListener("change", () => {
@@ -245,19 +269,10 @@ export const DEFAULT_ADD_SHADOW_SESSION_CONFIG: AiMaskSessionConfig = {
         if (!session) {
           return;
         }
-        session.lightDirection = (directionSelect.value || DEFAULT_SESSION_DEFAULTS.lightDirection) as ShadowLightDirection;
-      });
-      inputScopeSelect?.addEventListener("change", () => {
-        const session = getSession();
-        if (!session) {
-          return;
-        }
-        session.inputScope = inputScopeSelect.value === "selected-layers"
-          ? "selected-layers"
-          : "visible-content";
+        session.lightDirection = (directionSelect.value || session.lightDirection || DEFAULT_SESSION_DEFAULTS.lightDirection) as ShadowLightDirection;
       });
     },
-  },
+  }),
 };
 
 export const DEFAULT_REMOVE_SHADOW_SESSION_CONFIG: AiMaskSessionConfig = {
@@ -285,55 +300,36 @@ export const DEFAULT_REMOVE_SHADOW_SESSION_CONFIG: AiMaskSessionConfig = {
       validationMessage: "Paint the existing shadow area in black before applying.",
     },
   },
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
   defaults: {
     ...DEFAULT_SESSION_DEFAULTS,
     guideMode: "shadow-remove",
     intensity: 75,
   },
-  extraControls: {
-    render: ({ defaults }) => {
-      const inputScopeOptionsHtml = AI_INPUT_SCOPE_OPTIONS
-        .map((opt) => `<option value="${opt.value}"${opt.value === defaults.inputScope ? " selected" : ""}>${opt.label}</option>`)
-        .join("");
-
-      return `
-        <label class="field-block">
-          <span>Shadow reduction</span>
-          <div class="range-with-value">
-            <input type="range" min="0" max="100" step="1" value="${defaults.intensity}" data-ai-mask-intensity />
-            <output data-ai-mask-intensity-output>${defaults.intensity}</output>
-          </div>
-        </label>
-        <label class="field-block" for="ai-mask-input-scope">
-          <span>Input scope</span>
-          <select id="ai-mask-input-scope" class="input" data-ai-mask-input-scope>${inputScopeOptionsHtml}</select>
-        </label>
-      `;
-    },
-    bind: ({ panel, getSession }) => {
+  extraControls: createExtraControls({
+    renderBefore: ({ defaults }) => `
+      <label class="field-block">
+        <span>Shadow reduction</span>
+        <div class="range-with-value">
+          <input type="range" min="0" max="100" step="1" value="${defaults.intensity}" data-ai-mask-intensity />
+          <output data-ai-mask-intensity-output>${defaults.intensity}</output>
+        </div>
+      </label>
+    `,
+    bindBefore: ({ panel, getSession }) => {
       const intensityInput = panel.querySelector<HTMLInputElement>('input[data-ai-mask-intensity]');
       const intensityOutput = panel.querySelector<HTMLOutputElement>('output[data-ai-mask-intensity-output]');
-      const inputScopeSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-input-scope]');
 
       intensityInput?.addEventListener("input", () => {
         const session = getSession();
         if (!session || !intensityOutput) {
           return;
         }
-        session.intensity = Number(intensityInput.value || 75);
+        session.intensity = Number(intensityInput.value || session.intensity || DEFAULT_SESSION_DEFAULTS.intensity);
         intensityOutput.textContent = String(session.intensity);
       });
-      inputScopeSelect?.addEventListener("change", () => {
-        const session = getSession();
-        if (!session) {
-          return;
-        }
-        session.inputScope = inputScopeSelect.value === "selected-layers"
-          ? "selected-layers"
-          : "visible-content";
-      });
     },
-  },
+  }),
 };
 
 export const DEFAULT_ADD_REFLECTION_SESSION_CONFIG: AiMaskSessionConfig = {
@@ -357,37 +353,12 @@ export const DEFAULT_ADD_REFLECTION_SESSION_CONFIG: AiMaskSessionConfig = {
       validationMessage: "Paint the target reflection or glare region in black before applying.",
     },
   },
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
   defaults: {
     ...DEFAULT_SESSION_DEFAULTS,
     guideMode: "reflection-add",
   },
-  extraControls: {
-    render: ({ defaults }) => {
-      const inputScopeOptionsHtml = AI_INPUT_SCOPE_OPTIONS
-        .map((opt) => `<option value="${opt.value}"${opt.value === defaults.inputScope ? " selected" : ""}>${opt.label}</option>`)
-        .join("");
-
-      return `
-        <label class="field-block" for="ai-mask-input-scope">
-          <span>Input scope</span>
-          <select id="ai-mask-input-scope" class="input" data-ai-mask-input-scope>${inputScopeOptionsHtml}</select>
-        </label>
-      `;
-    },
-    bind: ({ panel, getSession }) => {
-      const inputScopeSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-input-scope]');
-
-      inputScopeSelect?.addEventListener("change", () => {
-        const session = getSession();
-        if (!session) {
-          return;
-        }
-        session.inputScope = inputScopeSelect.value === "selected-layers"
-          ? "selected-layers"
-          : "visible-content";
-      });
-    },
-  },
+  extraControls: createExtraControls(),
 };
 
 export const DEFAULT_REMOVE_REFLECTION_SESSION_CONFIG: AiMaskSessionConfig = {
@@ -415,37 +386,12 @@ export const DEFAULT_REMOVE_REFLECTION_SESSION_CONFIG: AiMaskSessionConfig = {
       validationMessage: "Paint the reflection or glare region in black before applying.",
     },
   },
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
   defaults: {
     ...DEFAULT_SESSION_DEFAULTS,
     guideMode: "reflection-remove",
   },
-  extraControls: {
-    render: ({ defaults }) => {
-      const inputScopeOptionsHtml = AI_INPUT_SCOPE_OPTIONS
-        .map((opt) => `<option value="${opt.value}"${opt.value === defaults.inputScope ? " selected" : ""}>${opt.label}</option>`)
-        .join("");
-
-      return `
-        <label class="field-block" for="ai-mask-input-scope">
-          <span>Input scope</span>
-          <select id="ai-mask-input-scope" class="input" data-ai-mask-input-scope>${inputScopeOptionsHtml}</select>
-        </label>
-      `;
-    },
-    bind: ({ panel, getSession }) => {
-      const inputScopeSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-input-scope]');
-
-      inputScopeSelect?.addEventListener("change", () => {
-        const session = getSession();
-        if (!session) {
-          return;
-        }
-        session.inputScope = inputScopeSelect.value === "selected-layers"
-          ? "selected-layers"
-          : "visible-content";
-      });
-    },
-  },
+  extraControls: createExtraControls(),
 };
 
 export const DEFAULT_MOVE_OBJECT_SESSION_CONFIG: AiMaskSessionConfig = {
@@ -469,37 +415,12 @@ export const DEFAULT_MOVE_OBJECT_SESSION_CONFIG: AiMaskSessionConfig = {
       validationMessage: "Paint one destination area in black before applying.",
     },
   },
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
   defaults: {
     ...DEFAULT_SESSION_DEFAULTS,
     guideMode: "move-object",
   },
-  extraControls: {
-    render: ({ defaults }) => {
-      const inputScopeOptionsHtml = AI_INPUT_SCOPE_OPTIONS
-        .map((opt) => `<option value="${opt.value}"${opt.value === defaults.inputScope ? " selected" : ""}>${opt.label}</option>`)
-        .join("");
-
-      return `
-        <label class="field-block" for="ai-mask-input-scope">
-          <span>Input scope</span>
-          <select id="ai-mask-input-scope" class="input" data-ai-mask-input-scope>${inputScopeOptionsHtml}</select>
-        </label>
-      `;
-    },
-    bind: ({ panel, getSession }) => {
-      const inputScopeSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-input-scope]');
-
-      inputScopeSelect?.addEventListener("change", () => {
-        const session = getSession();
-        if (!session) {
-          return;
-        }
-        session.inputScope = inputScopeSelect.value === "selected-layers"
-          ? "selected-layers"
-          : "visible-content";
-      });
-    },
-  },
+  extraControls: createExtraControls(),
 };
 
 export const DEFAULT_CLONE_OBJECT_SESSION_CONFIG: AiMaskSessionConfig = {
@@ -523,37 +444,12 @@ export const DEFAULT_CLONE_OBJECT_SESSION_CONFIG: AiMaskSessionConfig = {
       validationMessage: "Paint one or more destination areas in black before applying.",
     },
   },
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
   defaults: {
     ...DEFAULT_SESSION_DEFAULTS,
     guideMode: "clone-object",
   },
-  extraControls: {
-    render: ({ defaults }) => {
-      const inputScopeOptionsHtml = AI_INPUT_SCOPE_OPTIONS
-        .map((opt) => `<option value="${opt.value}"${opt.value === defaults.inputScope ? " selected" : ""}>${opt.label}</option>`)
-        .join("");
-
-      return `
-        <label class="field-block" for="ai-mask-input-scope">
-          <span>Input scope</span>
-          <select id="ai-mask-input-scope" class="input" data-ai-mask-input-scope>${inputScopeOptionsHtml}</select>
-        </label>
-      `;
-    },
-    bind: ({ panel, getSession }) => {
-      const inputScopeSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-input-scope]');
-
-      inputScopeSelect?.addEventListener("change", () => {
-        const session = getSession();
-        if (!session) {
-          return;
-        }
-        session.inputScope = inputScopeSelect.value === "selected-layers"
-          ? "selected-layers"
-          : "visible-content";
-      });
-    },
-  },
+  extraControls: createExtraControls(),
 };
 
 export const DEFAULT_INPAINT_SESSION_CONFIG: AiMaskSessionConfig = {
@@ -581,39 +477,12 @@ export const DEFAULT_INPAINT_SESSION_CONFIG: AiMaskSessionConfig = {
       validationMessage: "Paint or select the area to inpaint before continuing.",
     },
   },
-  allowedTools: ["brush", "eraser", "marquee", "lasso", "polygon-lasso", "magic-wand"],
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
   defaults: {
     ...DEFAULT_SESSION_DEFAULTS,
     guideMode: "inpaint",
-    inputScope: "visible-content",
   },
-  extraControls: {
-    render: ({ defaults }) => {
-      const inputScopeOptionsHtml = AI_INPUT_SCOPE_OPTIONS
-        .map((opt) => `<option value="${opt.value}"${opt.value === defaults.inputScope ? " selected" : ""}>${opt.label}</option>`)
-        .join("");
-
-      return `
-        <label class="field-block" for="ai-mask-input-scope">
-          <span>Input scope</span>
-          <select id="ai-mask-input-scope" class="input" data-ai-mask-input-scope>${inputScopeOptionsHtml}</select>
-        </label>
-      `;
-    },
-    bind: ({ panel, getSession }) => {
-      const inputScopeSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-input-scope]');
-
-      inputScopeSelect?.addEventListener("change", () => {
-        const session = getSession();
-        if (!session) {
-          return;
-        }
-        session.inputScope = inputScopeSelect.value === "selected-layers"
-          ? "selected-layers"
-          : "visible-content";
-      });
-    },
-  },
+  extraControls: createExtraControls(),
 };
 
 export const DEFAULT_REMOVE_OBJECT_SESSION_CONFIG: AiMaskSessionConfig = {
@@ -641,39 +510,12 @@ export const DEFAULT_REMOVE_OBJECT_SESSION_CONFIG: AiMaskSessionConfig = {
       validationMessage: "Paint or select the object to remove before continuing.",
     },
   },
-  allowedTools: ["brush", "eraser", "marquee", "lasso", "polygon-lasso", "magic-wand"],
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
   defaults: {
     ...DEFAULT_SESSION_DEFAULTS,
     guideMode: "remove-object",
-    inputScope: "visible-content",
   },
-  extraControls: {
-    render: ({ defaults }) => {
-      const inputScopeOptionsHtml = AI_INPUT_SCOPE_OPTIONS
-        .map((opt) => `<option value="${opt.value}"${opt.value === defaults.inputScope ? " selected" : ""}>${opt.label}</option>`)
-        .join("");
-
-      return `
-        <label class="field-block" for="ai-mask-input-scope">
-          <span>Input scope</span>
-          <select id="ai-mask-input-scope" class="input" data-ai-mask-input-scope>${inputScopeOptionsHtml}</select>
-        </label>
-      `;
-    },
-    bind: ({ panel, getSession }) => {
-      const inputScopeSelect = panel.querySelector<HTMLSelectElement>('select[data-ai-mask-input-scope]');
-
-      inputScopeSelect?.addEventListener("change", () => {
-        const session = getSession();
-        if (!session) {
-          return;
-        }
-        session.inputScope = inputScopeSelect.value === "selected-layers"
-          ? "selected-layers"
-          : "visible-content";
-      });
-    },
-  },
+  extraControls: createExtraControls(),
 };
 
 export const DEFAULT_REPLACE_TEXT_SESSION_CONFIG: AiMaskSessionConfig = {
@@ -702,12 +544,103 @@ export const DEFAULT_REPLACE_TEXT_SESSION_CONFIG: AiMaskSessionConfig = {
       required: false,
     },
   },
-  allowedTools: ["brush", "eraser", "marquee", "lasso", "polygon-lasso", "magic-wand"],
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
   defaults: {
     ...DEFAULT_SESSION_DEFAULTS,
     guideMode: "replace-text",
-    inputScope: "visible-content",
   },
+  extraControls: createExtraControls(),
+};
+
+export const DEFAULT_AI_HEALING_SESSION_CONFIG: AiMaskSessionConfig = {
+  guideMode: "heal",
+  title: "AI: Healing",
+  description: "Paint or select the area to heal with a single AI inpainting pass.",
+  applyLabel: "Heal",
+  startToastMessage: "Paint or select the area to heal.",
+  readyToastMessage: "Healing mask ready.",
+  cancelToastMessage: "AI healing cancelled.",
+  guideHint: "Use any mask tool to mark the area to heal. Use Brush to add and Eraser to subtract.",
+  initialChannel: "surface",
+  visibleChannels: ["surface"],
+  channels: {
+    caster: {
+      ...DEFAULT_MASK_CHANNELS.caster,
+      label: "Optional context (red)",
+      validationMessage: "",
+      required: false,
+      visibleInUi: false,
+    },
+    surface: {
+      ...DEFAULT_MASK_CHANNELS.surface,
+      label: "Healing area",
+      validationMessage: "Paint or select the area to heal before continuing.",
+    },
+  },
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
+  defaults: {
+    ...DEFAULT_SESSION_DEFAULTS,
+    guideMode: "heal",
+  },
+  extraControls: createExtraControls(),
+};
+
+export const DEFAULT_DENOISE_SESSION_CONFIG: AiMaskSessionConfig = {
+  guideMode: "denoise",
+  title: "AI: Denoise",
+  description: "Paint or select the area to denoise, or continue with a blank mask to denoise the full target.",
+  applyLabel: "Denoise",
+  startToastMessage: "Paint or select the denoise area, or continue to process the full target.",
+  readyToastMessage: "Denoise target ready.",
+  cancelToastMessage: "AI denoise cancelled.",
+  guideHint: "Use any mask tool to mark the denoise area. Leave the mask blank to denoise the full target. Use Brush to add and Eraser to subtract.",
+  initialChannel: "surface",
+  visibleChannels: ["surface"],
+  channels: {
+    caster: {
+      ...DEFAULT_MASK_CHANNELS.caster,
+      label: "Optional context (red)",
+      validationMessage: "",
+      required: false,
+      visibleInUi: false,
+    },
+    surface: {
+      ...DEFAULT_MASK_CHANNELS.surface,
+      label: "Denoise area",
+      validationMessage: "",
+      required: false,
+    },
+  },
+  allowedTools: DEFAULT_SELECTION_CAPABLE_ALLOWED_TOOLS,
+  defaults: {
+    ...DEFAULT_SESSION_DEFAULTS,
+    guideMode: "denoise",
+    intensity: 55,
+  },
+  extraControls: createExtraControls({
+    renderBefore: ({ defaults }) => `
+      <label class="field-block">
+        <span>Denoise strength</span>
+        <div class="range-with-value">
+          <input type="range" min="0" max="100" step="1" value="${defaults.intensity}" data-ai-mask-intensity />
+          <output data-ai-mask-intensity-output>${defaults.intensity}</output>
+        </div>
+      </label>
+    `,
+    bindBefore: ({ panel, getSession }) => {
+      const intensityInput = panel.querySelector<HTMLInputElement>('input[data-ai-mask-intensity]');
+      const intensityOutput = panel.querySelector<HTMLOutputElement>('output[data-ai-mask-intensity-output]');
+
+      intensityInput?.addEventListener("input", () => {
+        const session = getSession();
+        if (!session || !intensityOutput) {
+          return;
+        }
+        session.intensity = Number(intensityInput.value || session.intensity || DEFAULT_SESSION_DEFAULTS.intensity);
+        intensityOutput.textContent = String(session.intensity);
+      });
+    },
+  }),
 };
 
 function resolveConfig(config?: AiMaskSessionConfig): AiMaskSessionConfig {
@@ -859,14 +792,12 @@ export function createAiMaskSessionController(
 
     const selectionModeHtml = showSelectionMode
       ? `<div class="ai-mask-panel__mode" data-ai-mask-modes>
-          <span>Selection mode</span>
-          <div class="ai-mask-panel__mode-buttons">
-            ${SELECTION_MODES.map((sm) => {
-              const hasIcon = sm.icon === "plus" || sm.icon === "minus" || sm.icon === "replace" || sm.icon === "combine";
-              const content = hasIcon
-                ? `<i data-lucide="${sm.icon}"></i>`
-                : `<span>${sm.label}</span>`;
-              return `<button type="button" class="secondary-btn slim-btn" data-ai-mask-selection-mode="${sm.mode}" aria-label="${sm.label}" title="${sm.label}">${content}</button>`;
+            <span>Selection mode</span>
+            <div class="ai-mask-panel__mode-buttons">
+            ${SELECTION_MODES.map((mode) => {
+              const label = getSelectionModeActionLabel(mode);
+              const content = renderSelectionModeButtonInner(mode);
+              return `<button type="button" class="secondary-btn slim-btn selection-mode-btn selection-mode-btn--compact" data-ai-mask-selection-mode="${mode}" aria-label="${label}" title="${label}">${content}</button>`;
             }).join("")}
           </div>
         </div>`
@@ -916,9 +847,9 @@ export function createAiMaskSessionController(
     });
   }
 
-  function updateSelectionModeButtons() {
+  function updateSelectionModeButtons(nextMode?: SelectionMode) {
     if (!session) return;
-    const currentMode = deps.getSelectionMode();
+    const currentMode = nextMode ?? deps.getSelectionMode();
     session.panel.querySelectorAll<HTMLButtonElement>("[data-ai-mask-selection-mode]").forEach((btn) => {
       btn.classList.toggle("is-active", btn.getAttribute("data-ai-mask-selection-mode") === currentMode);
     });
@@ -1008,7 +939,7 @@ export function createAiMaskSessionController(
         const mode = btn.getAttribute("data-ai-mask-selection-mode") as SelectionMode;
         if (mode) {
           deps.setSelectionMode(mode);
-          updateSelectionModeButtons();
+          updateSelectionModeButtons(mode);
         }
       });
     });

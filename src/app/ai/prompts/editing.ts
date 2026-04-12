@@ -46,6 +46,8 @@ export const DEFAULT_BACKGROUND_DESCRIPTION = "soft studio backdrop";
 
 export const RASTER_TEXT_CLEANUP_PROMPT = "Remove the rasterized text inside the selected region and reconstruct the underlying background cleanly. Do not add any new text, icons, or decorative elements.";
 
+export const AI_HEALING_PROMPT = "Heal and reconstruct the masked region naturally using surrounding pixels as context. Remove blemishes, distractions, seams, dust, scratches, and small unwanted details while preserving the underlying material, texture, lighting, perspective, and scene structure. Only edit the masked region and keep everything outside it unchanged.";
+
 // ── Thumbnail text overlay ──────────────────────────────────────────────
 
 export function buildThumbnailTextOverlayPrompt(basePrompt: string, textOverlay: string, textPosition: string): string {

@@ -4,6 +4,7 @@ import {
   buildGuideDrivenInpaintingPrompt,
   buildRemoveObjectPrompt,
   buildThumbnailTextOverlayPrompt,
+  AI_HEALING_PROMPT,
   DEFAULT_BACKGROUND_DESCRIPTION,
   RASTER_TEXT_CLEANUP_PROMPT,
   REMOVE_OBJECT_DEFAULT_PROMPT,
@@ -136,6 +137,14 @@ describe("RASTER_TEXT_CLEANUP_PROMPT", () => {
     expect(RASTER_TEXT_CLEANUP_PROMPT).toBe(
       "Remove the rasterized text inside the selected region and reconstruct the underlying background cleanly. Do not add any new text, icons, or decorative elements.",
     );
+  });
+});
+
+describe("AI_HEALING_PROMPT", () => {
+  it("constrains edits to the masked area and preserves surrounding pixels", () => {
+    expect(AI_HEALING_PROMPT).toContain("Only edit the masked region");
+    expect(AI_HEALING_PROMPT).toContain("keep everything outside it unchanged");
+    expect(AI_HEALING_PROMPT).toContain("preserving the underlying material, texture, lighting, perspective, and scene structure");
   });
 });
 

@@ -90,6 +90,7 @@ export interface RegisterEditorCommandsDeps {
   runAiCloneObject: () => void | Promise<void>;
   runAiMoveObject: () => void | Promise<void>;
   runAiReplaceRasterText: () => void | Promise<void>;
+  runAiHealing: () => void | Promise<void>;
   setTheme: (theme: UiTheme) => void | Promise<void>;
 }
 
@@ -192,7 +193,7 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
     { id: "ai-auto-enhance", label: "AI: Auto Enhance", category: "ai", enabled: hasDoc, execute: () => void deps.openAiAutoEnhanceModal() },
     { id: "ai-upscale", label: "AI: Upscale", category: "ai", enabled: hasDoc, execute: () => void deps.runAiUpscale() },
     { id: "ai-denoise", label: "AI: Denoise", category: "ai", enabled: hasDoc, execute: () => void deps.openAiDenoiseModal() },
-    { id: "ai-inpaint", label: "AI: Inpaint Selection", category: "ai", enabled: hasSelection, execute: () => void deps.runAiInpaint() },
+    { id: "ai-inpaint", label: "AI: Inpaint Selection", category: "ai", enabled: hasDoc, execute: () => void deps.runAiInpaint() },
     { id: "ai-outpaint", label: "AI: Outpaint Canvas", category: "ai", enabled: hasDoc, execute: () => void deps.runAiOutpaint() },
     { id: "ai-style-transfer", label: "AI: Style Transfer", category: "ai", enabled: hasDoc, execute: () => void deps.openAiStyleTransferModal() },
     { id: "ai-restore-photo", label: "AI: Restore Photo", category: "ai", enabled: hasDoc, execute: () => void deps.openAiRestoreModal() },
@@ -204,6 +205,7 @@ export function buildEditorCommands(deps: RegisterEditorCommandsDeps): CommandDe
     { id: "ai-remove-reflection", label: "AI: Remove Reflection", category: "ai", enabled: hasDoc, execute: () => void deps.runAiRemoveReflection() },
     { id: "ai-clone-object", label: "AI: Clone Object", category: "ai", enabled: hasDoc, execute: () => void deps.runAiCloneObject() },
     { id: "ai-move-object", label: "AI: Move Object", category: "ai", enabled: hasDoc, execute: () => void deps.runAiMoveObject() },
+    { id: "ai-healing", label: "AI: Healing", category: "ai", enabled: hasDoc, execute: () => void deps.runAiHealing() },
     { id: "ai-replace-raster-text", label: "AI: Replace Raster Text", category: "ai", enabled: hasDoc, execute: () => void deps.runAiReplaceRasterText() },
 
     { id: "add-adj-brightness-contrast", label: "Add Brightness/Contrast layer", category: "layer", enabled: hasDoc, execute: () => deps.handleAddAdjustmentLayer("brightness-contrast") },
